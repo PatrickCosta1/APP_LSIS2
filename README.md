@@ -11,6 +11,9 @@ Monorepo académico com frontend React + TypeScript (Vite) e backend Express + T
 - Configurar MongoDB:
 	- `MONGODB_URI` (obrigatória)
 	- `MONGODB_DB` (opcional)
+	- (Produção) garantir que a variável está definida no serviço (ex.: Render)
+- Configurar Frontend (produção):
+	- `VITE_API_BASE` (URL do backend; ex.: Render). Sem isto, o frontend pode tentar `localhost`.
 - (Opcional) Treinar IA:
 	- `py -3 apps/backend/ai_train.py --days 14 --lambda 2.0`
 - Desenvolver backend: `npm run dev:backend`
@@ -24,6 +27,13 @@ Monorepo académico com frontend React + TypeScript (Vite) e backend Express + T
 - A Dashboard usa esse `customerId` para buscar dados reais:
 	- `GET /customers/:id/telemetry/now`
 	- `GET /customers/:id/chart?range=dia|semana|mes`
+
+## Estatísticas (dinâmico)
+- A página “Estatísticas” (Charts) preenche automaticamente:
+	- Eficiência Horária
+	- Análise Contratual (inclui Simulador de Preços)
+	- Ofertas do mercado
+	- Insights gerados a partir da telemetria
 
 ## Estrutura
 - apps/frontend: SPA em React + Vite.

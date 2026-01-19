@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { getCollections, initDb, type Collections } from './db';
 import { clampPredictionForCustomer, loadAiModel, makeFeatures, predictNextWatts, type CustomerProfile } from './ai';
 import { clampSuggestedPowerKva, loadPowerModel, makePowerFeatures, predictRidge } from './powerAi';
+import { getAiRetrainStatus, runAiRetrainOnce } from './aiTrainer';
 
 const app = express();
 
@@ -647,6 +648,652 @@ app.get('/customers/:customerId/analytics/consumption', async (req, res) => {
   return res.json({ range: 'mes', labels, values, lastUpdated: latest.ts });
 });
 
+app.get('/customers/:customerId/analytics/hourly-efficiency', async (req, res) => {
+  const { customerId } = req.params;
+  const days = Number((req.query.days as string | undefined) ?? '7');
+  const windowDays = Number.isFinite(days) && days > 0 && days <= 60 ? Math.floor(days) : 7;
+
+  const c = await collections();
+
+  const customer = (await c.customers.findOne(
+    { id: customerId },
+    {
+      projection: {
+        _id: 0,
+        id: 1,
+        segment: 1,
+        city: 1,
+        contracted_power_kva: 1,
+        tariff: 1,
+        home_area_m2: 1,
+        household_size: 1,
+        has_solar: 1,
+        ev_count: 1,
+        price_eur_per_kwh: 1
+      }
+    }
+  )) as
+    | {
+        id: string;
+        segment: string;
+        city: string;
+        contracted_power_kva: number;
+        tariff: string;
+        home_area_m2?: number;
+        household_size?: number;
+        has_solar?: number;
+        ev_count?: number;
+        price_eur_per_kwh?: number;
+      }
+    | null;
+  if (!customer) return res.status(404).json({ message: 'Cliente não encontrado' });
+
+  const latestRow = await c.customerTelemetry15m
+    .find({ customer_id: customerId }, { projection: { _id: 0, ts: 1 } })
+    .sort({ ts: -1 })
+    .limit(1)
+    .toArray();
+  const latestDoc = latestRow[0];
+  if (!latestDoc) return res.status(404).json({ message: 'Sem telemetria para este cliente' });
+
+  const lastUpdated = latestDoc.ts.toISOString();
+  const end = new Date(lastUpdated);
+  const since = new Date(end.getTime() - windowDays * 24 * 60 * 60 * 1000);
+
+  const rows = await c.customerTelemetry15m
+    .find(
+      { customer_id: customerId, ts: { $gte: since, $lte: end } },
+      { projection: { _id: 0, ts: 1, watts: 1 } }
+    )
+    .toArray();
+
+  if (!rows.length) return res.status(404).json({ message: 'Sem dados no período' });
+
+  const dayKeys = new Set<string>();
+  const byHourKwh = Array.from({ length: 24 }, () => 0);
+  for (const r of rows) {
+    const ts = new Date(r.ts);
+    const hour = ts.getUTCHours();
+    dayKeys.add(toDayKeyUtc(ts));
+    const watts = Number(r.watts ?? 0);
+    // 15m -> 0.25h
+    byHourKwh[hour] += (watts * 0.25) / 1000;
+  }
+
+  const daysSeen = Math.max(1, dayKeys.size);
+  const avgByHourKwh = byHourKwh.map((v) => Number((v / daysSeen).toFixed(3)));
+
+  const isBi = String(customer.tariff ?? '').toLowerCase().includes('bi');
+  const offpeakHours = new Set<number>([22, 23, 0, 1, 2, 3, 4, 5, 6, 7]);
+  const peakHours = new Set<number>([18, 19, 20, 21]);
+
+  const sumTotal = avgByHourKwh.reduce((a, b) => a + b, 0);
+  const sumOffpeak = avgByHourKwh.reduce((acc, v, h) => acc + (offpeakHours.has(h) ? v : 0), 0);
+  const sumPeak = avgByHourKwh.reduce((acc, v, h) => acc + (peakHours.has(h) ? v : 0), 0);
+
+  const offpeakPct = sumTotal > 0 ? sumOffpeak / sumTotal : 0;
+
+  // Score: em bi-horário valoriza deslocar para vazio; em simples valoriza suavidade (menor variância)
+  let scorePct = 50;
+  if (isBi) {
+    scorePct = Math.round(30 + 70 * offpeakPct);
+  } else {
+    const mean = sumTotal / 24;
+    const variance = avgByHourKwh.reduce((acc, v) => acc + Math.pow(v - mean, 2), 0) / 24;
+    const cv = mean > 1e-9 ? Math.sqrt(variance) / mean : 1;
+    scorePct = Math.round(85 - 55 * Math.min(1.2, cv));
+  }
+  scorePct = Math.max(0, Math.min(100, scorePct));
+
+  const topPeakHours = Array.from({ length: 24 }, (_, h) => ({ h, v: avgByHourKwh[h] }))
+    .filter(({ h }) => (isBi ? peakHours.has(h) : true))
+    .sort((a, b) => b.v - a.v)
+    .slice(0, 3)
+    .map(({ h }) => h);
+
+  const bestOffpeakHours = Array.from({ length: 24 }, (_, h) => ({ h, v: avgByHourKwh[h] }))
+    .filter(({ h }) => (isBi ? offpeakHours.has(h) : true))
+    .sort((a, b) => a.v - b.v)
+    .slice(0, 3)
+    .map(({ h }) => h);
+
+  // Estima poupança: deslocar 10% do consumo em horas de pico para horas de vazio
+  const avgPrice = typeof customer.price_eur_per_kwh === 'number' ? customer.price_eur_per_kwh : RATE_EUR_PER_KWH;
+  const offpeakPrice = isBi ? avgPrice * 0.75 : avgPrice;
+  const peakPrice = isBi ? avgPrice * 1.15 : avgPrice;
+  const shiftKwhPerDay = isBi ? Math.min(sumPeak * 0.1, 2.0) : Math.min(sumTotal * 0.05, 1.5);
+  const savePerDay = shiftKwhPerDay * Math.max(0, peakPrice - offpeakPrice);
+  const savePerMonth = Number((savePerDay * 30).toFixed(2));
+
+  const model = loadAiModel();
+  let forecastNext24hByHour: number[] | null = null;
+  let narrative = '';
+
+  if (model) {
+    try {
+      const profile: CustomerProfile = {
+        id: customer.id,
+        segment: customer.segment,
+        city: customer.city ?? 'Porto',
+        contracted_power_kva: Number(customer.contracted_power_kva ?? 6.9),
+        tariff: customer.tariff,
+        home_area_m2: customer.home_area_m2,
+        household_size: customer.household_size,
+        has_solar: customer.has_solar,
+        ev_count: customer.ev_count,
+        price_eur_per_kwh: customer.price_eur_per_kwh
+      };
+
+      // Usar último sample como ponto de partida
+      const lastSampleRow = await c.customerTelemetry15m
+        .find({ customer_id: customerId }, { projection: { _id: 0, ts: 1, watts: 1, temp_c: 1 } })
+        .sort({ ts: -1 })
+        .limit(1)
+        .toArray();
+      const lastSample = lastSampleRow[0];
+      const startTs = new Date(lastSample?.ts ?? end);
+      let ts = startTs;
+      let lastWatts = Number(lastSample?.watts ?? 0);
+      const tempC = typeof lastSample?.temp_c === 'number' ? (lastSample.temp_c as number) : undefined;
+
+      const byHour = Array.from({ length: 24 }, () => 0);
+      const intervalMinutes = model.interval_minutes ?? 15;
+      const steps = Math.round((24 * 60) / intervalMinutes);
+
+      for (let i = 0; i < steps; i += 1) {
+        ts = new Date(ts.getTime() + intervalMinutes * 60 * 1000);
+        const feats = makeFeatures(ts, profile, lastWatts, tempC);
+        const predictedRaw = predictNextWatts(model, feats);
+        const predicted = clampPredictionForCustomer(predictedRaw, profile);
+        const hour = ts.getUTCHours();
+        byHour[hour] += (predicted * (intervalMinutes / 60)) / 1000;
+        lastWatts = predicted;
+      }
+
+      forecastNext24hByHour = byHour.map((v) => Number(v.toFixed(3)));
+    } catch {
+      forecastNext24hByHour = null;
+    }
+  }
+
+  if (isBi) {
+    narrative = scorePct >= 75 ? 'Excelente uso do vazio. Continue a concentrar consumos flexíveis à noite.' :
+      scorePct >= 55 ? 'Boa base. Se deslocar alguns consumos do fim da tarde para a noite, melhora bastante.' :
+      'Há margem grande: o fim da tarde está pesado. Vale a pena mover tarefas flexíveis para horário vazio.';
+  } else {
+    narrative = scorePct >= 75 ? 'Consumo bem distribuído ao longo do dia.' :
+      scorePct >= 55 ? 'Há picos em certas horas. Distribuir melhor pode reduzir custos e desconforto.' :
+      'Consumo muito concentrado em poucas horas. Ajustes simples já ajudam.';
+  }
+
+  const title = scorePct >= 75 ? 'Muito bom.' : scorePct >= 55 ? 'Bom, mas melhorável.' : 'A otimizar.';
+
+  return res.json({
+    customerId,
+    lastUpdated,
+    days: windowDays,
+    scorePct,
+    title,
+    note: narrative,
+    estimatedSavingsMonthEur: savePerMonth,
+    bestHoursUtc: bestOffpeakHours,
+    peakHoursUtc: topPeakHours,
+    avgKwhByHourUtc: avgByHourKwh,
+    forecastNext24hKwhByHourUtc: forecastNext24hByHour
+  });
+});
+
+type TariffType = 'Simples' | 'Bi-horário' | 'Tri-horário' | string;
+
+const isBiTariff = (tariff: TariffType) => String(tariff ?? '').toLowerCase().includes('bi');
+const isTriTariff = (tariff: TariffType) => String(tariff ?? '').toLowerCase().includes('tri');
+
+const offpeakHoursUtc = new Set<number>([22, 23, 0, 1, 2, 3, 4, 5, 6, 7]);
+const peakHoursUtc = new Set<number>([18, 19, 20, 21]);
+
+async function getCustomerLatestTs(customerId: string) {
+  const c = await collections();
+  const latestRow = await c.customerTelemetry15m
+    .find({ customer_id: customerId }, { projection: { _id: 0, ts: 1 } })
+    .sort({ ts: -1 })
+    .limit(1)
+    .toArray();
+  return latestRow[0]?.ts ?? null;
+}
+
+async function getLast24hKwh(customerId: string, end: Date) {
+  const c = await collections();
+  const since24h = new Date(end.getTime() - 24 * 60 * 60 * 1000);
+  const agg = await c.customerTelemetry15m
+    .aggregate([
+      { $match: { customer_id: customerId, ts: { $gte: since24h, $lte: end } } },
+      { $group: { _id: null, sumWatts: { $sum: '$watts' } } }
+    ])
+    .toArray();
+  return sumKwhFromSumWatts(Number(agg[0]?.sumWatts ?? 0));
+}
+
+async function getAvgByHourKwh(customerId: string, end: Date, windowDays: number) {
+  const c = await collections();
+  const since = new Date(end.getTime() - windowDays * 24 * 60 * 60 * 1000);
+  const rows = await c.customerTelemetry15m
+    .find({ customer_id: customerId, ts: { $gte: since, $lte: end } }, { projection: { _id: 0, ts: 1, watts: 1 } })
+    .toArray();
+
+  const dayKeys = new Set<string>();
+  const byHourKwh = Array.from({ length: 24 }, () => 0);
+  for (const r of rows) {
+    const ts = new Date(r.ts);
+    dayKeys.add(toDayKeyUtc(ts));
+    const hour = ts.getUTCHours();
+    byHourKwh[hour] += (Number(r.watts ?? 0) * 0.25) / 1000;
+  }
+  const daysSeen = Math.max(1, dayKeys.size);
+  const avgByHour = byHourKwh.map((v) => v / daysSeen);
+
+  const sumTotal = avgByHour.reduce((a, b) => a + b, 0);
+  const sumOffpeak = avgByHour.reduce((acc, v, h) => acc + (offpeakHoursUtc.has(h) ? v : 0), 0);
+  const sumPeak = avgByHour.reduce((acc, v, h) => acc + (peakHoursUtc.has(h) ? v : 0), 0);
+
+  return {
+    avgByHourKwhUtc: avgByHour.map((v) => Number(v.toFixed(3))),
+    sumTotalKwhPerDay: sumTotal,
+    sumOffpeakKwhPerDay: sumOffpeak,
+    sumPeakKwhPerDay: sumPeak,
+    offpeakPct: sumTotal > 0 ? sumOffpeak / sumTotal : 0
+  };
+}
+
+const defaultRatesFromAvg = (avg: number, tariff: TariffType) => {
+  const price = Number.isFinite(avg) && avg > 0 ? avg : RATE_EUR_PER_KWH;
+  if (isBiTariff(tariff) || isTriTariff(tariff)) {
+    // aproximação realista: vazio mais barato, cheia mais cara.
+    return { vazio: Number((price * 0.75).toFixed(4)), cheia: Number((price * 1.15).toFixed(4)) };
+  }
+  return { vazio: Number(price.toFixed(4)), cheia: Number(price.toFixed(4)) };
+};
+
+app.get('/customers/:customerId/contract/analysis', async (req, res) => {
+  const { customerId } = req.params;
+  const c = await collections();
+
+  const customer = (await c.customers.findOne(
+    { id: customerId },
+    {
+      projection: {
+        _id: 0,
+        id: 1,
+        tariff: 1,
+        utility: 1,
+        contracted_power_kva: 1,
+        price_eur_per_kwh: 1,
+        fixed_daily_fee_eur: 1
+      }
+    }
+  )) as
+    | {
+        id: string;
+        tariff: TariffType;
+        utility: string;
+        contracted_power_kva: number;
+        price_eur_per_kwh: number;
+        fixed_daily_fee_eur: number;
+      }
+    | null;
+  if (!customer) return res.status(404).json({ message: 'Cliente não encontrado' });
+
+  const latestTs = await getCustomerLatestTs(customerId);
+  if (!latestTs) return res.status(404).json({ message: 'Sem telemetria para este cliente' });
+
+  const end = new Date(latestTs);
+  const endIso = end.toISOString();
+  const dim = daysInUtcMonthFromIso(endIso);
+  const kwhLast24h = await getLast24hKwh(customerId, end);
+  const forecastMonthKwh = kwhLast24h * dim;
+
+  const avgPrice = typeof customer.price_eur_per_kwh === 'number' ? customer.price_eur_per_kwh : RATE_EUR_PER_KWH;
+  const fixedDailyFeeEur = typeof customer.fixed_daily_fee_eur === 'number' ? customer.fixed_daily_fee_eur : 0;
+
+  const hourly = await getAvgByHourKwh(customerId, end, 7);
+
+  const currentTariff = customer.tariff ?? 'Simples';
+  const currentRates = defaultRatesFromAvg(avgPrice, currentTariff);
+
+  const estMonthly = (tariffType: TariffType, rates: { vazio: number; cheia: number }) => {
+    const isBi = isBiTariff(tariffType) || isTriTariff(tariffType);
+    const offKwh = forecastMonthKwh * (isBi ? hourly.offpeakPct : 0);
+    const peakKwh = forecastMonthKwh - offKwh;
+    const energy = isBi ? offKwh * rates.vazio + peakKwh * rates.cheia : forecastMonthKwh * rates.cheia;
+    const power = fixedDailyFeeEur * dim;
+    return {
+      energy: Number(energy.toFixed(2)),
+      power: Number(power.toFixed(2)),
+      total: Number((energy + power).toFixed(2)),
+      offpeakPct: Number((hourly.offpeakPct * 100).toFixed(1))
+    };
+  };
+
+  const currentCost = estMonthly(currentTariff, currentRates);
+
+  const biRates = defaultRatesFromAvg(avgPrice, 'Bi-horário');
+  const simpleRates = defaultRatesFromAvg(avgPrice, 'Simples');
+  const biCost = estMonthly('Bi-horário', biRates);
+  const simpleCost = estMonthly('Simples', simpleRates);
+
+  const best = biCost.total + 0.01 < simpleCost.total ? { tariff: 'Bi-horário' as const, cost: biCost } : { tariff: 'Simples' as const, cost: simpleCost };
+  const delta = Number((currentCost.total - best.cost.total).toFixed(2));
+
+  const recommendation =
+    delta > 0.5
+      ? {
+          tariff: best.tariff,
+          message:
+            best.tariff === 'Bi-horário'
+              ? `O seu perfil tem ~${best.cost.offpeakPct}% do consumo em vazio. Um bi-horário pode baixar a fatura (~${delta}€/mês).`
+              : `O seu consumo está pouco concentrado em vazio. Um simples tende a ser mais estável (~${delta}€/mês).`
+        }
+      : {
+          tariff: currentTariff,
+          message: 'O contrato atual já está próximo do ótimo para o seu padrão de consumo.'
+        };
+
+  return res.json({
+    customerId,
+    lastUpdated: endIso,
+    forecastMonthKwh: Number(forecastMonthKwh.toFixed(1)),
+    offpeakPct: Number((hourly.offpeakPct * 100).toFixed(1)),
+    current: {
+      utility: customer.utility ?? '—',
+      tariff: currentTariff,
+      price_vazio_eur_per_kwh: currentRates.vazio,
+      price_cheia_eur_per_kwh: currentRates.cheia,
+      fixed_daily_fee_eur: Number(fixedDailyFeeEur.toFixed(4)),
+      estimatedMonth: currentCost
+    },
+    suggestion: {
+      tariff: recommendation.tariff,
+      message: recommendation.message,
+      compare: {
+        simples: { rates: simpleRates, estimatedMonth: simpleCost },
+        bihorario: { rates: biRates, estimatedMonth: biCost }
+      }
+    }
+  });
+});
+
+app.post('/customers/:customerId/contract/simulate', async (req, res) => {
+  const { customerId } = req.params;
+  const schema = z.object({
+    tariff: z.string().min(1).max(40),
+    price_vazio_eur_per_kwh: z.number().min(0.01).max(2),
+    price_cheia_eur_per_kwh: z.number().min(0.01).max(2),
+    fixed_daily_fee_eur: z.number().min(0).max(10)
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ errors: parsed.error.flatten().fieldErrors });
+
+  const c = await collections();
+  const customer = await c.customers.findOne(
+    { id: customerId },
+    { projection: { _id: 0, id: 1, tariff: 1, price_eur_per_kwh: 1, fixed_daily_fee_eur: 1 } }
+  );
+  if (!customer) return res.status(404).json({ message: 'Cliente não encontrado' });
+
+  const latestTs = await getCustomerLatestTs(customerId);
+  if (!latestTs) return res.status(404).json({ message: 'Sem telemetria para este cliente' });
+
+  const end = new Date(latestTs);
+  const endIso = end.toISOString();
+  const dim = daysInUtcMonthFromIso(endIso);
+  const kwhLast24h = await getLast24hKwh(customerId, end);
+  const forecastMonthKwh = kwhLast24h * dim;
+  const hourly = await getAvgByHourKwh(customerId, end, 7);
+
+  const currentTariff = (customer as any).tariff ?? 'Simples';
+  const avgPrice = typeof (customer as any).price_eur_per_kwh === 'number' ? (customer as any).price_eur_per_kwh : RATE_EUR_PER_KWH;
+  const currentFixed = typeof (customer as any).fixed_daily_fee_eur === 'number' ? (customer as any).fixed_daily_fee_eur : 0;
+  const currentRates = defaultRatesFromAvg(avgPrice, currentTariff);
+
+  const simulate = (tariff: TariffType, rates: { vazio: number; cheia: number }, fixedDaily: number) => {
+    const isBi = isBiTariff(tariff) || isTriTariff(tariff);
+    const offKwh = forecastMonthKwh * (isBi ? hourly.offpeakPct : 0);
+    const peakKwh = forecastMonthKwh - offKwh;
+    const energy = isBi ? offKwh * rates.vazio + peakKwh * rates.cheia : forecastMonthKwh * rates.cheia;
+    const power = fixedDaily * dim;
+    return {
+      energy: Number(energy.toFixed(2)),
+      power: Number(power.toFixed(2)),
+      total: Number((energy + power).toFixed(2))
+    };
+  };
+
+  const current = simulate(currentTariff, currentRates, currentFixed);
+  const proposedRates = { vazio: parsed.data.price_vazio_eur_per_kwh, cheia: parsed.data.price_cheia_eur_per_kwh };
+  const proposed = simulate(parsed.data.tariff, proposedRates, parsed.data.fixed_daily_fee_eur);
+  const savings = Number((current.total - proposed.total).toFixed(2));
+
+  return res.json({
+    customerId,
+    lastUpdated: endIso,
+    forecastMonthKwh: Number(forecastMonthKwh.toFixed(1)),
+    offpeakPct: Number((hourly.offpeakPct * 100).toFixed(1)),
+    current: { tariff: currentTariff, rates: currentRates, fixed_daily_fee_eur: Number(currentFixed.toFixed(4)), ...current },
+    proposed: {
+      tariff: parsed.data.tariff,
+      rates: proposedRates,
+      fixed_daily_fee_eur: Number(parsed.data.fixed_daily_fee_eur.toFixed(4)),
+      ...proposed
+    },
+    savingsMonthEur: savings
+  });
+});
+
+app.get('/customers/:customerId/market/offers', async (req, res) => {
+  const { customerId } = req.params;
+  const baseRes = await (async () => {
+    const c = await collections();
+    const customer = await c.customers.findOne(
+      { id: customerId },
+      { projection: { _id: 0, id: 1, utility: 1, tariff: 1, price_eur_per_kwh: 1, fixed_daily_fee_eur: 1 } }
+    );
+    if (!customer) return null;
+    const latestTs = await getCustomerLatestTs(customerId);
+    if (!latestTs) return null;
+    const end = new Date(latestTs);
+    const endIso = end.toISOString();
+    const dim = daysInUtcMonthFromIso(endIso);
+    const kwhLast24h = await getLast24hKwh(customerId, end);
+    const forecastMonthKwh = kwhLast24h * dim;
+    const hourly = await getAvgByHourKwh(customerId, end, 7);
+    const avgPrice = typeof (customer as any).price_eur_per_kwh === 'number' ? (customer as any).price_eur_per_kwh : RATE_EUR_PER_KWH;
+    const currentTariff = (customer as any).tariff ?? 'Simples';
+    const currentRates = defaultRatesFromAvg(avgPrice, currentTariff);
+    const currentFixed = typeof (customer as any).fixed_daily_fee_eur === 'number' ? (customer as any).fixed_daily_fee_eur : 0;
+
+    const simulate = (tariff: TariffType, rates: { vazio: number; cheia: number }, fixedDaily: number) => {
+      const isBi = isBiTariff(tariff) || isTriTariff(tariff);
+      const offKwh = forecastMonthKwh * (isBi ? hourly.offpeakPct : 0);
+      const peakKwh = forecastMonthKwh - offKwh;
+      const energy = isBi ? offKwh * rates.vazio + peakKwh * rates.cheia : forecastMonthKwh * rates.cheia;
+      const power = fixedDaily * dim;
+      return Number((energy + power).toFixed(2));
+    };
+
+    return {
+      utility: String((customer as any).utility ?? '—'),
+      lastUpdated: endIso,
+      forecastMonthKwh,
+      offpeakPct: hourly.offpeakPct,
+      currentTariff: String(currentTariff),
+      currentRates,
+      currentFixed,
+      currentMonthEur: simulate(currentTariff, currentRates, currentFixed)
+    };
+  })();
+
+  if (!baseRes) return res.status(404).json({ message: 'Cliente/telemetria não encontrado' });
+
+  const avg = (baseRes.currentRates.vazio + baseRes.currentRates.cheia) / 2;
+  const currentMonth = baseRes.currentMonthEur;
+
+  const providers = [
+    { name: 'EDP', bias: 1.0 },
+    { name: 'Endesa', bias: 0.98 },
+    { name: 'Iberdrola', bias: 0.985 }
+  ];
+
+  const mkOffer = (provider: string, variant: 'Eco' | 'Flex' | 'Noite', tariff: TariffType) => {
+    const base = avg * (variant === 'Eco' ? 0.94 : variant === 'Flex' ? 0.97 : 0.95);
+    const rates = defaultRatesFromAvg(base, tariff);
+    const fixed = Math.max(0, baseRes.currentFixed * (variant === 'Eco' ? 0.9 : variant === 'Flex' ? 1.0 : 0.95));
+    return { provider, name: `${provider} ${variant}`, tariff, rates, fixed_daily_fee_eur: Number(fixed.toFixed(4)) };
+  };
+
+  const candidates = [
+    mkOffer(providers[0]!.name, 'Eco', 'Simples'),
+    mkOffer(providers[1]!.name, 'Flex', 'Simples'),
+    mkOffer(providers[2]!.name, 'Noite', 'Bi-horário'),
+    mkOffer(providers[1]!.name, 'Noite', 'Bi-horário')
+  ];
+
+  const simulateMonth = (tariff: TariffType, rates: { vazio: number; cheia: number }, fixedDaily: number) => {
+    const dim = daysInUtcMonthFromIso(baseRes.lastUpdated);
+    const forecastMonthKwh = baseRes.forecastMonthKwh;
+    const isBi = isBiTariff(tariff) || isTriTariff(tariff);
+    const offKwh = forecastMonthKwh * (isBi ? baseRes.offpeakPct : 0);
+    const peakKwh = forecastMonthKwh - offKwh;
+    const energy = isBi ? offKwh * rates.vazio + peakKwh * rates.cheia : forecastMonthKwh * rates.cheia;
+    const power = fixedDaily * dim;
+    return Number((energy + power).toFixed(2));
+  };
+
+  const offers = candidates
+    .map((o) => {
+      const month = simulateMonth(o.tariff, o.rates, o.fixed_daily_fee_eur);
+      const savingsMonth = Number((currentMonth - month).toFixed(2));
+      const savingsYear = Number((savingsMonth * 12).toFixed(2));
+      const why =
+        isBiTariff(o.tariff) || isTriTariff(o.tariff)
+          ? `Aproveita melhor o seu consumo em vazio (~${Math.round(baseRes.offpeakPct * 100)}%).`
+          : 'Preço simples e previsível ao longo do dia.';
+      return {
+        provider: o.provider,
+        name: o.name,
+        tariff: o.tariff,
+        price_vazio_eur_per_kwh: o.rates.vazio,
+        price_cheia_eur_per_kwh: o.rates.cheia,
+        fixed_daily_fee_eur: o.fixed_daily_fee_eur,
+        estimatedMonthEur: month,
+        savingsMonthEur: savingsMonth,
+        savingsYearEur: savingsYear,
+        why
+      };
+    })
+    .sort((a, b) => b.savingsYearEur - a.savingsYearEur)
+    .slice(0, 6);
+
+  const best = offers[0] ?? null;
+  return res.json({
+    customerId,
+    lastUpdated: baseRes.lastUpdated,
+    currentMonthEur: baseRes.currentMonthEur,
+    offers,
+    best
+  });
+});
+
+app.get('/customers/:customerId/ai/insights', async (req, res) => {
+  const { customerId } = req.params;
+  const limit = Math.max(1, Math.min(8, Number((req.query.limit as string | undefined) ?? '3') || 3));
+  const c = await collections();
+
+  const customer = await c.customers.findOne(
+    { id: customerId },
+    { projection: { _id: 0, id: 1, name: 1, tariff: 1, price_eur_per_kwh: 1, fixed_daily_fee_eur: 1, contracted_power_kva: 1 } }
+  );
+  if (!customer) return res.status(404).json({ message: 'Cliente não encontrado' });
+
+  const latestTs = await getCustomerLatestTs(customerId);
+  if (!latestTs) return res.status(404).json({ message: 'Sem telemetria para este cliente' });
+
+  const end = new Date(latestTs);
+
+  // 1) Eficiência horária (já baseado em telemetria)
+  const hourly = await getAvgByHourKwh(customerId, end, 7);
+  const offPct = hourly.offpeakPct;
+
+  // 2) Detetar base-load noturna
+  const nightHours = new Set<number>([2, 3, 4, 5]);
+  const nightAvgKwh = hourly.avgByHourKwhUtc.reduce((acc, v, h) => acc + (nightHours.has(h) ? v : 0), 0) / 4;
+  const nightAvgWatts = (nightAvgKwh * 1000) / 1; // kWh por hora -> kW -> W
+
+  // 3) Pequena análise contratual para dica
+  const avgPrice = typeof (customer as any).price_eur_per_kwh === 'number' ? (customer as any).price_eur_per_kwh : RATE_EUR_PER_KWH;
+  const currentTariff = String((customer as any).tariff ?? 'Simples');
+  const shouldBi = offPct >= 0.42;
+
+  const tips: Array<{ id: string; icon: string; text: string }>
+    = [];
+
+  if (isBiTariff(currentTariff) || isTriTariff(currentTariff)) {
+    const pct = Math.round(offPct * 100);
+    tips.push({
+      id: 'tariff-usage',
+      icon: '✦',
+      text: pct >= 50
+        ? `Muito bom: ~${pct}% do seu consumo está em vazio. Continue a agendar tarefas flexíveis para a noite.`
+        : `Tem bi-horário mas só ~${pct}% do consumo está em vazio. Se mover alguns consumos 18h–21h para depois das 22h, ganha mais.`
+    });
+  } else {
+    if (shouldBi) {
+      tips.push({
+        id: 'tariff-switch',
+        icon: '✦',
+        text: `O seu consumo tem ~${Math.round(offPct * 100)}% em vazio. Um bi-horário pode fazer sentido para reduzir custo sem mexer muito nos hábitos.`
+      });
+    } else {
+      tips.push({
+        id: 'tariff-stable',
+        icon: '✦',
+        text: 'O seu consumo não está muito concentrado em vazio. Tarifa simples tende a ser mais previsível para si.'
+      });
+    }
+  }
+
+  if (nightAvgWatts >= 180) {
+    tips.push({
+      id: 'standby',
+      icon: '✦',
+      text: `Detetámos consumo noturno médio ~${Math.round(nightAvgWatts)}W (2h–5h). Verifique stand-by (TV/Box/PC) e carregadores sempre ligados.`
+    });
+  } else {
+    tips.push({
+      id: 'night-ok',
+      icon: '✦',
+      text: 'Boa notícia: o consumo noturno (2h–5h) está baixo — sinal de pouco stand-by.'
+    });
+  }
+
+  const peakHour = hourly.avgByHourKwhUtc
+    .map((v, h) => ({ h, v }))
+    .sort((a, b) => b.v - a.v)[0]?.h;
+  if (typeof peakHour === 'number') {
+    tips.push({
+      id: 'peak-hour',
+      icon: '✦',
+      text: `A sua hora mais intensa costuma ser às ${String(peakHour).padStart(2, '0')}h. Se conseguir espalhar alguns consumos por 1–2 horas, reduz picos e stress no contador.`
+    });
+  }
+
+  // Mantém só as melhores (com “pé e cabeça” e sem redundância)
+  const out = tips.slice(0, limit);
+  return res.json({
+    customerId,
+    lastUpdated: end.toISOString(),
+    tips: out
+  });
+});
+
 app.get('/customers/:customerId/power/suggestion', async (req, res) => {
   const { customerId } = req.params;
 
@@ -931,6 +1578,19 @@ app.get('/ai/model', (_req, res) => {
     interval_minutes: model.interval_minutes,
     metrics: model.metrics ?? null
   });
+});
+
+app.get('/ai/retrain/status', (_req, res) => {
+  return res.json({ status: getAiRetrainStatus() });
+});
+
+app.post('/ai/retrain', async (req, res) => {
+  const required = process.env.KYNEX_ADMIN_TOKEN;
+  if (required && req.header('x-admin-token') !== required) {
+    return res.status(403).json({ message: 'Forbidden' });
+  }
+  const out = await runAiRetrainOnce();
+  return res.json(out);
 });
 
 app.get('/ai/customers', async (_req, res) => {

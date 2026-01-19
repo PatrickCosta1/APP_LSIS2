@@ -28,6 +28,96 @@ type PowerSuggestionResponse = {
   alternatives?: Array<{ kva: number; riskExceedPct: number; powerFeeMonth: number; score: number }>;
 };
 
+type HourlyEfficiencyResponse = {
+  customerId: string;
+  lastUpdated: string;
+  days: number;
+  scorePct: number;
+  title: string;
+  note: string;
+  estimatedSavingsMonthEur: number;
+  bestHoursUtc: number[];
+  peakHoursUtc: number[];
+  avgKwhByHourUtc: number[];
+  forecastNext24hKwhByHourUtc: number[] | null;
+};
+
+type ContractAnalysisResponse = {
+  customerId: string;
+  lastUpdated: string;
+  forecastMonthKwh: number;
+  offpeakPct: number;
+  current: {
+    utility: string;
+    tariff: string;
+    price_vazio_eur_per_kwh: number;
+    price_cheia_eur_per_kwh: number;
+    fixed_daily_fee_eur: number;
+    estimatedMonth: { energy: number; power: number; total: number; offpeakPct: number };
+  };
+  suggestion: {
+    tariff: string;
+    message: string;
+    compare: {
+      simples: { rates: { vazio: number; cheia: number }; estimatedMonth: { energy: number; power: number; total: number; offpeakPct: number } };
+      bihorario: { rates: { vazio: number; cheia: number }; estimatedMonth: { energy: number; power: number; total: number; offpeakPct: number } };
+    };
+  };
+};
+
+type MarketOffersResponse = {
+  customerId: string;
+  lastUpdated: string;
+  currentMonthEur: number;
+  best: null | {
+    provider: string;
+    name: string;
+    tariff: string;
+    price_vazio_eur_per_kwh: number;
+    price_cheia_eur_per_kwh: number;
+    fixed_daily_fee_eur: number;
+    estimatedMonthEur: number;
+    savingsMonthEur: number;
+    savingsYearEur: number;
+    why: string;
+  };
+  offers: Array<{
+    provider: string;
+    name: string;
+    tariff: string;
+    price_vazio_eur_per_kwh: number;
+    price_cheia_eur_per_kwh: number;
+    fixed_daily_fee_eur: number;
+    estimatedMonthEur: number;
+    savingsMonthEur: number;
+    savingsYearEur: number;
+    why: string;
+  }>;
+};
+
+type InsightsResponse = {
+  customerId: string;
+  lastUpdated: string;
+  tips: Array<{ id: string; icon: string; text: string }>;
+};
+
+type ContractSimRequest = {
+  tariff: string;
+  price_vazio_eur_per_kwh: number;
+  price_cheia_eur_per_kwh: number;
+  fixed_daily_fee_eur: number;
+};
+
+type ContractSimResponse = {
+  customerId: string;
+  lastUpdated: string;
+  forecastMonthKwh: number;
+  offpeakPct: number;
+  current: { tariff: string; rates: { vazio: number; cheia: number }; fixed_daily_fee_eur: number; energy: number; power: number; total: number };
+  proposed: { tariff: string; rates: { vazio: number; cheia: number }; fixed_daily_fee_eur: number; energy: number; power: number; total: number };
+  savingsMonthEur: number;
+};
+
 const navItems = [
   {
     key: 'home',
@@ -124,6 +214,17 @@ function Charts() {
   const [power, setPower] = useState<PowerSuggestionResponse | null>(null);
   const [powerModalOpen, setPowerModalOpen] = useState(false);
 
+  const [eff, setEff] = useState<HourlyEfficiencyResponse | null>(null);
+
+  const [contract, setContract] = useState<ContractAnalysisResponse | null>(null);
+  const [offers, setOffers] = useState<MarketOffersResponse | null>(null);
+  const [insights, setInsights] = useState<InsightsResponse | null>(null);
+
+  const [priceModalOpen, setPriceModalOpen] = useState(false);
+  const [offersModalOpen, setOffersModalOpen] = useState(false);
+  const [simReq, setSimReq] = useState<ContractSimRequest | null>(null);
+  const [simResult, setSimResult] = useState<ContractSimResponse | null>(null);
+
   const contractedKva = power?.contractedKva ?? 0;
   const yearlyPeakKva = power?.yearlyPeakKva ?? 0;
   const suggestedIdealKva = power?.suggestedIdealKva ?? 0;
@@ -210,18 +311,132 @@ function Charts() {
       }
     }
 
+    async function loadHourlyEfficiency() {
+      try {
+        const res = await fetch(`${apiBase}/customers/${customerId}/analytics/hourly-efficiency`);
+        if (!res.ok) throw new Error('eff');
+        const json = (await res.json()) as HourlyEfficiencyResponse;
+        if (!cancelled) setEff(json);
+      } catch {
+        if (!cancelled) setEff(null);
+      }
+    }
+
+    async function loadContract() {
+      try {
+        const res = await fetch(`${apiBase}/customers/${customerId}/contract/analysis`);
+        if (!res.ok) throw new Error('contract');
+        const json = (await res.json()) as ContractAnalysisResponse;
+        if (!cancelled) setContract(json);
+      } catch {
+        if (!cancelled) setContract(null);
+      }
+    }
+
+    async function loadOffers() {
+      try {
+        const res = await fetch(`${apiBase}/customers/${customerId}/market/offers`);
+        if (!res.ok) throw new Error('offers');
+        const json = (await res.json()) as MarketOffersResponse;
+        if (!cancelled) setOffers(json);
+      } catch {
+        if (!cancelled) setOffers(null);
+      }
+    }
+
+    async function loadInsights() {
+      try {
+        const res = await fetch(`${apiBase}/customers/${customerId}/ai/insights?limit=3`);
+        if (!res.ok) throw new Error('insights');
+        const json = (await res.json()) as InsightsResponse;
+        if (!cancelled) setInsights(json);
+      } catch {
+        if (!cancelled) setInsights(null);
+      }
+    }
+
     loadSeries();
     loadPower();
+    loadHourlyEfficiency();
+    loadContract();
+    loadOffers();
+    loadInsights();
 
     const id = window.setInterval(() => {
       loadSeries();
       loadPower();
+      loadHourlyEfficiency();
+      loadContract();
+      loadOffers();
+      loadInsights();
     }, 8000);
     return () => {
       cancelled = true;
       window.clearInterval(id);
     };
   }, [apiBase, customerId, range]);
+
+  const effScore = typeof eff?.scorePct === 'number' ? eff.scorePct : null;
+  const effNote = eff?.note ?? 'A calcular com base no seu histórico e no modelo.';
+  const effSavings = typeof eff?.estimatedSavingsMonthEur === 'number' ? eff.estimatedSavingsMonthEur : null;
+
+  const contractVazio = typeof contract?.current?.price_vazio_eur_per_kwh === 'number' ? contract.current.price_vazio_eur_per_kwh : null;
+  const contractCheia = typeof contract?.current?.price_cheia_eur_per_kwh === 'number' ? contract.current.price_cheia_eur_per_kwh : null;
+  const contractFixed = typeof contract?.current?.fixed_daily_fee_eur === 'number' ? contract.current.fixed_daily_fee_eur : null;
+  const contractSuggestion = contract?.suggestion?.message ?? 'A analisar o seu contrato e o seu padrão de consumo.';
+
+  const bestOffer = offers?.best ?? null;
+  const offerSaveYear = typeof bestOffer?.savingsYearEur === 'number' ? bestOffer.savingsYearEur : null;
+
+  const insightCards = insights?.tips?.length
+    ? insights.tips
+    : [
+        { id: 'fallback-1', icon: '✦', text: 'A gerar dicas personalizadas com base na sua telemetria.' },
+        { id: 'fallback-2', icon: '✦', text: 'Assim que houver dados suficientes, sugerimos ações concretas e quantificadas.' }
+      ];
+
+  function fmtEur(v: number | null) {
+    if (typeof v !== 'number' || !Number.isFinite(v)) return '—';
+    return `${v.toFixed(4).replace('.', ',')}€`;
+  }
+
+  function fmtEur2(v: number | null) {
+    if (typeof v !== 'number' || !Number.isFinite(v)) return '—';
+    return `${v.toFixed(2).replace('.', ',')}€`;
+  }
+
+  async function openPriceSimulator() {
+    if (!contract) {
+      setPriceModalOpen(true);
+      setSimReq({ tariff: 'Simples', price_vazio_eur_per_kwh: 0.18, price_cheia_eur_per_kwh: 0.18, fixed_daily_fee_eur: 0.22 });
+      return;
+    }
+
+    setPriceModalOpen(true);
+    setSimResult(null);
+    setSimReq({
+      tariff: contract.suggestion?.tariff ?? contract.current.tariff ?? 'Simples',
+      price_vazio_eur_per_kwh: contract.current.price_vazio_eur_per_kwh,
+      price_cheia_eur_per_kwh: contract.current.price_cheia_eur_per_kwh,
+      fixed_daily_fee_eur: contract.current.fixed_daily_fee_eur
+    });
+  }
+
+  async function runSimulation() {
+    if (!apiBase || !customerId || !simReq) return;
+    try {
+      const res = await fetch(`${apiBase}/customers/${customerId}/contract/simulate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(simReq)
+      });
+      if (!res.ok) throw new Error('simulate');
+      const json = (await res.json()) as ContractSimResponse;
+      setSimResult(json);
+    } catch {
+      setSimResult(null);
+    }
+  }
 
   useEffect(() => {
     if (!powerModalOpen) return;
@@ -231,6 +446,24 @@ function Charts() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [powerModalOpen]);
+
+  useEffect(() => {
+    if (!priceModalOpen) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') setPriceModalOpen(false);
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [priceModalOpen]);
+
+  useEffect(() => {
+    if (!offersModalOpen) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOffersModalOpen(false);
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [offersModalOpen]);
 
   const powerAlternatives = (power?.alternatives ?? []).slice().sort((a, b) => a.score - b.score);
   const currentAlt = powerAlternatives.find((a) => Math.abs(a.kva - (power?.contractedKva ?? 0)) < 1e-6);
@@ -297,6 +530,211 @@ function Charts() {
         </div>
 
         <main className="content">
+          {priceModalOpen && (
+            <div
+              className="ana-modal-overlay"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Simulador de preços"
+              onMouseDown={(e) => {
+                if (e.target === e.currentTarget) setPriceModalOpen(false);
+              }}
+            >
+              <div className="ana-modal">
+                <div className="ana-modal-header">
+                  <div className="ana-modal-title">Simulador de Preços</div>
+                  <button className="ana-modal-close" type="button" aria-label="Fechar" onClick={() => setPriceModalOpen(false)}>
+                    ×
+                  </button>
+                </div>
+
+                <div className="ana-modal-subtitle">
+                  Ajuste os preços e compare com o seu custo estimado. Última leitura: <strong>{formatPtDateTime(contract?.lastUpdated ?? series.lastUpdated)}</strong>
+                </div>
+
+                <div className="ana-modal-grid">
+                  <div className="ana-modal-card">
+                    <div className="ana-modal-card-title">Preços a simular</div>
+
+                    <div className="ana-modal-kpis" style={{ gridTemplateColumns: '1fr 1fr' }}>
+                      <div className="ana-modal-kpi">
+                        <div className="ana-modal-kpi-label">Tarifário</div>
+                        <div className="ana-modal-kpi-value" style={{ fontSize: 14 }}>
+                          <select
+                            value={simReq?.tariff ?? 'Simples'}
+                            onChange={(e) => setSimReq((v) => ({
+                              tariff: e.target.value,
+                              price_vazio_eur_per_kwh: v?.price_vazio_eur_per_kwh ?? 0.18,
+                              price_cheia_eur_per_kwh: v?.price_cheia_eur_per_kwh ?? 0.18,
+                              fixed_daily_fee_eur: v?.fixed_daily_fee_eur ?? 0.22
+                            }))}
+                            style={{ width: '100%', padding: '8px 10px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(0,0,0,0.15)', color: 'inherit' }}
+                          >
+                            <option value="Simples">Simples</option>
+                            <option value="Bi-horário">Bi-horário</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="ana-modal-kpi">
+                        <div className="ana-modal-kpi-label">Termo fixo / dia (€)</div>
+                        <div className="ana-modal-kpi-value" style={{ fontSize: 14 }}>
+                          <input
+                            type="number"
+                            step="0.0001"
+                            value={typeof simReq?.fixed_daily_fee_eur === 'number' ? simReq.fixed_daily_fee_eur : ''}
+                            onChange={(e) => setSimReq((v) => ({
+                              tariff: v?.tariff ?? 'Simples',
+                              price_vazio_eur_per_kwh: v?.price_vazio_eur_per_kwh ?? 0.18,
+                              price_cheia_eur_per_kwh: v?.price_cheia_eur_per_kwh ?? 0.18,
+                              fixed_daily_fee_eur: Number(e.target.value)
+                            }))}
+                            style={{ width: '100%', padding: '8px 10px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(0,0,0,0.15)', color: 'inherit' }}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="ana-modal-kpi">
+                        <div className="ana-modal-kpi-label">Preço Vazio (€/kWh)</div>
+                        <div className="ana-modal-kpi-value" style={{ fontSize: 14 }}>
+                          <input
+                            type="number"
+                            step="0.0001"
+                            value={typeof simReq?.price_vazio_eur_per_kwh === 'number' ? simReq.price_vazio_eur_per_kwh : ''}
+                            onChange={(e) => setSimReq((v) => ({
+                              tariff: v?.tariff ?? 'Simples',
+                              price_vazio_eur_per_kwh: Number(e.target.value),
+                              price_cheia_eur_per_kwh: v?.price_cheia_eur_per_kwh ?? 0.18,
+                              fixed_daily_fee_eur: v?.fixed_daily_fee_eur ?? 0.22
+                            }))}
+                            style={{ width: '100%', padding: '8px 10px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(0,0,0,0.15)', color: 'inherit' }}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="ana-modal-kpi">
+                        <div className="ana-modal-kpi-label">Preço Cheia (€/kWh)</div>
+                        <div className="ana-modal-kpi-value" style={{ fontSize: 14 }}>
+                          <input
+                            type="number"
+                            step="0.0001"
+                            value={typeof simReq?.price_cheia_eur_per_kwh === 'number' ? simReq.price_cheia_eur_per_kwh : ''}
+                            onChange={(e) => setSimReq((v) => ({
+                              tariff: v?.tariff ?? 'Simples',
+                              price_vazio_eur_per_kwh: v?.price_vazio_eur_per_kwh ?? 0.18,
+                              price_cheia_eur_per_kwh: Number(e.target.value),
+                              fixed_daily_fee_eur: v?.fixed_daily_fee_eur ?? 0.22
+                            }))}
+                            style={{ width: '100%', padding: '8px 10px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(0,0,0,0.15)', color: 'inherit' }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="ana-modal-actions">
+                      <button className="ana-modal-secondary" type="button" onClick={() => setPriceModalOpen(false)}>
+                        Fechar
+                      </button>
+                      <button className="ana-modal-primary" type="button" onClick={runSimulation}>
+                        Simular
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="ana-modal-card">
+                    <div className="ana-modal-card-title">Resultado</div>
+                    <div className="ana-modal-note">
+                      {simResult ? (
+                        <>
+                          <div style={{ display: 'grid', gap: 8 }}>
+                            <div>
+                              <strong>Atual:</strong> {fmtEur2(simResult.current.total)} / mês
+                            </div>
+                            <div>
+                              <strong>Proposto:</strong> {fmtEur2(simResult.proposed.total)} / mês
+                            </div>
+                            <div>
+                              <strong>Poupança:</strong> {fmtEur2(simResult.savingsMonthEur)} / mês
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <div style={{ opacity: 0.75 }}>Clique em “Simular” para calcular.</div>
+                      )}
+                    </div>
+                    <div className="ana-modal-footnote">
+                      Estimativa baseada no seu consumo recente e distribuição Vazio/Cheia.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {offersModalOpen && (
+            <div
+              className="ana-modal-overlay"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Ofertas do mercado"
+              onMouseDown={(e) => {
+                if (e.target === e.currentTarget) setOffersModalOpen(false);
+              }}
+            >
+              <div className="ana-modal">
+                <div className="ana-modal-header">
+                  <div className="ana-modal-title">Ofertas do Mercado</div>
+                  <button className="ana-modal-close" type="button" aria-label="Fechar" onClick={() => setOffersModalOpen(false)}>
+                    ×
+                  </button>
+                </div>
+
+                <div className="ana-modal-subtitle">
+                  Comparação estimada com base no seu consumo. Última leitura: <strong>{formatPtDateTime(offers?.lastUpdated ?? series.lastUpdated)}</strong>
+                </div>
+
+                <div className="ana-modal-table-wrap">
+                  <div className="ana-modal-card-title">Ranking</div>
+                  <table className="ana-modal-table" aria-label="Tabela de ofertas">
+                    <thead>
+                      <tr>
+                        <th>Oferta</th>
+                        <th>Tarifa</th>
+                        <th>€/mês</th>
+                        <th>Poupança/ano</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {offers?.offers?.length ? (
+                        offers.offers.map((o) => (
+                          <tr key={`${o.provider}:${o.name}:${o.tariff}`} className={bestOffer && o.name === bestOffer.name ? 'best' : ''}>
+                            <td>
+                              <strong>{o.provider}</strong> — {o.name}
+                              <div style={{ opacity: 0.75, fontSize: 12, marginTop: 4 }}>{o.why}</div>
+                            </td>
+                            <td>{o.tariff}</td>
+                            <td>{fmtEur2(o.estimatedMonthEur)}</td>
+                            <td>{fmtEur2(o.savingsYearEur)}</td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={4} style={{ opacity: 0.75, padding: 10 }}>Sem dados suficientes para comparar ofertas.</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="ana-modal-actions">
+                  <button className="ana-modal-secondary" type="button" onClick={() => setOffersModalOpen(false)}>
+                    Fechar
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {powerModalOpen && (
             <div
               className="ana-modal-overlay"
@@ -567,18 +1005,20 @@ function Charts() {
 
               <div className="ana-mini-body">
                 <div className="ana-eff">
-                  <div className="ana-eff-gauge" aria-label="Eficiência 65%">
+                  <div className="ana-eff-gauge" aria-label={`Eficiência ${effScore ?? '—'}%`}>
                     <div className="ana-eff-gauge-inner">
-                      <div className="ana-eff-gauge-value">65%</div>
+                      <div className="ana-eff-gauge-value">{typeof effScore === 'number' ? `${effScore}%` : '—'}</div>
                     </div>
                   </div>
 
                   <div className="ana-eff-copy">
-                    <div className="ana-eff-note">Aproveitou bem a noite, mas pode melhorar.</div>
+                    <div className="ana-eff-note">{effNote}</div>
                     <button className="ana-eff-cta" type="button">
                       <span className="ana-eff-cta-col">
                         <strong>Movimentos Inteligentes🧠</strong>
-                        <span className="ana-eff-save">Poupe até ~6€</span>
+                        <span className="ana-eff-save">
+                          {typeof effSavings === 'number' ? `Poupe até ~${effSavings.toFixed(0)}€/mês` : '—'}
+                        </span>
                       </span>
                     </button>
                   </div>
@@ -590,7 +1030,7 @@ function Charts() {
           <section className="ana-contract-card" aria-label="Análise contratual">
             <div className="ana-contract-head">
               <div className="ana-contract-title">Análise Contratual</div>
-              <button className="ana-contract-cta" type="button">
+              <button className="ana-contract-cta" type="button" onClick={openPriceSimulator}>
                 Simulador de Preços
                 <span className="ana-contract-cta-icon" aria-hidden="true">↗</span>
               </button>
@@ -605,18 +1045,18 @@ function Charts() {
                     <div className="ana-contract-pill-label">kWh/hora</div>
                     <div className="ana-contract-pill">
                       <span className="ana-contract-pill-key">Vazio:</span>
-                      <span className="ana-contract-pill-val">0,1345€</span>
+                        <span className="ana-contract-pill-val">{fmtEur(contractVazio)}</span>
                     </div>
                     <div className="ana-contract-pill">
                       <span className="ana-contract-pill-key">Cheia:</span>
-                      <span className="ana-contract-pill-val">0,2156€</span>
+                        <span className="ana-contract-pill-val">{fmtEur(contractCheia)}</span>
                     </div>
                   </div>
 
                   <div className="ana-contract-pill-group">
                     <div className="ana-contract-pill-label">Potência/dia</div>
                     <div className="ana-contract-pill big">
-                      <span className="ana-contract-pill-val">0,3174€</span>
+                      <span className="ana-contract-pill-val">{fmtEur(contractFixed)}</span>
                     </div>
                   </div>
                 </div>
@@ -624,12 +1064,14 @@ function Charts() {
 
               <div className="ana-contract-right" aria-label="Ofertas">
                 <div className="ana-contract-right-text">
-                  Existem ofertas mais vantajosas no mercado!
+                  {bestOffer ? bestOffer.why : contractSuggestion}
                 </div>
 
-                <div className="ana-contract-save">Poupe até ~60€/ano</div>
+                <div className="ana-contract-save">
+                  {typeof offerSaveYear === 'number' ? `Poupe até ~${offerSaveYear.toFixed(0)}€/ano` : 'A procurar ofertas vantajosas…'}
+                </div>
 
-                <button className="ana-contract-offers" type="button">
+                <button className="ana-contract-offers" type="button" onClick={() => setOffersModalOpen(true)}>
                   Ver Ofertas
                   <span className="ana-contract-offers-icon" aria-hidden="true">↗</span>
                 </button>
@@ -638,27 +1080,12 @@ function Charts() {
           </section>
 
           <section className="ana-insights" aria-label="Insights">
-            <article className="ana-insight-card" aria-label="Insight potência">
-              <div className="ana-insight-icon" aria-hidden="true">✦</div>
-              <div className="ana-insight-text">
-                O seu pico máximo este ano foi de <strong>{yearlyPeakKva.toFixed(1)}kVA</strong>, mas paga por{' '}
-                <strong>{contractedKva.toFixed(1)}kVA</strong>. Baixe para <strong>{suggestedIdealKva.toFixed(1)} kVA</strong> sem perder conforto.
-              </div>
-            </article>
-
-            <article className="ana-insight-card" aria-label="Insight lavagem">
-              <div className="ana-insight-icon" aria-hidden="true">✦</div>
-              <div className="ana-insight-text">
-                Detetámos 4 ciclos de lavagem às 19h00 (Ponta). Se agendar para depois das 22h00 (Vazio), a eletricidade é 40% mais barata.
-              </div>
-            </article>
-
-            <article className="ana-insight-card" aria-label="Insight standby">
-              <div className="ana-insight-icon" aria-hidden="true">✦</div>
-              <div className="ana-insight-text">
-                A sua casa gasta 250W constantes às 4h da manhã. Verifique se a TV, a Box ou o PC ficaram em stand-by.
-              </div>
-            </article>
+            {insightCards.slice(0, 3).map((t) => (
+              <article key={t.id} className="ana-insight-card" aria-label="Insight">
+                <div className="ana-insight-icon" aria-hidden="true">{t.icon || '✦'}</div>
+                <div className="ana-insight-text">{t.text}</div>
+              </article>
+            ))}
           </section>
         </main>
 
