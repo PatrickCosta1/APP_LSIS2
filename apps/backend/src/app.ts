@@ -972,6 +972,7 @@ app.get('/ai/customers', async (_req, res) => {
 });
 
 app.post('/ai/customers', async (req, res) => {
+  console.log('POST /ai/customers payload:', JSON.stringify(req.body));
   const schema = z.object({
     name: z.string().min(1).max(120),
     segment: z.string().min(1).max(40).default('residential'),
@@ -999,11 +1000,15 @@ app.post('/ai/customers', async (req, res) => {
   });
 
   const parsed = schema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ errors: parsed.error.flatten().fieldErrors });
+  if (!parsed.success) {
+    console.error('POST /ai/customers schema error:', JSON.stringify(parsed.error.flatten().fieldErrors));
+    return res.status(400).json({ errors: parsed.error.flatten().fieldErrors });
+  }
 
   const id = `U_${crypto.randomUUID()}`;
   const createdAt = new Date();
   const c = parsed.data;
+  console.log('POST /ai/customers parsed data:', JSON.stringify(c));
 
   const toInt01 = (v: unknown, fallback: number) => {
     if (typeof v === 'boolean') return v ? 1 : 0;
@@ -1017,36 +1022,41 @@ app.post('/ai/customers', async (req, res) => {
     return '';
   };
 
-  const cols = await collections();
-  await cols.customers.insertOne({
-    id,
-    name: c.name,
-    segment: c.segment,
-    city: c.city,
-    contracted_power_kva: c.contracted_power_kva,
-    tariff: c.tariff,
-    utility: c.utility,
+  try {
+    const cols = await collections();
+    await cols.customers.insertOne({
+      id,
+      name: c.name,
+      segment: c.segment,
+      city: c.city,
+      contracted_power_kva: c.contracted_power_kva,
+      tariff: c.tariff,
+      utility: c.utility,
 
-    home_area_m2: c.home_area_m2 ?? 80,
-    household_size: c.household_size ?? 2,
-    locality_type: c.locality_type ?? 'Urbana',
-    dwelling_type: c.dwelling_type ?? 'Apartamento',
-    build_year_band: c.build_year_band ?? '2000-2014',
-    heating_sources: toCsv(c.heating_sources),
+      home_area_m2: c.home_area_m2 ?? 80,
+      household_size: c.household_size ?? 2,
+      locality_type: c.locality_type ?? 'Urbana',
+      dwelling_type: c.dwelling_type ?? 'Apartamento',
+      build_year_band: c.build_year_band ?? '2000-2014',
+      heating_sources: toCsv(c.heating_sources),
 
-    has_solar: toInt01(c.has_solar, 0),
-    ev_count: c.ev_count ?? 0,
-    has_smart_meter: toInt01(c.has_smart_meter, 1),
-    price_eur_per_kwh: c.price_eur_per_kwh ?? RATE_EUR_PER_KWH,
-    fixed_daily_fee_eur: c.fixed_daily_fee_eur ?? 0,
+      has_solar: toInt01(c.has_solar, 0),
+      ev_count: c.ev_count ?? 0,
+      has_smart_meter: toInt01(c.has_smart_meter, 1),
+      price_eur_per_kwh: c.price_eur_per_kwh ?? RATE_EUR_PER_KWH,
+      fixed_daily_fee_eur: c.fixed_daily_fee_eur ?? 0,
 
-    alert_sensitivity: c.alert_sensitivity ?? 'Média',
-    main_appliances: toCsv(c.main_appliances),
+      alert_sensitivity: c.alert_sensitivity ?? 'Média',
+      main_appliances: toCsv(c.main_appliances),
 
-    created_at: createdAt
-  });
-
-  return res.status(201).json({ id });
+      created_at: createdAt
+    });
+    console.log('POST /ai/customers created id:', id);
+    return res.status(201).json({ id });
+  } catch (err) {
+    console.error('POST /ai/customers insert error:', err);
+    return res.status(500).json({ message: 'Erro ao criar cliente' });
+  }
 });
 
 app.get('/ai/forecast/:customerId', async (req, res) => {
