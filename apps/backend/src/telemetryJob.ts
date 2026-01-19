@@ -1,4 +1,4 @@
-import { getDb } from './db';
+import { getCollections, initDb } from './db';
 
 type CustomerRow = {
   id: string;
@@ -6,7 +6,7 @@ type CustomerRow = {
   contracted_power_kva: number;
   home_area_m2: number;
   household_size: number;
-  has_solar: number;
+  has_solar: boolean;
   ev_count: number;
   price_eur_per_kwh: number;
 };
@@ -71,17 +71,15 @@ function simulateTempC(ts: Date) {
   return Number((season + daily + randn() * 0.6).toFixed(2));
 }
 
-export function seedCustomerTelemetry(customer: CustomerRow, days = 1) {
-  const db = getDb();
+export async function seedCustomerTelemetry(customer: CustomerRow, days = 1) {
+  await initDb();
+  const c = getCollections();
 
-  const insert = db.prepare(
-    'INSERT INTO customer_telemetry_15m (customer_id, ts, watts, euros, temp_c, is_estimated) VALUES (?, ?, ?, ?, ?, 0)'
-  );
-
-  const latest = db
-    .prepare('SELECT ts FROM customer_telemetry_15m WHERE customer_id = ? ORDER BY ts DESC LIMIT 1')
-    .get(customer.id) as { ts: string } | undefined;
-  if (latest) return;
+  const latestRow = await c.customerTelemetry15m
+    .find({ customer_id: customer.id }, { projection: { _id: 1 } })
+    .limit(1)
+    .toArray();
+  if (latestRow.length) return;
 
   const start = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
   // alinhar aos 15 minutos
@@ -91,22 +89,34 @@ export function seedCustomerTelemetry(customer: CustomerRow, days = 1) {
   let ts = aligned;
   let lastWatts = 420;
 
-  const tx = db.transaction(() => {
-    for (let i = 0; i < days * 96; i += 1) {
-      lastWatts = simulateNextWatts(customer, ts, lastWatts);
-      const kwh = (lastWatts / 1000) * SAMPLE_INTERVAL_HOURS;
-      const euros = kwh * (customer.price_eur_per_kwh ?? 0.2);
-      insert.run(customer.id, ts.toISOString(), lastWatts, Number(euros.toFixed(6)), simulateTempC(ts));
-      ts = new Date(ts.getTime() + SAMPLE_INTERVAL_MINUTES * 60 * 1000);
-    }
-  });
+  const docs = [] as Array<{
+    customer_id: string;
+    ts: Date;
+    watts: number;
+    euros: number;
+    temp_c: number;
+    is_estimated: boolean;
+  }>;
 
-  tx();
+  for (let i = 0; i < days * 96; i += 1) {
+    lastWatts = simulateNextWatts(customer, ts, lastWatts);
+    const kwh = (lastWatts / 1000) * SAMPLE_INTERVAL_HOURS;
+    const euros = kwh * (customer.price_eur_per_kwh ?? 0.2);
+    docs.push({
+      customer_id: customer.id,
+      ts,
+      watts: lastWatts,
+      euros: Number(euros.toFixed(6)),
+      temp_c: simulateTempC(ts),
+      is_estimated: false
+    });
+    ts = new Date(ts.getTime() + SAMPLE_INTERVAL_MINUTES * 60 * 1000);
+  }
+
+  if (docs.length) await c.customerTelemetry15m.insertMany(docs);
 }
 
 export function startTelemetryJob() {
-  const db = getDb();
-
   const tickMs = Number.parseInt(process.env.KYNEX_SIM_TICK_MS ?? '10000', 10);
   if (!Number.isFinite(tickMs) || tickMs < 500) {
     // eslint-disable-next-line no-console
@@ -115,56 +125,126 @@ export function startTelemetryJob() {
 
   const effectiveTickMs = Number.isFinite(tickMs) && tickMs >= 500 ? tickMs : 10000;
 
-  const listCustomers = db.prepare(
-    'SELECT id, segment, contracted_power_kva, home_area_m2, household_size, has_solar, ev_count, price_eur_per_kwh FROM customers'
-  );
+  let interval: NodeJS.Timeout | null = null;
+  let stopped = false;
+  let inFlight = false;
 
-  const getLatest = db.prepare(
-    'SELECT ts, watts FROM customer_telemetry_15m WHERE customer_id = ? ORDER BY ts DESC LIMIT 1'
-  );
+  const normalizeCustomer = (doc: any): CustomerRow => {
+    const id = String(doc?.id ?? '');
+    return {
+      id,
+      segment: String(doc?.segment ?? 'Residencial'),
+      contracted_power_kva: Number(doc?.contracted_power_kva ?? 6.9),
+      home_area_m2: Number(doc?.home_area_m2 ?? 90),
+      household_size: Number(doc?.household_size ?? 2),
+      has_solar: Boolean(doc?.has_solar ?? false),
+      ev_count: Number(doc?.ev_count ?? 0),
+      price_eur_per_kwh: Number(doc?.price_eur_per_kwh ?? 0.2)
+    };
+  };
 
-  const insert = db.prepare(
-    'INSERT INTO customer_telemetry_15m (customer_id, ts, watts, euros, temp_c, is_estimated) VALUES (?, ?, ?, ?, ?, 1)'
-  );
-
-  const tx = db.transaction((rows: CustomerRow[]) => {
-    for (const customer of rows) {
-      const latest = getLatest.get(customer.id) as { ts: string; watts: number } | undefined;
-      if (!latest) {
-        // Cliente novo: começa sem dados. O primeiro ponto entra no próximo tick.
-        const initialTs = new Date();
-        initialTs.setUTCMinutes(Math.floor(initialTs.getUTCMinutes() / 15) * 15, 0, 0);
-        const initialWatts = simulateNextWatts(customer, initialTs, 420);
-        const kwh = (initialWatts / 1000) * SAMPLE_INTERVAL_HOURS;
-        const euros = kwh * (customer.price_eur_per_kwh ?? 0.2);
-        const tempC = simulateTempC(initialTs);
-
-        insert.run(customer.id, initialTs.toISOString(), initialWatts, Number(euros.toFixed(6)), tempC);
-        continue;
-      }
-
-      const nextTs = new Date(new Date(latest.ts).getTime() + SAMPLE_INTERVAL_MINUTES * 60 * 1000);
-      const nextWatts = simulateNextWatts(customer, nextTs, latest.watts);
-      const kwh = (nextWatts / 1000) * SAMPLE_INTERVAL_HOURS;
-      const euros = kwh * (customer.price_eur_per_kwh ?? 0.2);
-      const tempC = simulateTempC(nextTs);
-
-      insert.run(customer.id, nextTs.toISOString(), nextWatts, Number(euros.toFixed(6)), tempC);
-    }
-  });
-
-  const interval = setInterval(() => {
+  const start = async () => {
     try {
-      const customers = listCustomers.all() as CustomerRow[];
-      if (!customers.length) return;
-      tx(customers);
+      await initDb();
+      const c = getCollections();
+
+      interval = setInterval(() => {
+        if (stopped || inFlight) return;
+        inFlight = true;
+
+        void (async () => {
+          try {
+            const customerDocs = await c.customers
+              .find(
+                {},
+                {
+                  projection: {
+                    _id: 0,
+                    id: 1,
+                    segment: 1,
+                    contracted_power_kva: 1,
+                    home_area_m2: 1,
+                    household_size: 1,
+                    has_solar: 1,
+                    ev_count: 1,
+                    price_eur_per_kwh: 1
+                  }
+                }
+              )
+              .toArray();
+
+            const customers = customerDocs.map(normalizeCustomer).filter((x) => x.id.length > 0);
+            if (!customers.length) return;
+
+            const ids = customers.map((x) => x.id);
+            const latestRows = await c.customerTelemetry15m
+              .aggregate([
+                { $match: { customer_id: { $in: ids } } },
+                { $sort: { customer_id: 1, ts: -1 } },
+                { $group: { _id: '$customer_id', ts: { $first: '$ts' }, watts: { $first: '$watts' } } }
+              ])
+              .toArray();
+
+            const latestByCustomer = new Map<string, { ts: Date; watts: number }>();
+            for (const row of latestRows as any[]) {
+              const id = String(row?._id ?? '');
+              const ts = row?.ts instanceof Date ? row.ts : row?.ts ? new Date(row.ts) : null;
+              const watts = Number(row?.watts);
+              if (id.length > 0 && ts && Number.isFinite(watts)) latestByCustomer.set(id, { ts, watts });
+            }
+
+            const nowAligned = new Date();
+            nowAligned.setUTCMinutes(Math.floor(nowAligned.getUTCMinutes() / 15) * 15, 0, 0);
+
+            const docs = [] as Array<{
+              customer_id: string;
+              ts: Date;
+              watts: number;
+              euros: number;
+              temp_c: number;
+              is_estimated: boolean;
+            }>;
+
+            for (const customer of customers) {
+              const latest = latestByCustomer.get(customer.id);
+              const nextTs = latest ? new Date(latest.ts.getTime() + SAMPLE_INTERVAL_MINUTES * 60 * 1000) : nowAligned;
+              const lastWatts = latest ? latest.watts : 420;
+
+              const nextWatts = simulateNextWatts(customer, nextTs, lastWatts);
+              const kwh = (nextWatts / 1000) * SAMPLE_INTERVAL_HOURS;
+              const euros = kwh * (customer.price_eur_per_kwh ?? 0.2);
+              const tempC = simulateTempC(nextTs);
+
+              docs.push({
+                customer_id: customer.id,
+                ts: nextTs,
+                watts: nextWatts,
+                euros: Number(euros.toFixed(6)),
+                temp_c: tempC,
+                is_estimated: true
+              });
+            }
+
+            if (docs.length) await c.customerTelemetry15m.insertMany(docs);
+          } catch {
+            // não derruba o server
+          } finally {
+            inFlight = false;
+          }
+        })();
+      }, effectiveTickMs);
+
+      // eslint-disable-next-line no-console
+      console.log(`Telemetria sintética contínua ativa (tick=${effectiveTickMs}ms, step=${SAMPLE_INTERVAL_MINUTES}min)`);
     } catch {
       // não derruba o server
     }
-  }, effectiveTickMs);
+  };
 
-  // eslint-disable-next-line no-console
-  console.log(`Telemetria sintética contínua ativa (tick=${effectiveTickMs}ms, step=${SAMPLE_INTERVAL_MINUTES}min)`);
+  void start();
 
-  return () => clearInterval(interval);
+  return () => {
+    stopped = true;
+    if (interval) clearInterval(interval);
+  };
 }

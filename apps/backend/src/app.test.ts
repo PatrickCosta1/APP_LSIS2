@@ -1,5 +1,21 @@
 import request from 'supertest';
 import app from './app';
+import { MongoMemoryServer } from 'mongodb-memory-server';
+import { closeDb, initDb } from './db';
+
+let mongod: MongoMemoryServer;
+
+beforeAll(async () => {
+  mongod = await MongoMemoryServer.create();
+  process.env.MONGODB_URI = mongod.getUri();
+  process.env.MONGODB_DB = 'kynex_test';
+  await initDb();
+});
+
+afterAll(async () => {
+  await closeDb();
+  await mongod.stop();
+});
 
 describe('health', () => {
   it('responde ok', async () => {

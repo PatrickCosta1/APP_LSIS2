@@ -2,7 +2,7 @@ import cors from 'cors';
 import express from 'express';
 import crypto from 'node:crypto';
 import { z } from 'zod';
-import { getDb } from './db';
+import { getCollections, initDb, type Collections } from './db';
 import { clampPredictionForCustomer, loadAiModel, makeFeatures, predictNextWatts, type CustomerProfile } from './ai';
 import { clampSuggestedPowerKva, loadPowerModel, makePowerFeatures, predictRidge } from './powerAi';
 
@@ -11,7 +11,14 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const db = getDb();
+let collectionsPromise: Promise<Collections> | null = null;
+async function collections() {
+  if (!collectionsPromise) {
+    collectionsPromise = initDb().then(() => getCollections());
+  }
+  return collectionsPromise;
+}
+
 const RATE_EUR_PER_KWH = 0.2;
 const SAMPLE_INTERVAL_HOURS = 0.25; // 15m dos dados sintéticos
 
@@ -73,54 +80,56 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
 
-app.get('/telemetry/now', (_req, res) => {
-  const latest = db
-    .prepare('SELECT ts, watts FROM samples ORDER BY ts DESC LIMIT 1')
-    .get() as { ts: string; watts: number } | undefined;
+app.get('/telemetry/now', async (_req, res) => {
+  const c = await collections();
 
-  if (!latest) return res.status(404).json({ message: 'Sem dados' });
+  const latest = await c.samples.find({}, { projection: { ts: 1, watts: 1 } }).sort({ ts: -1 }).limit(1).toArray();
+  const row = latest[0];
+  if (!row) return res.status(404).json({ message: 'Sem dados' });
 
-  const eurosPerHour = (latest.watts / 1000) * RATE_EUR_PER_KWH;
+  const eurosPerHour = (row.watts / 1000) * RATE_EUR_PER_KWH;
   const forecastMonthly = eurosPerHour * 24 * 30;
 
-  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const dayRows = db
-    .prepare('SELECT watts FROM samples WHERE ts >= ?')
-    .all(since) as Array<{ watts: number }>;
-  const costDay = dayRows.reduce((acc, row) => acc + (row.watts / 1000) * RATE_EUR_PER_KWH * SAMPLE_INTERVAL_HOURS, 0);
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const dayRows = await c.samples.find({ ts: { $gte: since } }, { projection: { watts: 1 } }).toArray();
+  const costDay = dayRows.reduce(
+    (acc, r) => acc + (r.watts / 1000) * RATE_EUR_PER_KWH * SAMPLE_INTERVAL_HOURS,
+    0
+  );
 
   res.json({
-    watts: latest.watts,
+    watts: row.watts,
     eurosPerHour: Number(eurosPerHour.toFixed(3)),
     forecastMonthly: Number(forecastMonthly.toFixed(2)),
     costLast24h: Number(costDay.toFixed(2)),
-    lastUpdated: latest.ts
+    lastUpdated: row.ts.toISOString()
   });
 });
 
-app.get('/telemetry/day', (_req, res) => {
-  const rows = db.prepare('SELECT ts, watts FROM samples ORDER BY ts ASC LIMIT 96').all() as Array<{ ts: string; watts: number }>;
-
-  const points = rows.map((r) => ({ ts: r.ts, watts: r.watts }));
-  res.json(points);
+app.get('/telemetry/day', async (_req, res) => {
+  const c = await collections();
+  const rows = await c.samples.find({}, { projection: { ts: 1, watts: 1 } }).sort({ ts: 1 }).limit(96).toArray();
+  res.json(rows.map((r) => ({ ts: r.ts.toISOString(), watts: r.watts })));
 });
 
-app.get('/telemetry/range', (req, res) => {
-  const { from, to, bucket = '15m' } = req.query as { from?: string; to?: string; bucket?: string };
-  const end = to ?? new Date().toISOString();
-  const start = from ?? new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+app.get('/telemetry/range', async (req, res) => {
+  const c = await collections();
 
-  if (bucket === '15m') {
-    const rows = db
-      .prepare('SELECT ts, watts, euros FROM telemetry_15m WHERE ts BETWEEN ? AND ? ORDER BY ts ASC')
-      .all(start, end);
-    return res.json(rows);
+  const { from, to, bucket = '15m' } = req.query as { from?: string; to?: string; bucket?: string };
+  const end = to ? new Date(to) : new Date();
+  const start = from ? new Date(from) : new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) {
+    return res.status(400).json({ message: 'from/to inválidos' });
   }
 
-  const rows = db
-    .prepare('SELECT ts, watts, euros FROM samples WHERE ts BETWEEN ? AND ? ORDER BY ts ASC')
-    .all(start, end);
-  return res.json(rows);
+  const coll = bucket === '15m' ? c.telemetry15m : c.samples;
+  const rows = await coll
+    .find({ ts: { $gte: start, $lte: end } }, { projection: { ts: 1, watts: 1, euros: 1 } })
+    .sort({ ts: 1 })
+    .toArray();
+
+  return res.json(rows.map((r) => ({ ts: r.ts.toISOString(), watts: r.watts, euros: r.euros })));
 });
 
 app.get('/telemetry/forecast', (_req, res) => {
@@ -134,58 +143,80 @@ app.get('/telemetry/forecast', (_req, res) => {
   res.json(points);
 });
 
-const listEvents = () =>
-  db
-    .prepare('SELECT id, label, status, confidence, watts, duration_min, created_at FROM nilm_events ORDER BY created_at DESC')
-    .all();
+const listEvents = async () => {
+  const c = await collections();
+  const rows = await c.nilmEvents
+    .find({}, { projection: { _id: 0, id: 1, label: 1, status: 1, confidence: 1, watts: 1, duration_min: 1, created_at: 1 } })
+    .sort({ created_at: -1 })
+    .toArray();
+  return rows.map((r) => ({ ...r, created_at: r.created_at.toISOString() }));
+};
 
-app.get('/events', (_req, res) => {
-  res.json(listEvents());
+app.get('/events', async (_req, res) => {
+  res.json(await listEvents());
 });
 
-app.get('/nilm/events', (_req, res) => {
-  res.json(listEvents());
+app.get('/nilm/events', async (_req, res) => {
+  res.json(await listEvents());
 });
 
-app.post('/events/:id/confirm', (req, res) => {
+app.post('/events/:id/confirm', async (req, res) => {
   const schema = z.object({ label: z.string().min(1).max(120) });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ errors: parsed.error.flatten().fieldErrors });
 
   const { id } = req.params;
-  const result = db
-    .prepare('UPDATE nilm_events SET label = ?, status = ?, confidence = ? WHERE id = ?')
-    .run(parsed.data.label, 'confirmed', 0.9, id);
-  if (result.changes === 0) return res.status(404).json({ message: 'Evento não encontrado' });
-  return res.json({ ok: true });
-});
+  const c = await collections();
+  const eventId = Number.parseInt(id, 10);
+  if (!Number.isFinite(eventId)) return res.status(400).json({ message: 'id inválido' });
 
-app.get('/alerts', (_req, res) => {
-  const rows = db.prepare('SELECT id, message, severity, status, type, created_at FROM alerts ORDER BY created_at DESC').all();
-  res.json(rows);
-});
-
-app.post('/alerts/:id/resolve', (req, res) => {
-  const { id } = req.params;
-  const result = db.prepare('UPDATE alerts SET status = ? WHERE id = ?').run('closed', id);
-  if (result.changes === 0) return res.status(404).json({ message: 'Alerta não encontrado' });
-  return res.json({ ok: true });
-});
-
-app.get('/appliances', (_req, res) => {
-  const appliances = db
-    .prepare('SELECT id, name, category, standby_watts, efficiency_score, annual_cost, created_at FROM appliances ORDER BY id ASC')
-    .all();
-
-  const usageByAppliance = db.prepare(
-    'SELECT appliance_id, SUM(energy_wh) as energy_wh, SUM(cost_eur) as cost_eur FROM appliance_usage GROUP BY appliance_id'
+  const result = await c.nilmEvents.updateOne(
+    { id: eventId },
+    { $set: { label: parsed.data.label, status: 'confirmed', confidence: 0.9 } }
   );
+  if (result.matchedCount === 0) return res.status(404).json({ message: 'Evento não encontrado' });
+  return res.json({ ok: true });
+});
 
-  const usage = usageByAppliance.all() as Array<{ appliance_id: number; energy_wh: number; cost_eur: number }>;
-  const usageMap = Object.fromEntries(usage.map((u) => [u.appliance_id, u]));
+app.get('/alerts', async (_req, res) => {
+  const c = await collections();
+  const rows = await c.alerts
+    .find({}, { projection: { _id: 0, id: 1, message: 1, severity: 1, status: 1, type: 1, created_at: 1 } })
+    .sort({ created_at: -1 })
+    .toArray();
+  res.json(rows.map((r) => ({ ...r, created_at: r.created_at.toISOString() })));
+});
 
-  const withUsage = appliances.map((a: any) => ({
+app.post('/alerts/:id/resolve', async (req, res) => {
+  const { id } = req.params;
+  const c = await collections();
+  const alertId = Number.parseInt(id, 10);
+  if (!Number.isFinite(alertId)) return res.status(400).json({ message: 'id inválido' });
+
+  const result = await c.alerts.updateOne({ id: alertId }, { $set: { status: 'closed' } });
+  if (result.matchedCount === 0) return res.status(404).json({ message: 'Alerta não encontrado' });
+  return res.json({ ok: true });
+});
+
+app.get('/appliances', async (_req, res) => {
+  const c = await collections();
+
+  const appliances = await c.appliances
+    .find({}, { projection: { _id: 0, id: 1, name: 1, category: 1, standby_watts: 1, efficiency_score: 1, annual_cost: 1, created_at: 1 } })
+    .sort({ id: 1 })
+    .toArray();
+
+  const usage = await c.applianceUsage
+    .aggregate([
+      { $group: { _id: '$appliance_id', energy_wh: { $sum: '$energy_wh' }, cost_eur: { $sum: '$cost_eur' } } }
+    ])
+    .toArray();
+
+  const usageMap = Object.fromEntries(usage.map((u) => [u._id, u]));
+
+  const withUsage = appliances.map((a) => ({
     ...a,
+    created_at: a.created_at.toISOString(),
     usage_wh: usageMap[a.id]?.energy_wh ?? 0,
     usage_cost: usageMap[a.id]?.cost_eur ?? 0
   }));
@@ -193,31 +224,33 @@ app.get('/appliances', (_req, res) => {
   res.json(withUsage);
 });
 
-app.get('/appliances/:id/usage', (req, res) => {
+app.get('/appliances/:id/usage', async (req, res) => {
   const { id } = req.params;
-  const rows = db
-    .prepare(
-      'SELECT start_ts, end_ts, energy_wh, cost_eur, confidence FROM appliance_usage WHERE appliance_id = ? ORDER BY start_ts DESC'
-    )
-    .all(id);
-  res.json(rows);
+  const applianceId = Number.parseInt(id, 10);
+  if (!Number.isFinite(applianceId)) return res.status(400).json({ message: 'id inválido' });
+
+  const c = await collections();
+  const rows = await c.applianceUsage
+    .find({ appliance_id: applianceId }, { projection: { _id: 0, start_ts: 1, end_ts: 1, energy_wh: 1, cost_eur: 1, confidence: 1 } })
+    .sort({ start_ts: -1 })
+    .toArray();
+  res.json(rows.map((r) => ({
+    ...r,
+    start_ts: r.start_ts.toISOString(),
+    end_ts: r.end_ts.toISOString()
+  })));
 });
 
-app.get('/advice/contract', (_req, res) => {
-  const advice = db
-    .prepare('SELECT id, current_power, suggested_power, tariff, savings_per_month, created_at FROM advice ORDER BY created_at DESC LIMIT 1')
-    .get() as
-    | {
-        id: number;
-        current_power: number;
-        suggested_power: number;
-        tariff: string;
-        savings_per_month: number;
-        created_at: string;
-      }
-    | undefined;
+app.get('/advice/contract', async (_req, res) => {
+  const c = await collections();
+  const advice = await c.advice
+    .find({}, { projection: { _id: 0, id: 1, current_power: 1, suggested_power: 1, tariff: 1, savings_per_month: 1, created_at: 1 } })
+    .sort({ created_at: -1 })
+    .limit(1)
+    .toArray();
 
-  if (!advice) {
+  const row = advice[0];
+  if (!row) {
     return res.json({
       current_power: 6.9,
       suggested_power: 5.75,
@@ -227,26 +260,24 @@ app.get('/advice/contract', (_req, res) => {
     });
   }
 
-  return res.json(advice);
+  return res.json({ ...row, created_at: row.created_at.toISOString() });
 });
 
-app.get('/contract/profile', (_req, res) => {
-  const profile = db
-    .prepare('SELECT power_kva, tariff, utility, updated_at FROM contract_profile WHERE id = 1')
-    .get() as { power_kva: number; tariff: string; utility: string; updated_at: string } | undefined;
+app.get('/contract/profile', async (_req, res) => {
+  const c = await collections();
+  const profile = await c.contractProfile.findOne({ _id: 1 }, { projection: { _id: 0, power_kva: 1, tariff: 1, utility: 1, updated_at: 1 } });
   if (!profile) return res.status(404).json({ message: 'Perfil contratual não definido' });
-  res.json(profile);
+  res.json({ ...profile, updated_at: profile.updated_at.toISOString() });
 });
 
-app.post('/contract/simulate', (req, res) => {
+app.post('/contract/simulate', async (req, res) => {
   const schema = z.object({ power_kva: z.number().min(1).max(20), tariff: z.string() });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ errors: parsed.error.flatten().fieldErrors });
 
   const { power_kva, tariff } = parsed.data;
-  const current = db.prepare('SELECT power_kva, tariff FROM contract_profile WHERE id = 1').get() as
-    | { power_kva: number; tariff: string }
-    | undefined;
+  const c = await collections();
+  const current = await c.contractProfile.findOne({ _id: 1 }, { projection: { _id: 0, power_kva: 1, tariff: 1 } });
   const deltaPower = current ? current.power_kva - power_kva : 0;
   const savings = deltaPower > 0 ? deltaPower * 1.2 : 0; // simplificado
   const tariffImpact = tariff !== current?.tariff ? 3 : 0;
@@ -258,45 +289,60 @@ app.post('/contract/simulate', (req, res) => {
   });
 });
 
-app.get('/reports/monthly', (_req, res) => {
-  const rows = db
-    .prepare('SELECT day, kwh, euros, peak_watts FROM telemetry_daily ORDER BY day DESC LIMIT 12')
-    .all();
+app.get('/reports/monthly', async (_req, res) => {
+  const c = await collections();
+  const rows = await c.telemetryDaily
+    .find({}, { projection: { _id: 0, day: 1, kwh: 1, euros: 1, peak_watts: 1 } })
+    .sort({ day: -1 })
+    .limit(12)
+    .toArray();
   res.json(rows);
 });
 
-app.get('/customers/:customerId/telemetry/now', (req, res) => {
+app.get('/customers/:customerId/telemetry/now', async (req, res) => {
   const { customerId } = req.params;
 
-  const customer = db
-    .prepare(
-      'SELECT id, name, segment, home_area_m2, price_eur_per_kwh FROM customers WHERE id = ?'
-    )
-    .get(customerId) as { id: string; name: string; segment: string; home_area_m2: number; price_eur_per_kwh: number } | undefined;
+  const c = await collections();
+
+  const customer = await c.customers.findOne(
+    { id: customerId },
+    { projection: { _id: 0, id: 1, name: 1, segment: 1, home_area_m2: 1, price_eur_per_kwh: 1 } }
+  );
   if (!customer) return res.status(404).json({ message: 'Cliente não encontrado' });
 
-  const latest = db
-    .prepare('SELECT ts, watts, temp_c FROM customer_telemetry_15m WHERE customer_id = ? ORDER BY ts DESC LIMIT 1')
-    .get(customerId) as { ts: string; watts: number; temp_c: number | null } | undefined;
-  if (!latest) return res.status(404).json({ message: 'Sem telemetria para este cliente' });
+  const latestRow = await c.customerTelemetry15m
+    .find({ customer_id: customerId }, { projection: { _id: 0, ts: 1, watts: 1, temp_c: 1 } })
+    .sort({ ts: -1 })
+    .limit(1)
+    .toArray();
+  const latestDoc = latestRow[0];
+  if (!latestDoc) return res.status(404).json({ message: 'Sem telemetria para este cliente' });
+
+  const latest = { ts: latestDoc.ts.toISOString(), watts: latestDoc.watts, temp_c: latestDoc.temp_c };
 
   // Usa o "tempo simulado" (último ts gravado). Como o gerador acelera +15m por tick,
   // o relógio real pode ficar atrás e os somatórios ficarem congelados.
   const end = new Date(latest.ts);
   const endIso = end.toISOString();
-  const since24h = new Date(end.getTime() - 24 * 60 * 60 * 1000).toISOString();
-  const since1h = new Date(end.getTime() - 60 * 60 * 1000).toISOString();
+  const since24h = new Date(end.getTime() - 24 * 60 * 60 * 1000);
+  const since1h = new Date(end.getTime() - 60 * 60 * 1000);
 
-  const sum24h = db
-    .prepare('SELECT COALESCE(SUM(watts), 0) as sumWatts FROM customer_telemetry_15m WHERE customer_id = ? AND ts BETWEEN ? AND ?')
-    .get(customerId, since24h, endIso) as { sumWatts: number };
-  const kwhLast24h = sumKwhFromSumWatts(sum24h.sumWatts ?? 0);
+  const sum24hAgg = await c.customerTelemetry15m
+    .aggregate([
+      { $match: { customer_id: customerId, ts: { $gte: since24h, $lte: end } } },
+      { $group: { _id: null, sumWatts: { $sum: '$watts' } } }
+    ])
+    .toArray();
+  const kwhLast24h = sumKwhFromSumWatts(Number(sum24hAgg[0]?.sumWatts ?? 0));
 
-  const monthStart = startOfUtcMonthFromIso(endIso).toISOString();
-  const sumMonth = db
-    .prepare('SELECT COALESCE(SUM(watts), 0) as sumWatts FROM customer_telemetry_15m WHERE customer_id = ? AND ts BETWEEN ? AND ?')
-    .get(customerId, monthStart, endIso) as { sumWatts: number };
-  const monthToDateKwh = sumKwhFromSumWatts(sumMonth.sumWatts ?? 0);
+  const monthStart = startOfUtcMonthFromIso(endIso);
+  const sumMonthAgg = await c.customerTelemetry15m
+    .aggregate([
+      { $match: { customer_id: customerId, ts: { $gte: monthStart, $lte: end } } },
+      { $group: { _id: null, sumWatts: { $sum: '$watts' } } }
+    ])
+    .toArray();
+  const monthToDateKwh = sumKwhFromSumWatts(Number(sumMonthAgg[0]?.sumWatts ?? 0));
 
   const price = typeof customer.price_eur_per_kwh === 'number' ? customer.price_eur_per_kwh : RATE_EUR_PER_KWH;
   const eurosLast24h = kwhLast24h * price;
@@ -308,22 +354,37 @@ app.get('/customers/:customerId/telemetry/now', (req, res) => {
   const forecastMonthKwh = kwhLast24h * dim;
   const forecastMonthEuros = forecastMonthKwh * price;
 
-  const avg1h = db
-    .prepare('SELECT COALESCE(AVG(watts), 0) as avgWatts FROM customer_telemetry_15m WHERE customer_id = ? AND ts BETWEEN ? AND ?')
-    .get(customerId, since1h, endIso) as { avgWatts: number };
+  const avg1hAgg = await c.customerTelemetry15m
+    .aggregate([
+      { $match: { customer_id: customerId, ts: { $gte: since1h, $lte: end } } },
+      { $group: { _id: null, avgWatts: { $avg: '$watts' } } }
+    ])
+    .toArray();
+  const avgWatts1h = Number(avg1hAgg[0]?.avgWatts ?? 0);
 
   // comparação com casas semelhantes (segmento + área aproximada)
   const areaLow = customer.home_area_m2 * 0.7;
   const areaHigh = customer.home_area_m2 * 1.3;
-  const similarRows = db
-    .prepare(
-      `SELECT c.id as id, COALESCE(SUM(t.watts), 0) as sumWatts
-       FROM customers c
-       JOIN customer_telemetry_15m t ON t.customer_id = c.id
-       WHERE c.id <> ? AND c.segment = ? AND c.home_area_m2 BETWEEN ? AND ? AND t.ts BETWEEN ? AND ?
-       GROUP BY c.id`
+  const similarCustomers = await c.customers
+    .find(
+      {
+        id: { $ne: customerId },
+        segment: customer.segment,
+        home_area_m2: { $gte: areaLow, $lte: areaHigh }
+      },
+      { projection: { _id: 0, id: 1 } }
     )
-    .all(customerId, customer.segment, areaLow, areaHigh, since24h, endIso) as Array<{ id: string; sumWatts: number }>;
+    .toArray();
+
+  const similarIds = similarCustomers.map((sc) => sc.id);
+  const similarRows = similarIds.length
+    ? await c.customerTelemetry15m
+        .aggregate([
+          { $match: { customer_id: { $in: similarIds }, ts: { $gte: since24h, $lte: end } } },
+          { $group: { _id: '$customer_id', sumWatts: { $sum: '$watts' } } }
+        ])
+        .toArray()
+    : [];
 
   let similarKwhLast24h = 0;
   if (similarRows.length) {
@@ -339,7 +400,7 @@ app.get('/customers/:customerId/telemetry/now', (req, res) => {
     name: customer.name,
     lastUpdated: latest.ts,
     wattsNow: latest.watts,
-    avgWattsLastHour: Number((avg1h.avgWatts ?? 0).toFixed(1)),
+    avgWattsLastHour: Number(avgWatts1h.toFixed(1)),
     kwhLast24h: Number(kwhLast24h.toFixed(2)),
     eurosLast24h: Number(eurosLast24h.toFixed(2)),
     monthToDateKwh: Number(monthToDateKwh.toFixed(2)),
@@ -352,39 +413,62 @@ app.get('/customers/:customerId/telemetry/now', (req, res) => {
   });
 });
 
-app.get('/customers/:customerId/chart', (req, res) => {
+app.get('/customers/:customerId/chart', async (req, res) => {
   const { customerId } = req.params;
   const range = (req.query.range as string | undefined) ?? 'dia';
   if (!['dia', 'semana', 'mes'].includes(range)) {
     return res.status(400).json({ message: 'range inválido (dia|semana|mes)' });
   }
 
-  const customer = db
-    .prepare(
-      'SELECT id, segment, city, contracted_power_kva, tariff, home_area_m2, household_size, has_solar, ev_count, price_eur_per_kwh FROM customers WHERE id = ?'
-    )
-    .get(customerId) as CustomerProfile | undefined;
+  const c = await collections();
+
+  const customer = (await c.customers.findOne(
+    { id: customerId },
+    {
+      projection: {
+        _id: 0,
+        id: 1,
+        segment: 1,
+        city: 1,
+        contracted_power_kva: 1,
+        tariff: 1,
+        home_area_m2: 1,
+        household_size: 1,
+        has_solar: 1,
+        ev_count: 1,
+        price_eur_per_kwh: 1
+      }
+    }
+  )) as CustomerProfile | null;
   if (!customer) return res.status(404).json({ message: 'Cliente não encontrado' });
 
-  const latest = db
-    .prepare('SELECT ts, watts, temp_c FROM customer_telemetry_15m WHERE customer_id = ? ORDER BY ts DESC LIMIT 1')
-    .get(customerId) as { ts: string; watts: number; temp_c: number | null } | undefined;
-  if (!latest) return res.status(404).json({ message: 'Sem telemetria para este cliente' });
+  const latestRow = await c.customerTelemetry15m
+    .find({ customer_id: customerId }, { projection: { _id: 0, ts: 1, watts: 1, temp_c: 1 } })
+    .sort({ ts: -1 })
+    .limit(1)
+    .toArray();
+  const latestDoc = latestRow[0];
+  if (!latestDoc) return res.status(404).json({ message: 'Sem telemetria para este cliente' });
+
+  const latest = { ts: latestDoc.ts.toISOString(), watts: latestDoc.watts, temp_c: latestDoc.temp_c };
 
   // Tal como no /telemetry/now, usar o tempo simulado do último ponto.
   const now = new Date(latest.ts);
 
-  const sumByDay = (from: Date, to: Date) => {
-    const rows = db
-      .prepare(
-        `SELECT substr(ts, 1, 10) as day, COALESCE(SUM(watts), 0) as sumWatts
-         FROM customer_telemetry_15m
-         WHERE customer_id = ? AND ts BETWEEN ? AND ?
-         GROUP BY substr(ts, 1, 10)`
-      )
-      .all(customerId, from.toISOString(), to.toISOString()) as Array<{ day: string; sumWatts: number }>;
+  const sumByDay = async (from: Date, to: Date) => {
+    const rows = await c.customerTelemetry15m
+      .aggregate([
+        { $match: { customer_id: customerId, ts: { $gte: from, $lt: to } } },
+        {
+          $group: {
+            _id: { $dateToString: { format: '%Y-%m-%d', date: '$ts' } },
+            sumWatts: { $sum: '$watts' }
+          }
+        }
+      ])
+      .toArray();
     const map = new Map<string, number>();
-    for (const r of rows) map.set(r.day, sumKwhFromSumWatts(r.sumWatts ?? 0));
+    for (const r of rows) map.set(String(r._id), sumKwhFromSumWatts(Number(r.sumWatts ?? 0)));
     return map;
   };
 
@@ -430,7 +514,7 @@ app.get('/customers/:customerId/chart', (req, res) => {
     const labels = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
     const weekStart = startOfUtcWeekMonday(now);
     const weekEnd = addUtcDays(weekStart, 7);
-    const actual = sumByDay(weekStart, weekEnd);
+    const actual = await sumByDay(weekStart, weekEnd);
     const predicted = buildPredictedKwhByDay(weekEnd);
 
     const todayKey = toDayKeyUtc(now);
@@ -449,7 +533,7 @@ app.get('/customers/:customerId/chart', (req, res) => {
     const labels = ['S1', 'S2', 'S3', 'S4'];
     const monthStart = startOfUtcMonth(now);
     const monthEnd = startOfNextUtcMonth(now);
-    const actual = sumByDay(monthStart, monthEnd);
+    const actual = await sumByDay(monthStart, monthEnd);
     const predicted = buildPredictedKwhByDay(monthEnd);
     const todayKey = toDayKeyUtc(now);
 
@@ -478,49 +562,58 @@ app.get('/customers/:customerId/chart', (req, res) => {
   const startMonthIndex = (currentMonth - (span - 1) + 12) % 12;
   const labels = Array.from({ length: span }, (_, i) => monthLabels[(startMonthIndex + i) % 12]);
 
-  const items = labels.map((label, i) => {
-    const offset = (span - 1) - i;
-    const start = startOfUtcMonth(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - offset, 1)));
-    const end = startOfNextUtcMonth(start);
-    const m = sumByDay(start, end);
-    let sum = 0;
-    for (const v of m.values()) sum += v;
-    return { label, value: Number(sum.toFixed(2)), kind: 'consumido' as const };
-  });
+  const items = await Promise.all(
+    labels.map(async (label, i) => {
+      const offset = (span - 1) - i;
+      const start = startOfUtcMonth(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - offset, 1)));
+      const end = startOfNextUtcMonth(start);
+      const m = await sumByDay(start, end);
+      let sum = 0;
+      for (const v of m.values()) sum += v;
+      return { label, value: Number(sum.toFixed(2)), kind: 'consumido' as const };
+    })
+  );
 
   return res.json({ title: 'Consumo', items });
 });
 
-app.get('/customers/:customerId/analytics/consumption', (req, res) => {
+app.get('/customers/:customerId/analytics/consumption', async (req, res) => {
   const { customerId } = req.params;
   const range = (req.query.range as string | undefined) ?? 'semana';
   if (!['semana', 'mes'].includes(range)) {
     return res.status(400).json({ message: 'range inválido (semana|mes)' });
   }
 
-  const customer = db
-    .prepare('SELECT id FROM customers WHERE id = ?')
-    .get(customerId) as { id: string } | undefined;
+  const c = await collections();
+
+  const customer = await c.customers.findOne({ id: customerId }, { projection: { _id: 0, id: 1 } });
   if (!customer) return res.status(404).json({ message: 'Cliente não encontrado' });
 
-  const latest = db
-    .prepare('SELECT ts FROM customer_telemetry_15m WHERE customer_id = ? ORDER BY ts DESC LIMIT 1')
-    .get(customerId) as { ts: string } | undefined;
-  if (!latest) return res.status(404).json({ message: 'Sem telemetria para este cliente' });
+  const latestRow = await c.customerTelemetry15m
+    .find({ customer_id: customerId }, { projection: { _id: 0, ts: 1 } })
+    .sort({ ts: -1 })
+    .limit(1)
+    .toArray();
+  const latestDoc = latestRow[0];
+  if (!latestDoc) return res.status(404).json({ message: 'Sem telemetria para este cliente' });
 
+  const latest = { ts: latestDoc.ts.toISOString() };
   const now = new Date(latest.ts);
 
-  const sumByDay = (from: Date, to: Date) => {
-    const rows = db
-      .prepare(
-        `SELECT substr(ts, 1, 10) as day, COALESCE(SUM(watts), 0) as sumWatts
-         FROM customer_telemetry_15m
-         WHERE customer_id = ? AND ts BETWEEN ? AND ?
-         GROUP BY substr(ts, 1, 10)`
-      )
-      .all(customerId, from.toISOString(), to.toISOString()) as Array<{ day: string; sumWatts: number }>;
+  const sumByDay = async (from: Date, to: Date) => {
+    const rows = await c.customerTelemetry15m
+      .aggregate([
+        { $match: { customer_id: customerId, ts: { $gte: from, $lt: to } } },
+        {
+          $group: {
+            _id: { $dateToString: { format: '%Y-%m-%d', date: '$ts' } },
+            sumWatts: { $sum: '$watts' }
+          }
+        }
+      ])
+      .toArray();
     const map = new Map<string, number>();
-    for (const r of rows) map.set(r.day, sumKwhFromSumWatts(r.sumWatts ?? 0));
+    for (const r of rows) map.set(String(r._id), sumKwhFromSumWatts(Number(r.sumWatts ?? 0)));
     return map;
   };
 
@@ -528,7 +621,7 @@ app.get('/customers/:customerId/analytics/consumption', (req, res) => {
     const labels = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
     const weekStart = startOfUtcWeekMonday(now);
     const weekEnd = addUtcDays(weekStart, 7);
-    const actual = sumByDay(weekStart, weekEnd);
+    const actual = await sumByDay(weekStart, weekEnd);
 
     const values = labels.map((_, idx) => {
       const dayKey = toDayKeyUtc(addUtcDays(weekStart, idx));
@@ -541,7 +634,7 @@ app.get('/customers/:customerId/analytics/consumption', (req, res) => {
   // mes: do dia 1 ao último dia do mês do "tempo simulado" (latest.ts)
   const monthStart = startOfUtcMonth(now);
   const monthEnd = startOfNextUtcMonth(now);
-  const actual = sumByDay(monthStart, monthEnd);
+  const actual = await sumByDay(monthStart, monthEnd);
   const dim = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)).getUTCDate();
 
   const labels = Array.from({ length: dim }, (_, i) => `${i + 1}`);
@@ -554,59 +647,85 @@ app.get('/customers/:customerId/analytics/consumption', (req, res) => {
   return res.json({ range: 'mes', labels, values, lastUpdated: latest.ts });
 });
 
-app.get('/customers/:customerId/power/suggestion', (req, res) => {
+app.get('/customers/:customerId/power/suggestion', async (req, res) => {
   const { customerId } = req.params;
 
-  const customer = db
-    .prepare(
-      'SELECT id, segment, contracted_power_kva, home_area_m2, household_size, has_solar, ev_count, price_eur_per_kwh, fixed_daily_fee_eur, tariff FROM customers WHERE id = ?'
-    )
-    .get(customerId) as {
-    id: string;
-    segment: string;
-    contracted_power_kva: number;
-    home_area_m2: number;
-    household_size: number;
-    has_solar: number;
-    ev_count: number;
-    price_eur_per_kwh: number;
-    fixed_daily_fee_eur: number;
-    tariff: string;
-  } | undefined;
+  const c = await collections();
+
+  const customer = (await c.customers.findOne(
+    { id: customerId },
+    {
+      projection: {
+        _id: 0,
+        id: 1,
+        segment: 1,
+        contracted_power_kva: 1,
+        home_area_m2: 1,
+        household_size: 1,
+        has_solar: 1,
+        ev_count: 1,
+        price_eur_per_kwh: 1,
+        fixed_daily_fee_eur: 1,
+        tariff: 1
+      }
+    }
+  )) as
+    | {
+        id: string;
+        segment: string;
+        contracted_power_kva: number;
+        home_area_m2: number;
+        household_size: number;
+        has_solar: number;
+        ev_count: number;
+        price_eur_per_kwh: number;
+        fixed_daily_fee_eur: number;
+        tariff: string;
+      }
+    | null;
   if (!customer) return res.status(404).json({ message: 'Cliente não encontrado' });
 
-  const latest = db
-    .prepare('SELECT ts FROM customer_telemetry_15m WHERE customer_id = ? ORDER BY ts DESC LIMIT 1')
-    .get(customerId) as { ts: string } | undefined;
-  if (!latest) return res.status(404).json({ message: 'Sem telemetria para este cliente' });
+  const latestTsRows = await c.customerTelemetry15m
+    .find({ customer_id: customerId }, { projection: { _id: 0, ts: 1 } })
+    .sort({ ts: -1 })
+    .limit(1)
+    .toArray();
+  const latestDoc = latestTsRows[0];
+  if (!latestDoc) return res.status(404).json({ message: 'Sem telemetria para este cliente' });
 
+  const latest = { ts: latestDoc.ts.toISOString() };
   const end = new Date(latest.ts);
   const endIso = end.toISOString();
-  const since30d = new Date(end.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
-  const since365d = new Date(end.getTime() - 365 * 24 * 60 * 60 * 1000).toISOString();
+  const since30d = new Date(end.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const since365d = new Date(end.getTime() - 365 * 24 * 60 * 60 * 1000);
 
-  const stats30 = db
-    .prepare(
-      'SELECT COALESCE(MAX(watts), 0) as peakWatts, COALESCE(AVG(watts), 0) as avgWatts FROM customer_telemetry_15m WHERE customer_id = ? AND ts BETWEEN ? AND ?'
-    )
-    .get(customerId, since30d, endIso) as { peakWatts: number; avgWatts: number };
+  const stats30Agg = await c.customerTelemetry15m
+    .aggregate([
+      { $match: { customer_id: customerId, ts: { $gte: since30d, $lte: end } } },
+      { $group: { _id: null, peakWatts: { $max: '$watts' }, avgWatts: { $avg: '$watts' } } }
+    ])
+    .toArray();
+  const stats30 = {
+    peakWatts: Number(stats30Agg[0]?.peakWatts ?? 0),
+    avgWatts: Number(stats30Agg[0]?.avgWatts ?? 0)
+  };
 
-  const peak365 = db
-    .prepare(
-      'SELECT COALESCE(MAX(watts), 0) as peakWatts FROM customer_telemetry_15m WHERE customer_id = ? AND ts BETWEEN ? AND ?'
-    )
-    .get(customerId, since365d, endIso) as { peakWatts: number };
+  const peak365Agg = await c.customerTelemetry15m
+    .aggregate([
+      { $match: { customer_id: customerId, ts: { $gte: since365d, $lte: end } } },
+      { $group: { _id: null, peakWatts: { $max: '$watts' } } }
+    ])
+    .toArray();
+  const peak365 = { peakWatts: Number(peak365Agg[0]?.peakWatts ?? 0) };
 
   const contractedKva = Number(customer.contracted_power_kva ?? 0);
   const yearlyPeakKva = round1((Number(peak365.peakWatts ?? 0) / 1000));
   const usagePctOfContracted = contractedKva > 0 ? Math.round((yearlyPeakKva / contractedKva) * 100) : 0;
 
   // Histórico: probabilidade de exceder um cap (com base em amostras 15m)
-  const count30 = db
-    .prepare(
-      'SELECT COUNT(*) as n FROM customer_telemetry_15m WHERE customer_id = ? AND ts BETWEEN ? AND ?'
-    )
-    .get(customerId, since30d, endIso) as { n: number };
+  const count30 = {
+    n: await c.customerTelemetry15m.countDocuments({ customer_id: customerId, ts: { $gte: since30d, $lte: end } })
+  };
 
   const powerModel = loadPowerModel();
   let suggestedKva = contractedKva;
@@ -639,22 +758,30 @@ app.get('/customers/:customerId/power/suggestion', (req, res) => {
 
   const priceEurPerKwh = typeof customer.price_eur_per_kwh === 'number' ? customer.price_eur_per_kwh : RATE_EUR_PER_KWH;
   const dim = daysInUtcMonthFromIso(endIso);
-  const kwhLast24h = (() => {
-    const since24h = new Date(end.getTime() - 24 * 60 * 60 * 1000).toISOString();
-    const sum24h = db
-      .prepare('SELECT COALESCE(SUM(watts), 0) as sumWatts FROM customer_telemetry_15m WHERE customer_id = ? AND ts BETWEEN ? AND ?')
-      .get(customerId, since24h, endIso) as { sumWatts: number };
-    return sumKwhFromSumWatts(sum24h.sumWatts ?? 0);
-  })();
+  const since24h = new Date(end.getTime() - 24 * 60 * 60 * 1000);
+  const sum24hAgg = await c.customerTelemetry15m
+    .aggregate([
+      { $match: { customer_id: customerId, ts: { $gte: since24h, $lte: end } } },
+      { $group: { _id: null, sumWatts: { $sum: '$watts' } } }
+    ])
+    .toArray();
+  const kwhLast24h = sumKwhFromSumWatts(Number(sum24hAgg[0]?.sumWatts ?? 0));
   const forecastMonthKwh = kwhLast24h * dim;
 
   const fixedDailyFee = typeof customer.fixed_daily_fee_eur === 'number' ? customer.fixed_daily_fee_eur : 0;
   const feePerKvaPerDay = contractedKva > 0 ? fixedDailyFee / contractedKva : 0;
 
   const aiModel = loadAiModel();
-  const latestRow = db
-    .prepare('SELECT ts, watts, temp_c FROM customer_telemetry_15m WHERE customer_id = ? ORDER BY ts DESC LIMIT 1')
-    .get(customerId) as { ts: string; watts: number; temp_c: number | null };
+  const latestRowDoc = await c.customerTelemetry15m
+    .find({ customer_id: customerId }, { projection: { _id: 0, ts: 1, watts: 1, temp_c: 1 } })
+    .sort({ ts: -1 })
+    .limit(1)
+    .toArray();
+  const latestSample = {
+    ts: (latestRowDoc[0]?.ts ?? end).toISOString(),
+    watts: Number(latestRowDoc[0]?.watts ?? stats30.peakWatts ?? 0),
+    temp_c: (latestRowDoc[0]?.temp_c ?? null) as number | null
+  };
 
   const asCustomerProfile: CustomerProfile = {
     id: customer.id,
@@ -669,19 +796,24 @@ app.get('/customers/:customerId/power/suggestion', (req, res) => {
     price_eur_per_kwh: priceEurPerKwh
   };
 
-  const estimateFutureExceedProb = (candidateKva: number) => {
+  const estimateFutureExceedProb = async (candidateKva: number) => {
     const capWatts = candidateKva * 1000 * 0.92;
 
     // Se tivermos modelo de consumo, simulamos até ao fim do mês para estimar risco futuro.
     if (aiModel) {
       try {
-        const featCount = makeFeatures(new Date(latestRow.ts), asCustomerProfile, latestRow.watts, latestRow.temp_c ?? undefined).length;
+        const featCount = makeFeatures(
+          new Date(latestSample.ts),
+          asCustomerProfile,
+          latestSample.watts,
+          latestSample.temp_c ?? undefined
+        ).length;
         if (aiModel.feature_names.length !== featCount) throw new Error('feature mismatch');
 
-        const monthEnd = startOfNextUtcMonth(new Date(latestRow.ts));
+        const monthEnd = startOfNextUtcMonth(new Date(latestSample.ts));
         const intervalMinutes = aiModel.interval_minutes ?? 15;
-        let ts = new Date(latestRow.ts);
-        let lastWatts = latestRow.watts;
+        let ts = new Date(latestSample.ts);
+        let lastWatts = latestSample.watts;
 
         let exceed = 0;
         let total = 0;
@@ -691,7 +823,7 @@ app.get('/customers/:customerId/power/suggestion', (req, res) => {
         while (ts.getTime() < monthEnd.getTime() && steps < maxSteps) {
           ts = new Date(ts.getTime() + intervalMinutes * 60 * 1000);
           if (ts.getTime() >= monthEnd.getTime()) break;
-          const feats = makeFeatures(ts, asCustomerProfile, lastWatts, latestRow.temp_c ?? undefined);
+          const feats = makeFeatures(ts, asCustomerProfile, lastWatts, latestSample.temp_c ?? undefined);
           const predictedRaw = predictNextWatts(aiModel, feats);
           const predictedWatts = clampPredictionForCustomer(predictedRaw, { ...asCustomerProfile, contracted_power_kva: candidateKva });
           if (predictedWatts > capWatts) exceed += 1;
@@ -709,12 +841,12 @@ app.get('/customers/:customerId/power/suggestion', (req, res) => {
     // Fallback histórico 30d
     const total = Number(count30.n ?? 0);
     if (!total) return 0;
-    const exceedRow = db
-      .prepare(
-        'SELECT COUNT(*) as n FROM customer_telemetry_15m WHERE customer_id = ? AND ts BETWEEN ? AND ? AND watts > ?'
-      )
-      .get(customerId, since30d, endIso, capWatts) as { n: number };
-    return (Number(exceedRow.n ?? 0) / total);
+    const exceedCount = await c.customerTelemetry15m.countDocuments({
+      customer_id: customerId,
+      ts: { $gte: since30d, $lte: end },
+      watts: { $gt: capWatts }
+    });
+    return exceedCount / total;
   };
 
   const riskWeight = customer.segment === 'industrial' ? 120 : customer.segment === 'sme' ? 85 : 55;
@@ -727,8 +859,8 @@ app.get('/customers/:customerId/power/suggestion', (req, res) => {
     ].map((v) => round1(v)))
   ).sort((a, b) => a - b);
 
-  const scoreCandidate = (candidateKva: number) => {
-    const exceedProb = clamp01(estimateFutureExceedProb(candidateKva));
+  const scoreCandidate = async (candidateKva: number) => {
+    const exceedProb = clamp01(await estimateFutureExceedProb(candidateKva));
     const powerFeeMonth = feePerKvaPerDay > 0 ? feePerKvaPerDay * candidateKva * dim : 0;
     const energyFeeMonth = forecastMonthKwh * priceEurPerKwh;
 
@@ -739,7 +871,7 @@ app.get('/customers/:customerId/power/suggestion', (req, res) => {
     return { candidateKva, exceedProb, powerFeeMonth, energyFeeMonth, score };
   };
 
-  const scored = candidates.map(scoreCandidate);
+  const scored = await Promise.all(candidates.map(scoreCandidate));
   scored.sort((a, b) => a.score - b.score);
   const best = scored[0];
 
@@ -748,7 +880,7 @@ app.get('/customers/:customerId/power/suggestion', (req, res) => {
   const ratio = contractedKva > 0 ? suggestedKva / contractedKva : 1;
   const status = ratio <= 0.85 ? 'sobredimensionado' : ratio >= 1.1 ? 'subdimensionado' : 'ok';
 
-  const current = scoreCandidate(contractedKva || suggestedKva);
+  const current = await scoreCandidate(contractedKva || suggestedKva);
   const savingsMonth = Number(((current.powerFeeMonth ?? 0) - (best.powerFeeMonth ?? 0)).toFixed(2));
   const riskExceedPct = Number(((best.exceedProb ?? 0) * 100).toFixed(1));
 
@@ -801,16 +933,45 @@ app.get('/ai/model', (_req, res) => {
   });
 });
 
-app.get('/ai/customers', (_req, res) => {
-  const customers = db
-    .prepare(
-      'SELECT id, name, segment, city, contracted_power_kva, tariff, utility, price_eur_per_kwh, fixed_daily_fee_eur, has_smart_meter, home_area_m2, household_size, locality_type, dwelling_type, build_year_band, heating_sources, has_solar, ev_count, alert_sensitivity, main_appliances, created_at FROM customers ORDER BY created_at DESC'
+app.get('/ai/customers', async (_req, res) => {
+  const c = await collections();
+  const customers = await c.customers
+    .find(
+      {},
+      {
+        projection: {
+          _id: 0,
+          id: 1,
+          name: 1,
+          segment: 1,
+          city: 1,
+          contracted_power_kva: 1,
+          tariff: 1,
+          utility: 1,
+          price_eur_per_kwh: 1,
+          fixed_daily_fee_eur: 1,
+          has_smart_meter: 1,
+          home_area_m2: 1,
+          household_size: 1,
+          locality_type: 1,
+          dwelling_type: 1,
+          build_year_band: 1,
+          heating_sources: 1,
+          has_solar: 1,
+          ev_count: 1,
+          alert_sensitivity: 1,
+          main_appliances: 1,
+          created_at: 1
+        }
+      }
     )
-    .all();
-  res.json(customers);
+    .sort({ created_at: -1 })
+    .toArray();
+
+  res.json(customers.map((cust) => ({ ...cust, created_at: cust.created_at.toISOString() })));
 });
 
-app.post('/ai/customers', (req, res) => {
+app.post('/ai/customers', async (req, res) => {
   const schema = z.object({
     name: z.string().min(1).max(120),
     segment: z.string().min(1).max(40).default('residential'),
@@ -841,7 +1002,7 @@ app.post('/ai/customers', (req, res) => {
   if (!parsed.success) return res.status(400).json({ errors: parsed.error.flatten().fieldErrors });
 
   const id = `U_${crypto.randomUUID()}`;
-  const createdAt = new Date().toISOString();
+  const createdAt = new Date();
   const c = parsed.data;
 
   const toInt01 = (v: unknown, fallback: number) => {
@@ -856,41 +1017,39 @@ app.post('/ai/customers', (req, res) => {
     return '';
   };
 
-  db.prepare(
-    `INSERT INTO customers (
-      id, name, segment, city, contracted_power_kva, tariff, utility,
-      home_area_m2, household_size, locality_type, dwelling_type, build_year_band, heating_sources,
-      has_solar, ev_count, has_smart_meter, price_eur_per_kwh, fixed_daily_fee_eur, alert_sensitivity, main_appliances,
-      created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(
+  const cols = await collections();
+  await cols.customers.insertOne({
     id,
-    c.name,
-    c.segment,
-    c.city,
-    c.contracted_power_kva,
-    c.tariff,
-    c.utility,
-    c.home_area_m2 ?? 80,
-    c.household_size ?? 2,
-    c.locality_type ?? 'Urbana',
-    c.dwelling_type ?? 'Apartamento',
-    c.build_year_band ?? '2000-2014',
-    toCsv(c.heating_sources),
-    toInt01(c.has_solar, 0),
-    c.ev_count ?? 0,
-    toInt01(c.has_smart_meter, 1),
-    c.price_eur_per_kwh ?? RATE_EUR_PER_KWH,
-    c.fixed_daily_fee_eur ?? 0,
-    c.alert_sensitivity ?? 'Média',
-    toCsv(c.main_appliances),
-    createdAt
-  );
+    name: c.name,
+    segment: c.segment,
+    city: c.city,
+    contracted_power_kva: c.contracted_power_kva,
+    tariff: c.tariff,
+    utility: c.utility,
+
+    home_area_m2: c.home_area_m2 ?? 80,
+    household_size: c.household_size ?? 2,
+    locality_type: c.locality_type ?? 'Urbana',
+    dwelling_type: c.dwelling_type ?? 'Apartamento',
+    build_year_band: c.build_year_band ?? '2000-2014',
+    heating_sources: toCsv(c.heating_sources),
+
+    has_solar: toInt01(c.has_solar, 0),
+    ev_count: c.ev_count ?? 0,
+    has_smart_meter: toInt01(c.has_smart_meter, 1),
+    price_eur_per_kwh: c.price_eur_per_kwh ?? RATE_EUR_PER_KWH,
+    fixed_daily_fee_eur: c.fixed_daily_fee_eur ?? 0,
+
+    alert_sensitivity: c.alert_sensitivity ?? 'Média',
+    main_appliances: toCsv(c.main_appliances),
+
+    created_at: createdAt
+  });
 
   return res.status(201).json({ id });
 });
 
-app.get('/ai/forecast/:customerId', (req, res) => {
+app.get('/ai/forecast/:customerId', async (req, res) => {
   const { customerId } = req.params;
   const horizonRaw = (req.query.horizon as string | undefined) ?? '1';
   const horizon = Math.max(1, Math.min(96, Number.parseInt(horizonRaw, 10) || 1));
@@ -898,19 +1057,39 @@ app.get('/ai/forecast/:customerId', (req, res) => {
   const model = loadAiModel();
   if (!model) return res.status(503).json({ message: 'Modelo não encontrado. Execute: py -3 apps/backend/ai_train.py' });
 
-  const customer = db
-    .prepare(
-      'SELECT id, segment, city, contracted_power_kva, tariff, home_area_m2, household_size, has_solar, ev_count, price_eur_per_kwh FROM customers WHERE id = ?'
-    )
-    .get(customerId) as CustomerProfile | undefined;
+  const c = await collections();
+
+  const customer = (await c.customers.findOne(
+    { id: customerId },
+    {
+      projection: {
+        _id: 0,
+        id: 1,
+        segment: 1,
+        city: 1,
+        contracted_power_kva: 1,
+        tariff: 1,
+        home_area_m2: 1,
+        household_size: 1,
+        has_solar: 1,
+        ev_count: 1,
+        price_eur_per_kwh: 1
+      }
+    }
+  )) as CustomerProfile | null;
   if (!customer) return res.status(404).json({ message: 'Cliente não encontrado' });
 
-  const latest = db
-    .prepare('SELECT ts, watts, temp_c FROM customer_telemetry_15m WHERE customer_id = ? ORDER BY ts DESC LIMIT 1')
-    .get(customerId) as { ts: string; watts: number; temp_c: number | null } | undefined;
-  if (!latest) {
-    return res.status(404).json({ message: 'Sem telemetria para este cliente. Execute: py -3 apps/backend/ai_generate.py' });
+  const latestRow = await c.customerTelemetry15m
+    .find({ customer_id: customerId }, { projection: { _id: 0, ts: 1, watts: 1, temp_c: 1 } })
+    .sort({ ts: -1 })
+    .limit(1)
+    .toArray();
+  const latestDoc = latestRow[0];
+  if (!latestDoc) {
+    return res.status(404).json({ message: 'Sem telemetria para este cliente (ainda). Aguarde o simulador gerar dados.' });
   }
+
+  const latest = { ts: latestDoc.ts.toISOString(), watts: latestDoc.watts, temp_c: latestDoc.temp_c ?? null };
 
   try {
     const featureCount = makeFeatures(new Date(latest.ts), customer, latest.watts, latest.temp_c ?? undefined).length;

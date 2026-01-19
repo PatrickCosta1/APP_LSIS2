@@ -8,8 +8,10 @@ Monorepo académico com frontend React + TypeScript (Vite) e backend Express + T
 
 ## Como rodar
 - Instalar dependências: `npm install`
-- (Opcional) Gerar dados + treinar IA:
-	- `py -3 apps/backend/ai_generate.py --customers 25 --days 14 --steps 96`
+- Configurar MongoDB:
+	- `MONGODB_URI` (obrigatória)
+	- `MONGODB_DB` (opcional)
+- (Opcional) Treinar IA:
 	- `py -3 apps/backend/ai_train.py --days 14 --lambda 2.0`
 - Desenvolver backend: `npm run dev:backend`
 	- Gera novas leituras sintéticas continuamente (por defeito a cada 10s, simulando passos de 15 minutos)
@@ -25,7 +27,7 @@ Monorepo académico com frontend React + TypeScript (Vite) e backend Express + T
 
 ## Estrutura
 - apps/frontend: SPA em React + Vite.
-- apps/backend: API Express com SQLite embutido.
+- apps/backend: API Express com MongoDB.
 
 ## Notas
 - Usar `npm install` na raiz para instalar dependências de todos os pacotes.
