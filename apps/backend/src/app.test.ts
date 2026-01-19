@@ -98,3 +98,121 @@ describe('analytics', () => {
     expect(res.body.avgKwhByHourUtc.length).toBe(24);
   });
 });
+
+describe('chat', () => {
+  it('cria conversa e responde', async () => {
+    const c = getCollections();
+
+    const customerId = 'U_chat';
+    await c.customers.insertOne({
+      id: customerId,
+      name: 'Cliente Chat',
+      segment: 'residential',
+      city: 'Porto',
+      contracted_power_kva: 6.9,
+      tariff: 'Bi-horário',
+      utility: 'EDP',
+      price_eur_per_kwh: 0.2,
+      fixed_daily_fee_eur: 0,
+      has_smart_meter: 1,
+      home_area_m2: 80,
+      household_size: 2,
+      locality_type: 'Urbana',
+      dwelling_type: 'Apartamento',
+      build_year_band: '2000-2014',
+      heating_sources: 'Elétrico',
+      has_solar: 0,
+      ev_count: 0,
+      alert_sensitivity: 'Média',
+      main_appliances: 'Termoacumulador',
+      created_at: new Date('2026-01-01T00:00:00.000Z')
+    });
+
+    const res = await request(app).post(`/customers/${customerId}/chat`).send({ message: 'Olá! Quanto gastei nas últimas 24h?' });
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('conversationId');
+    expect(res.body).toHaveProperty('reply');
+    expect(typeof res.body.reply).toBe('string');
+
+    const convId = String(res.body.conversationId);
+    const history = await request(app).get(`/customers/${customerId}/chat?conversationId=${encodeURIComponent(convId)}&limit=50`);
+    expect(history.status).toBe(200);
+    expect(history.body).toHaveProperty('conversationId');
+    expect(history.body.conversationId).toBe(convId);
+    expect(Array.isArray(history.body.messages)).toBe(true);
+    expect(history.body.messages.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('follow-up "sim" sugere ações em vez de reiniciar', async () => {
+    const c = getCollections();
+
+    const customerId = 'U_chat_follow';
+    await c.customers.insertOne({
+      id: customerId,
+      name: 'Cliente Follow',
+      segment: 'residential',
+      city: 'Porto',
+      contracted_power_kva: 6.9,
+      tariff: 'Bi-horário',
+      utility: 'EDP',
+      price_eur_per_kwh: 0.2,
+      fixed_daily_fee_eur: 0,
+      has_smart_meter: 1,
+      home_area_m2: 80,
+      household_size: 2,
+      locality_type: 'Urbana',
+      dwelling_type: 'Apartamento',
+      build_year_band: '2000-2014',
+      heating_sources: 'Elétrico',
+      has_solar: 0,
+      ev_count: 0,
+      alert_sensitivity: 'Média',
+      main_appliances: 'Termoacumulador',
+      created_at: new Date('2026-01-01T00:00:00.000Z')
+    });
+
+    // precisa de telemetria para definir o "end" usado nas queries do chat
+    const end = new Date('2026-01-15T00:00:00.000Z');
+    await c.customerTelemetry15m.insertMany([
+      { customer_id: customerId, ts: new Date(end.getTime() - 15 * 60 * 1000), watts: 900, euros: 0.0, temp_c: 15, is_estimated: false },
+      { customer_id: customerId, ts: end, watts: 1100, euros: 0.0, temp_c: 15, is_estimated: false }
+    ]);
+
+    // sessões por equipamento (dentro da janela)
+    const s = new Date(end.getTime() - 2 * 24 * 60 * 60 * 1000);
+    await c.customerApplianceUsage.insertMany([
+      {
+        customer_id: customerId,
+        appliance_id: 1,
+        start_ts: s,
+        end_ts: new Date(s.getTime() + 60 * 60 * 1000),
+        energy_wh: 430,
+        cost_eur: 0.05,
+        confidence: 0.9,
+        source: 'synthetic'
+      },
+      {
+        customer_id: customerId,
+        appliance_id: 7,
+        start_ts: s,
+        end_ts: new Date(s.getTime() + 45 * 60 * 1000),
+        energy_wh: 290,
+        cost_eur: 0.03,
+        confidence: 0.85,
+        source: 'synthetic'
+      }
+    ]);
+
+    const first = await request(app).post(`/customers/${customerId}/chat`).send({ message: 'Qual o equipamento que mais consome?' });
+    expect(first.status).toBe(200);
+    expect(first.body).toHaveProperty('conversationId');
+    expect(String(first.body.reply)).toContain('Quer que eu sugira 2 ações rápidas');
+
+    const convId = String(first.body.conversationId);
+    const follow = await request(app).post(`/customers/${customerId}/chat`).send({ message: 'sim', conversationId: convId });
+    expect(follow.status).toBe(200);
+    expect(String(follow.body.reply)).toContain('1)');
+    expect(String(follow.body.reply)).toContain('2)');
+    expect(String(follow.body.reply)).not.toContain('Quer que eu sugira 2 ações rápidas');
+  });
+});

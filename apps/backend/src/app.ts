@@ -6,6 +6,7 @@ import { getCollections, initDb, type Collections } from './db';
 import { clampPredictionForCustomer, loadAiModel, makeFeatures, predictNextWatts, type CustomerProfile } from './ai';
 import { clampSuggestedPowerKva, loadPowerModel, makePowerFeatures, predictRidge } from './powerAi';
 import { getAiRetrainStatus, runAiRetrainOnce } from './aiTrainer';
+import { getCustomerChatHistory, handleCustomerChat } from './chat';
 
 const app = express();
 
@@ -245,7 +246,7 @@ app.get('/appliances/:id/usage', async (req, res) => {
 app.get('/advice/contract', async (_req, res) => {
   const c = await collections();
   const advice = await c.advice
-    .find({}, { projection: { _id: 0, id: 1, current_power: 1, suggested_power: 1, tariff: 1, savings_per_month: 1, created_at: 1 } })
+     .find({}, { projection: { _id: 0, id: 1, current_power: 1, suggested_power: 1, tariff: 1, savings_per_month: 1, created_at: 1 } })
     .sort({ created_at: -1 })
     .limit(1)
     .toArray();
@@ -479,7 +480,7 @@ app.get('/customers/:customerId/chart', async (req, res) => {
 
     try {
       const featCount = makeFeatures(new Date(latest.ts), customer, latest.watts, latest.temp_c ?? undefined).length;
-      if (model.feature_names.length !== featCount) return new Map<string, number>();
+      if ('feature_names' in model && model.feature_names.length !== featCount) return new Map<string, number>();
     } catch {
       return new Map<string, number>();
     }
@@ -903,6 +904,133 @@ async function getAvgByHourKwh(customerId: string, end: Date, windowDays: number
     offpeakPct: sumTotal > 0 ? sumOffpeak / sumTotal : 0
   };
 }
+
+app.get('/customers/:customerId/appliances/summary', async (req, res) => {
+  const { customerId } = req.params;
+  const days = Number((req.query.days as string | undefined) ?? '30');
+  const windowDays = Number.isFinite(days) && days > 0 && days <= 120 ? Math.floor(days) : 30;
+
+  const c = await collections();
+
+  const customer = await c.customers.findOne({ id: customerId }, { projection: { _id: 0, id: 1, price_eur_per_kwh: 1 } });
+  if (!customer) return res.status(404).json({ message: 'Cliente não encontrado' });
+
+  const latestTs = await getCustomerLatestTs(customerId);
+  if (!latestTs) return res.status(404).json({ message: 'Sem telemetria para este cliente' });
+
+  const end = new Date(latestTs);
+  const start = new Date(end.getTime() - windowDays * 24 * 60 * 60 * 1000);
+
+  const usageAgg = await c.customerApplianceUsage
+    .aggregate([
+      { $match: { customer_id: customerId, start_ts: { $gte: start, $lte: end } } },
+      {
+        $group: {
+          _id: '$appliance_id',
+          cost_eur: { $sum: '$cost_eur' },
+          energy_wh: { $sum: '$energy_wh' },
+          sessions: { $sum: 1 },
+          confidence: { $avg: '$confidence' }
+        }
+      }
+    ])
+    .toArray();
+
+  const usageById = new Map<number, { cost_eur: number; energy_wh: number; sessions: number; confidence: number }>();
+  for (const row of usageAgg as any[]) {
+    const id = Number(row?._id);
+    if (!Number.isFinite(id)) continue;
+    usageById.set(id, {
+      cost_eur: Number(row?.cost_eur ?? 0),
+      energy_wh: Number(row?.energy_wh ?? 0),
+      sessions: Number(row?.sessions ?? 0),
+      confidence: Number(row?.confidence ?? 0.85)
+    });
+  }
+
+  const appliances = await c.appliances
+    .find({}, { projection: { _id: 0, id: 1, name: 1, category: 1, efficiency_score: 1, standby_watts: 1 } })
+    .sort({ id: 1 })
+    .toArray();
+
+  const itemsRaw = appliances.map((a) => {
+    const u = usageById.get(a.id) ?? { cost_eur: 0, energy_wh: 0, sessions: 0, confidence: 0.85 };
+    return {
+      id: a.id,
+      name: a.name,
+      category: a.category,
+      costEur: Number(u.cost_eur.toFixed(2)),
+      energyKwh: Number((u.energy_wh / 1000).toFixed(2)),
+      sessions: u.sessions,
+      confidence: Number(u.confidence.toFixed(2)),
+      efficiencyScore: typeof a.efficiency_score === 'number' ? a.efficiency_score : null,
+      standbyWatts: typeof a.standby_watts === 'number' ? a.standby_watts : null
+    };
+  });
+
+  const totalCost = itemsRaw.reduce((acc, x) => acc + x.costEur, 0);
+
+  const items = itemsRaw
+    .map((x) => {
+      const share = totalCost > 0 ? x.costEur / totalCost : 0;
+      let status: 'Normal' | 'Atenção' | 'Anómalo' = 'Normal';
+      if (x.name.toLowerCase().includes('stand-by') && share >= 0.22) status = 'Anómalo';
+      else if (share >= 0.28) status = 'Atenção';
+      return { ...x, sharePct: Math.round(share * 100), status };
+    })
+    .sort((a, b) => b.costEur - a.costEur);
+
+  const top = items[0];
+  let suggestion = 'Tudo ok — continue a acompanhar os consumos.';
+  let estimatedSavingsMonthEur: number | null = null;
+  if (top) {
+    const n = top.name.toLowerCase();
+    if (n.includes('stand-by')) suggestion = 'Stand-by está elevado: desligue tomadas/regletas à noite e retire carregadores da ficha.';
+    else if (n.includes('luz')) suggestion = 'A iluminação está a pesar: use LEDs e desligue divisões sem presença.';
+    else if (n.includes('ar condicionado')) suggestion = 'Ar condicionado em destaque: ajuste para 24–25°C e limpe filtros para reduzir consumo.';
+    else if (n.includes('água quente') || n.includes('termo')) suggestion = 'Água quente em destaque: baixe o termostato e evite aquecer fora de horas.';
+    else if (n.includes('lavar')) suggestion = 'Máquina de lavar: prefira ciclos eco e (se possível) fora das horas de pico.';
+
+    if (n.includes('stand-by')) estimatedSavingsMonthEur = 1.2;
+    else if (n.includes('luz')) estimatedSavingsMonthEur = 0.8;
+    else if (n.includes('ar condicionado')) estimatedSavingsMonthEur = 2.5;
+    else if (n.includes('água quente') || n.includes('termo')) estimatedSavingsMonthEur = 1.6;
+    else if (n.includes('lavar')) estimatedSavingsMonthEur = 0.4;
+  }
+
+  return res.json({
+    customerId,
+    lastUpdated: end.toISOString(),
+    days: windowDays,
+    totalCostEur: Number(totalCost.toFixed(2)),
+    items,
+    suggestion,
+    estimatedSavingsMonthEur
+  });
+});
+
+app.get('/customers/:customerId/chat', async (req, res) => {
+  const { customerId } = req.params;
+  const c = await collections();
+
+  const customer = await c.customers.findOne({ id: customerId }, { projection: { _id: 0, id: 1 } });
+  if (!customer) return res.status(404).json({ message: 'Cliente não encontrado' });
+
+  const conversationId = typeof req.query.conversationId === 'string' ? req.query.conversationId : undefined;
+  const limitRaw = typeof req.query.limit === 'string' ? Number(req.query.limit) : 50;
+  const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(50, Math.floor(limitRaw))) : 50;
+
+  const out = await getCustomerChatHistory(c, customerId, { conversationId, limit });
+  return res.json(out);
+});
+
+app.post('/customers/:customerId/chat', async (req, res) => {
+  const { customerId } = req.params;
+  const c = await collections();
+
+  const out = await handleCustomerChat(c, customerId, req.body);
+  return res.status(out.status).json(out.body);
+});
 
 const defaultRatesFromAvg = (avg: number, tariff: TariffType) => {
   const price = Number.isFinite(avg) && avg > 0 ? avg : RATE_EUR_PER_KWH;
@@ -1455,7 +1583,7 @@ app.get('/customers/:customerId/power/suggestion', async (req, res) => {
           latestSample.watts,
           latestSample.temp_c ?? undefined
         ).length;
-        if (aiModel.feature_names.length !== featCount) throw new Error('feature mismatch');
+        if ('feature_names' in aiModel && aiModel.feature_names.length !== featCount) throw new Error('feature mismatch');
 
         const monthEnd = startOfNextUtcMonth(new Date(latestSample.ts));
         const intervalMinutes = aiModel.interval_minutes ?? 15;
@@ -1763,11 +1891,11 @@ app.get('/ai/forecast/:customerId', async (req, res) => {
 
   try {
     const featureCount = makeFeatures(new Date(latest.ts), customer, latest.watts, latest.temp_c ?? undefined).length;
-    if (model.feature_names.length !== featureCount) {
+    if ('feature_names' in model && model.feature_names.length !== featureCount) {
       return res.status(409).json({
         message: 'Modelo incompatível com as features atuais. Re-treine o modelo.',
         expectedFeatures: featureCount,
-        modelFeatures: model.feature_names.length,
+        modelFeatures: 'feature_names' in model ? model.feature_names.length : null,
         hint: 'Execute: py -3 apps/backend/ai_train.py'
       });
     }

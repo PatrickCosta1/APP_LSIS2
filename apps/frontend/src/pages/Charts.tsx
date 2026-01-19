@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import logoImg from '../assets/images/logo.png';
+import AssistantChatModal from '../components/AssistantChatModal';
 import './Dashboard.css';
 import './Charts.css';
 
@@ -206,6 +207,8 @@ function Charts() {
   const [range, setRange] = useState<RangeKey>('semana');
   const [exportOpen, setExportOpen] = useState(false);
   const exportRef = useRef<HTMLDivElement | null>(null);
+
+  const [assistantOpen, setAssistantOpen] = useState(false);
 
   const [apiBase, setApiBase] = useState<string | null>(null);
   const [customerId, setCustomerId] = useState<string | null>(null);
@@ -1091,7 +1094,7 @@ function Charts() {
 
         <div className="bottom-nav-wrapper">
           <div className="bottom-nav-container">
-            <button className="assistant-cta" aria-label="Assistente IA" type="button">
+            <button className="assistant-cta" aria-label="Assistente IA" type="button" onClick={() => setAssistantOpen(true)}>
               <svg width="32" height="32" viewBox="0 0 24 24" fill="none">
                 <path d="M12 2L15.5 8.5L22 12L15.5 15.5L12 22L8.5 15.5L2 12L8.5 8.5L12 2Z" fill="currentColor" />
               </svg>
@@ -1113,6 +1116,8 @@ function Charts() {
           </div>
         </div>
       </div>
+
+      <AssistantChatModal open={assistantOpen} onClose={() => setAssistantOpen(false)} apiBase={apiBase} customerId={customerId} />
     </div>
   );
 }

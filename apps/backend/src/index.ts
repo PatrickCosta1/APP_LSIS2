@@ -1,3 +1,5 @@
+import './env';
+
 import app from './app';
 import { startAiRetrainJob } from './aiTrainer';
 import { startTelemetryJob } from './telemetryJob';

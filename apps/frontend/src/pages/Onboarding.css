@@ -133,14 +133,14 @@
 }
 
 .onb-card-body {
-  flex: 1;
+  flex: 0;
 }
 
 .onb-actions {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  margin-top: 18px;
+  margin-top: 10px;
   margin-bottom: 0;
 }
 

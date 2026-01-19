@@ -1,7 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 
-export type AiModel = {
+export type RidgeAiModel = {
+  type?: 'ridge';
   version: number;
   trained_at: string;
   interval_minutes: number;
@@ -13,6 +14,18 @@ export type AiModel = {
   bias: number;
   metrics?: { mae?: number; rmse?: number; r2?: number };
 };
+
+export type HourlyProfileAiModel = {
+  type: 'hourly_profile';
+  version: number;
+  trained_at: string;
+  interval_minutes: number;
+  buckets_168: number[];
+  global_mean: number;
+  metrics?: { mae?: number; rmse?: number; r2?: number };
+};
+
+export type AiModel = RidgeAiModel | HourlyProfileAiModel;
 
 export type CustomerProfile = {
   id: string;
@@ -95,17 +108,38 @@ export const makeFeatures = (ts: Date, customer: CustomerProfile, lastWatts: num
 };
 
 export const predictNextWatts = (model: AiModel, features: number[]): number => {
-  const d = model.feature_names.length;
+  if ((model as any)?.type === 'hourly_profile') {
+    const m = model as HourlyProfileAiModel;
+    const hourSin = features[1];
+    const hourCos = features[2];
+    const dowSin = features[3];
+    const dowCos = features[4];
+
+    const hourRad = Math.atan2(hourSin, hourCos);
+    const hour01 = (hourRad < 0 ? hourRad + 2 * Math.PI : hourRad) / (2 * Math.PI);
+    const hour = Math.floor(hour01 * 24) % 24;
+
+    const dowRad = Math.atan2(dowSin, dowCos);
+    const dow01 = (dowRad < 0 ? dowRad + 2 * Math.PI : dowRad) / (2 * Math.PI);
+    const dow = Math.floor(dow01 * 7) % 7;
+
+    const bucket = dow * 24 + hour;
+    const pred = m.buckets_168[bucket];
+    return Number.isFinite(pred) ? pred : m.global_mean;
+  }
+
+  const rm = model as RidgeAiModel;
+  const d = rm.feature_names.length;
   if (features.length !== d) {
     throw new Error(`Feature mismatch: expected ${d}, got ${features.length}`);
   }
 
-  let sum = model.bias;
+  let sum = rm.bias;
   for (let j = 0; j < d; j += 1) {
-    const std = model.std[j] || 1;
-    const mean = model.mean[j] || 0;
+    const std = rm.std[j] || 1;
+    const mean = rm.mean[j] || 0;
     const xz = (features[j] - mean) / std;
-    sum += xz * model.weights[j];
+    sum += xz * (rm.weights[j] || 0);
   }
 
   return sum;

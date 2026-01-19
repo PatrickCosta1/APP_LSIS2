@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import logoImg from '../assets/images/logo.png';
 import casaImg from '../assets/images/casa_dia.png';
+import AssistantChatModal from '../components/AssistantChatModal';
 import './Dashboard.css';
 
 type ChartItem = { label: string; value: number; kind: 'consumido' | 'previsto' };
@@ -114,6 +115,7 @@ const navItems = [
 
 function Dashboard() {
   const [activeTab, setActiveTab] = useState('home');
+  const [assistantOpen, setAssistantOpen] = useState(false);
   const [topSection, setTopSection] = useState<'current' | 'chart'>('current');
   const [chartRange, setChartRange] = useState<'dia' | 'semana' | 'mes'>('dia');
   const [apiBase, setApiBase] = useState<string | null>(null);
@@ -474,7 +476,7 @@ function Dashboard() {
 
         <div className="bottom-nav-wrapper">
           <div className="bottom-nav-container">
-            <button className="assistant-cta" aria-label="Assistente IA">
+            <button className="assistant-cta" aria-label="Assistente IA" type="button" onClick={() => setAssistantOpen(true)}>
               <svg width="32" height="32" viewBox="0 0 24 24" fill="none">
                 <path d="M12 2L15.5 8.5L22 12L15.5 15.5L12 22L8.5 15.5L2 12L8.5 8.5L12 2Z" fill="currentColor" />
               </svg>
@@ -496,6 +498,8 @@ function Dashboard() {
           </div>
         </div>
       </div>
+
+      <AssistantChatModal open={assistantOpen} onClose={() => setAssistantOpen(false)} apiBase={apiBase} customerId={customerId} />
     </div>
   );
 }

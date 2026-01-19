@@ -40,9 +40,12 @@ export type Collections = {
   samples: Collection<{ ts: Date; watts: number; euros: number }>;
   telemetry15m: Collection<{ ts: Date; watts: number; euros: number }>;
   telemetryDaily: Collection<{ day: string; kwh: number; euros: number; peak_watts: number }>;
-  nilmEvents: Collection<{ id: number; label: string | null; status: string; confidence: number; watts: number; duration_min: number; created_at: Date }>;
+  nilmEvents: Collection<{ id: number; customer_id?: string; appliance_id?: number; label: string | null; status: string; confidence: number; watts: number; duration_min: number; created_at: Date }>;
   appliances: Collection<{ id: number; name: string; category: string; standby_watts: number; efficiency_score: number; annual_cost: number; created_at: Date }>;
   applianceUsage: Collection<{ id: number; appliance_id: number; start_ts: Date; end_ts: Date; energy_wh: number; cost_eur: number; confidence: number }>;
+  customerApplianceUsage: Collection<{ customer_id: string; appliance_id: number; start_ts: Date; end_ts: Date; energy_wh: number; cost_eur: number; confidence: number; source?: 'synthetic' | 'estimated' }>; 
+  chatConversations: Collection<{ id: string; customer_id: string; title: string | null; state?: any; created_at: Date; updated_at: Date }>;
+  chatMessages: Collection<{ id: string; customer_id: string; conversation_id: string; role: 'user' | 'assistant' | 'system'; content: string; created_at: Date }>;
   alerts: Collection<{ id: number; message: string; severity: string; status: string; type: string; created_at: Date }>;
   advice: Collection<{ id: number; current_power: number; suggested_power: number; tariff: string; savings_per_month: number; created_at: Date }>;
   contractProfile: Collection<{ _id: 1; power_kva: number; tariff: string; utility: string; updated_at: Date }>;
@@ -93,6 +96,9 @@ export function getCollections(db: Db = getDb()): Collections {
     nilmEvents: db.collection('nilm_events'),
     appliances: db.collection('appliances'),
     applianceUsage: db.collection('appliance_usage'),
+    customerApplianceUsage: db.collection('customer_appliance_usage'),
+    chatConversations: db.collection('chat_conversations'),
+    chatMessages: db.collection('chat_messages'),
     alerts: db.collection('alerts'),
     advice: db.collection('advice'),
     contractProfile: db.collection('contract_profile'),
@@ -118,6 +124,13 @@ async function ensureIndexesAndSeed(db: Db) {
     c.appliances.createIndex({ id: 1 }, { unique: true }),
     c.applianceUsage.createIndex({ id: 1 }, { unique: true }),
     c.applianceUsage.createIndex({ appliance_id: 1, start_ts: -1 }),
+    c.customerApplianceUsage.createIndex({ customer_id: 1, appliance_id: 1, start_ts: -1 }),
+    c.customerApplianceUsage.createIndex({ customer_id: 1, start_ts: -1 }),
+    c.chatConversations.createIndex({ id: 1 }, { unique: true }),
+    c.chatConversations.createIndex({ customer_id: 1, updated_at: -1 }),
+    c.chatMessages.createIndex({ id: 1 }, { unique: true }),
+    c.chatMessages.createIndex({ conversation_id: 1, created_at: 1 }),
+    c.chatMessages.createIndex({ customer_id: 1, created_at: 1 }),
     c.alerts.createIndex({ id: 1 }, { unique: true }),
     c.alerts.createIndex({ created_at: -1 }),
     c.advice.createIndex({ id: 1 }, { unique: true }),
@@ -183,9 +196,13 @@ async function ensureIndexesAndSeed(db: Db) {
 
   const createdAt = new Date(now - 7 * 24 * 60 * 60 * 1000);
   await c.appliances.insertMany([
-    { id: 1, name: 'Frigorífico', category: 'frio', standby_watts: 5, efficiency_score: 0.9, annual_cost: 120, created_at: createdAt },
-    { id: 2, name: 'Aquecedor', category: 'climatizacao', standby_watts: 2, efficiency_score: 0.5, annual_cost: 320, created_at: createdAt },
-    { id: 3, name: 'Máquina de lavar roupa', category: 'lavandaria', standby_watts: 1, efficiency_score: 0.8, annual_cost: 95, created_at: createdAt }
+    { id: 1, name: 'Frigorífico/Arca', category: 'frio', standby_watts: 5, efficiency_score: 0.9, annual_cost: 120, created_at: createdAt },
+    { id: 2, name: 'Aquecedor (genérico)', category: 'climatizacao', standby_watts: 2, efficiency_score: 0.5, annual_cost: 320, created_at: createdAt },
+    { id: 3, name: 'Máquina de lavar roupa', category: 'lavandaria', standby_watts: 1, efficiency_score: 0.8, annual_cost: 95, created_at: createdAt },
+    { id: 4, name: 'Luz', category: 'iluminacao', standby_watts: 0, efficiency_score: 0.85, annual_cost: 55, created_at: createdAt },
+    { id: 5, name: 'Stand-by', category: 'standby', standby_watts: 40, efficiency_score: 0.6, annual_cost: 110, created_at: createdAt },
+    { id: 6, name: 'Ar Condicionado', category: 'climatizacao', standby_watts: 3, efficiency_score: 0.7, annual_cost: 210, created_at: createdAt },
+    { id: 7, name: 'Água quente (Termoacumulador)', category: 'agua_quente', standby_watts: 2, efficiency_score: 0.65, annual_cost: 260, created_at: createdAt }
   ]);
 
   await c.applianceUsage.insertMany([

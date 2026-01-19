@@ -1,5 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import logoImg from '../assets/images/logo.png';
+import AssistantChatModal from '../components/AssistantChatModal';
 import './Dashboard.css';
 import './Equipamentos.css';
 
@@ -14,6 +15,28 @@ type EquipmentRow = {
   costLabel: string;
   status: EquipmentStatus;
   barPct: number; // 0-100
+};
+
+type AppliancesSummaryItem = {
+  id: number;
+  name: string;
+  costEur: number;
+  sharePct: number;
+  status: 'Normal' | 'Atenção' | 'Anómalo';
+};
+
+type AppliancesSummaryResponse = {
+  customerId: string;
+  lastUpdated: string;
+  days: number;
+  totalCostEur: number;
+  items: AppliancesSummaryItem[];
+  suggestion: string;
+  estimatedSavingsMonthEur: number | null;
+};
+
+type HourlyEfficiencyResponse = {
+  scorePct: number;
 };
 
 const monthOptions: MonthOption[] = [
@@ -133,19 +156,112 @@ function iconAc() {
   );
 }
 
+function iconForApplianceName(name: string) {
+  const n = String(name ?? '').toLowerCase();
+  if (n.includes('frigor')) return iconFridge();
+  if (n.includes('luz')) return iconLight();
+  if (n.includes('água quente') || n.includes('termo')) return iconWaterHeater();
+  if (n.includes('stand-by')) return iconStandby();
+  if (n.includes('ar condicionado')) return iconAc();
+  return iconStandby();
+}
+
 function Equipamentos() {
   const [month, setMonth] = useState('jun');
 
-  const rows: EquipmentRow[] = useMemo(
-    () => [
-      { id: 'fridge', label: 'Frigorífico/Arca', icon: iconFridge(), costLabel: '6.4€', status: 'anomalo', barPct: 92 },
-      { id: 'lights', label: 'Luz', icon: iconLight(), costLabel: '0.6€', status: 'normal', barPct: 36 },
-      { id: 'water', label: 'Água quente', icon: iconWaterHeater(), costLabel: '1.9€', status: 'normal', barPct: 52 },
-      { id: 'standby', label: 'Stand-by', icon: iconStandby(), costLabel: '4.5€', status: 'anomalo', barPct: 78 },
-      { id: 'ac', label: 'Ar Condicionado', icon: iconAc(), costLabel: '9.5€', status: 'normal', barPct: 98 },
-    ],
-    [],
-  );
+  const [assistantOpen, setAssistantOpen] = useState(false);
+
+  const [apiBase, setApiBase] = useState<string | null>(null);
+  const [customerId, setCustomerId] = useState<string | null>(null);
+  const [summary, setSummary] = useState<AppliancesSummaryResponse | null>(null);
+  const [efficiencyPct, setEfficiencyPct] = useState<number | null>(null);
+
+  useEffect(() => {
+    try {
+      const id = localStorage.getItem('kynex:customerId');
+      setCustomerId(id);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    const apiBases = [
+      (import.meta as any).env?.VITE_API_BASE as string | undefined,
+      'http://localhost:4000',
+      'http://localhost:4100'
+    ].filter(Boolean) as string[];
+
+    let cancelled = false;
+
+    async function resolveBase() {
+      for (const base of apiBases) {
+        try {
+          const controller = new AbortController();
+          const t = window.setTimeout(() => controller.abort(), 1200);
+          const res = await fetch(`${base}/health`, { signal: controller.signal });
+          window.clearTimeout(t);
+          if (!res.ok) continue;
+          if (!cancelled) setApiBase(base);
+          return;
+        } catch {
+          // tenta próxima base
+        }
+      }
+    }
+
+    resolveBase();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!apiBase || !customerId) return;
+
+    let cancelled = false;
+
+    async function load() {
+      try {
+        const res = await fetch(`${apiBase}/customers/${customerId}/appliances/summary?days=30`);
+        if (!res.ok) throw new Error('summary');
+        const json = (await res.json()) as AppliancesSummaryResponse;
+        if (!cancelled) setSummary(json);
+      } catch {
+        if (!cancelled) setSummary(null);
+      }
+
+      try {
+        const res = await fetch(`${apiBase}/customers/${customerId}/analytics/hourly-efficiency?days=7`);
+        if (!res.ok) throw new Error('eff');
+        const json = (await res.json()) as HourlyEfficiencyResponse;
+        if (!cancelled) setEfficiencyPct(Number.isFinite(json.scorePct) ? json.scorePct : null);
+      } catch {
+        if (!cancelled) setEfficiencyPct(null);
+      }
+    }
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBase, customerId]);
+
+  const rows: EquipmentRow[] = useMemo(() => {
+    if (!summary?.items?.length) return [];
+    return summary.items.slice(0, 8).map((it) => ({
+      id: String(it.id),
+      label: it.name,
+      icon: iconForApplianceName(it.name),
+      costLabel: `${Number(it.costEur ?? 0).toFixed(1)}€`,
+      status: it.status === 'Anómalo' ? 'anomalo' : 'normal',
+      barPct: Math.max(0, Math.min(100, Number(it.sharePct ?? 0)))
+    }));
+  }, [summary]);
+
+  const suggestionText = summary?.suggestion ?? 'A carregar…';
+  const suggestionHighlight = summary?.estimatedSavingsMonthEur != null ? `-${summary.estimatedSavingsMonthEur.toFixed(1)} €/mês` : '';
+  const effLabel = Number.isFinite(efficiencyPct as number) ? `${Math.round(efficiencyPct as number)}%` : '--%';
 
   return (
     <div className="app-shell">
@@ -209,6 +325,17 @@ function Equipamentos() {
                   </div>
                 </div>
               ))}
+
+              {!rows.length && (
+                <div className="eq-row">
+                  <div className="eq-row-mid" style={{ padding: '12px 0' }}>
+                    <div className="eq-pill" style={{ width: '100%' }}>
+                      <span className="eq-pill-label">Sem dados de equipamentos</span>
+                      <span className="eq-pill-cost normal">--</span>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="eq-legend" aria-label="Legenda">
@@ -224,16 +351,16 @@ function Equipamentos() {
           <section className="eq-grid" aria-label="Sugestões e eficiência">
             <div className="eq-mini-card">
               <div className="eq-mini-title">Sugestão do dia</div>
-              <div className="eq-mini-body">Máquina de lavar<br />depois das 22h</div>
-              <div className="eq-mini-highlight">-0.4 €/ciclo</div>
+              <div className="eq-mini-body">{suggestionText}</div>
+              {suggestionHighlight ? <div className="eq-mini-highlight">{suggestionHighlight}</div> : null}
               <button className="eq-help" type="button" aria-label="Ajuda">?</button>
             </div>
 
             <div className="eq-mini-card">
               <div className="eq-mini-title">Eficiência</div>
-              <div className="eq-gauge" aria-label="Eficiência 71%">
+              <div className="eq-gauge" aria-label={`Eficiência ${effLabel}`}>
                 <div className="eq-gauge-inner">
-                  <div className="eq-gauge-value">71%</div>
+                  <div className="eq-gauge-value">{effLabel}</div>
                 </div>
               </div>
               <button className="eq-help" type="button" aria-label="Ajuda">?</button>
@@ -243,7 +370,7 @@ function Equipamentos() {
 
         <div className="bottom-nav-wrapper">
           <div className="bottom-nav-container">
-            <button className="assistant-cta" aria-label="Assistente IA" type="button">
+            <button className="assistant-cta" aria-label="Assistente IA" type="button" onClick={() => setAssistantOpen(true)}>
               <svg width="32" height="32" viewBox="0 0 24 24" fill="none">
                 <path d="M12 2L15.5 8.5L22 12L15.5 15.5L12 22L8.5 15.5L2 12L8.5 8.5L12 2Z" fill="currentColor" />
               </svg>
@@ -265,6 +392,8 @@ function Equipamentos() {
           </div>
         </div>
       </div>
+
+      <AssistantChatModal open={assistantOpen} onClose={() => setAssistantOpen(false)} apiBase={apiBase} customerId={customerId} />
     </div>
   );
 }

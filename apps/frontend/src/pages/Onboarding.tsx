@@ -85,8 +85,9 @@ const steps: Step[] = [
   {
     id: 'veiculos',
     type: 'single',
-    label: 'Veículos elétricos',
-    options: ['Nenhum', '1', '2 ou mais'],
+    label: 'Veículos elétricos (0 a 5)',
+    helper: 'Quantos veículos elétricos existem no agregado?',
+    options: ['0', '1', '2', '3', '4', '5'],
   },
   {
     id: 'fornecedor',
@@ -102,10 +103,14 @@ const steps: Step[] = [
   },
   {
     id: 'potencia_contratada',
-    type: 'single',
-    label: 'Potência contratada',
-    helper: 'Se não souber, escolha a mais próxima (pode alterar depois).',
-    options: ['3.45 kVA', '4.6 kVA', '5.75 kVA', '6.9 kVA', '10.35 kVA', '13.8 kVA', '17.25 kVA', 'Não sei'],
+    type: 'text',
+    label: 'Potência contratada (kVA)',
+    helper: 'Resposta aberta. Ex.: 6.9 (se não souber, coloque um valor aproximado).',
+    placeholder: '6.9',
+    inputType: 'number',
+    min: 1,
+    max: 45,
+    step: 0.05,
   },
   {
     id: 'preco_kwh',
@@ -140,7 +145,23 @@ const steps: Step[] = [
     type: 'multi',
     label: 'Equipamentos principais',
     helper: 'Pode escolher várias',
-    options: ['Ar condicionado', 'Termoacumulador', 'Piscina', 'Bomba de água', 'Secador de roupa'],
+    options: [
+      'Frigorífico/Arca',
+      'Máquina de lavar roupa',
+      'Máquina de lavar loiça',
+      'Forno',
+      'Placa/Indução',
+      'Micro-ondas',
+      'Secador de roupa',
+      'Ar condicionado',
+      'Termoacumulador',
+      'Bomba de calor',
+      'Desumidificador',
+      'Aquecedor portátil',
+      'Bomba de água',
+      'Piscina',
+      'Carregador EV'
+    ],
   },
   {
     id: 'alertas',
@@ -203,7 +224,9 @@ function Onboarding() {
       const m = v.match(/([0-9]+(?:\.[0-9]+)?)/);
       if (!m) return null;
       const n = Number(m[1]);
-      return Number.isFinite(n) ? n : null;
+      if (!Number.isFinite(n)) return null;
+      if (n < 1 || n > 45) return null;
+      return n;
     };
 
     const approxAreaM2 = (band: unknown): number => {
@@ -231,10 +254,10 @@ function Onboarding() {
     };
 
     const parseEvCount = (v: unknown): number => {
-      if (v === 'Nenhum') return 0;
-      if (v === '1') return 1;
-      if (v === '2 ou mais') return 2;
-      return 0;
+      if (typeof v !== 'string') return 0;
+      const n = Number(v);
+      if (!Number.isFinite(n)) return 0;
+      return Math.max(0, Math.min(5, Math.round(n)));
     };
 
     const toBool = (v: unknown): boolean | null => {
@@ -317,7 +340,14 @@ function Onboarding() {
     if (step.type === 'single') return !value;
     if (step.type === 'text') {
       if (optionalTextIds.has(step.id)) return false;
-      return !(value as string)?.trim();
+      const txt = (value as string) ?? '';
+      if (!txt.trim()) return true;
+      if (step.id === 'potencia_contratada') {
+        const m = txt.match(/([0-9]+(?:\.[0-9]+)?)/);
+        const n = m ? Number(m[1]) : NaN;
+        return !(Number.isFinite(n) && n >= 1 && n <= 45);
+      }
+      return false;
     }
     return false;
   }, [step, value]);
@@ -340,7 +370,7 @@ function Onboarding() {
 
         <div className="onb-hero">
           <div className="onb-hero-title">Vamos personalizar a sua experiência</div>
-          <div className="onb-hero-subtitle"> </div>
+          <div className="onb-hero-subtitle">Responda em 1 minuto — melhora as previsões e sugestões.</div>
         </div>
 
         <div className="onb-card">

@@ -1,0 +1,216 @@
+.assistant-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+  z-index: 9999;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 18px 14px;
+}
+
+.assistant-modal {
+  width: min(520px, 100%);
+  max-height: min(82vh, 720px);
+  background: linear-gradient(180deg, rgba(20, 24, 32, 0.98), rgba(13, 16, 22, 0.98));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 18px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.assistant-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.assistant-title {
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  color: #f6f7fb;
+}
+
+.assistant-subtitle {
+  margin-top: 2px;
+  font-size: 12px;
+  color: rgba(246, 247, 251, 0.7);
+  font-weight: 500;
+}
+
+.assistant-close {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(246, 247, 251, 0.9);
+  cursor: pointer;
+}
+
+.assistant-close:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.assistant-body {
+  flex: 1;
+  overflow: auto;
+  padding: 12px 12px 6px;
+}
+
+.assistant-msg {
+  display: flex;
+  margin: 8px 0;
+}
+
+.assistant-msg.user {
+  justify-content: flex-end;
+}
+
+.assistant-msg.assistant {
+  justify-content: flex-start;
+}
+
+.assistant-bubble {
+  max-width: 88%;
+  padding: 10px 12px;
+  border-radius: 14px;
+  line-height: 1.35;
+  font-size: 14px;
+  color: #f6f7fb;
+  white-space: pre-wrap;
+}
+
+.assistant-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+@media (max-width: 420px) {
+  .assistant-cards {
+    grid-template-columns: 1fr;
+  }
+}
+
+.assistant-card {
+  border-radius: 12px;
+  padding: 10px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.assistant-card-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(246, 247, 251, 0.92);
+  margin-bottom: 4px;
+}
+
+.assistant-card-value {
+  font-size: 16px;
+  font-weight: 800;
+  color: #ffffff;
+}
+
+.assistant-card-subtitle {
+  margin-top: 2px;
+  font-size: 12px;
+  color: rgba(246, 247, 251, 0.72);
+}
+
+.assistant-card-detail {
+  font-size: 12px;
+  color: rgba(246, 247, 251, 0.82);
+  line-height: 1.35;
+}
+
+.assistant-card-list-items {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  color: rgba(246, 247, 251, 0.86);
+  font-size: 12px;
+}
+
+.assistant-msg.user .assistant-bubble {
+  background: rgba(141, 224, 255, 0.18);
+  border: 1px solid rgba(141, 224, 255, 0.25);
+}
+
+.assistant-msg.assistant .assistant-bubble {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.assistant-typing {
+  opacity: 0.85;
+}
+
+.assistant-quick {
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  flex-wrap: wrap;
+}
+
+.assistant-quick-btn {
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(246, 247, 251, 0.92);
+  padding: 8px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.assistant-quick-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.assistant-input {
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px 12px;
+}
+
+.assistant-text {
+  flex: 1;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: #f6f7fb;
+  padding: 10px 12px;
+  outline: none;
+}
+
+.assistant-text::placeholder {
+  color: rgba(246, 247, 251, 0.55);
+}
+
+.assistant-send {
+  border-radius: 12px;
+  border: 1px solid rgba(141, 224, 255, 0.22);
+  background: rgba(141, 224, 255, 0.12);
+  color: #f6f7fb;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.assistant-send:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.assistant-error {
+  padding: 0 12px 12px;
+  font-size: 12px;
+  color: rgba(255, 140, 140, 0.95);
+}
