@@ -1,0 +1,992 @@
+.ana-brand-text {
+  margin-bottom: 4px;
+}
+
+.ana-card {
+  background: rgba(21, 23, 29, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 18px;
+  padding: 12px;
+  box-shadow: 0 18px 28px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(10px);
+}
+
+.ana-card-header {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ana-card-title {
+  font-size: 20px;
+  font-weight: 300;
+  letter-spacing: -0.2px;
+  color: rgba(255, 255, 255, 0.88);
+}
+
+.ana-card-title b {
+  font-weight: 900;
+  color: rgba(255, 255, 255, 0.98);
+}
+
+.ana-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ana-export {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.ana-export-btn {
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.92);
+  border-radius: 999px;
+  padding: 7px 12px;
+  font-weight: 800;
+  font-size: 12px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 10px 18px rgba(0, 0, 0, 0.18);
+  transition: transform 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+
+.ana-eff-cta-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  line-height: 1.05;
+}
+
+.ana-export-btn:hover {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.11);
+  border-color: rgba(141, 224, 255, 0.35);
+}
+
+.ana-caret {
+  opacity: 0.9;
+}
+
+.ana-export-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  min-width: 140px;
+  background: rgba(18, 24, 31, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 14px;
+  padding: 6px;
+  box-shadow: 0 18px 30px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(10px);
+  z-index: 5;
+}
+
+.ana-export-item {
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.92);
+  text-align: left;
+  padding: 10px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.ana-export-item:hover {
+  background: rgba(141, 224, 255, 0.12);
+}
+
+.ana-chart {
+  margin-top: 12px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 10px;
+}
+
+.ana-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.ana-line {
+  stroke: rgba(141, 224, 255, 0.95);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.35));
+}
+
+.ana-dot {
+  fill: rgba(77, 225, 193, 0.98);
+  stroke: rgba(18, 24, 31, 0.85);
+  stroke-width: 2;
+}
+
+.ana-x {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 8px 6px 2px;
+  color: rgba(255, 255, 255, 0.64);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.ana-x-tick {
+  min-width: 0;
+  text-align: center;
+}
+
+.ana-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 4px 2px;
+}
+
+.ana-meta-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(77, 225, 193, 0.10);
+  border: 1px solid rgba(77, 225, 193, 0.18);
+  color: rgba(255, 255, 255, 0.86);
+  font-weight: 900;
+  font-size: 12px;
+}
+
+.ana-meta-range {
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.ana-grid {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.ana-contract-card {
+  margin-top: 12px;
+  background: rgba(21, 23, 29, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 18px;
+  padding: 12px;
+  box-shadow: 0 18px 28px rgba(0, 0, 0, 0.30);
+  backdrop-filter: blur(10px);
+}
+
+.ana-contract-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.ana-contract-title {
+  font-size: 18px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.90);
+}
+
+.ana-contract-cta {
+  border: none;
+  border-radius: 999px;
+  padding: 9px 12px;
+  font-weight: 900;
+  color: rgba(18, 24, 31, 0.96);
+  background: linear-gradient(135deg, #4de1c1, #8de0ff);
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  box-shadow: 0 10px 18px rgba(0, 0, 0, 0.20);
+  line-height: 1;
+}
+
+.ana-contract-cta-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: rgba(18, 24, 31, 0.12);
+  display: grid;
+  place-items: center;
+  font-weight: 900;
+}
+
+.ana-contract-body {
+  display: grid;
+  grid-template-columns: 1.2fr 0.9fr;
+  gap: 12px;
+  align-items: stretch;
+}
+
+.ana-contract-left {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  padding: 10px;
+}
+
+.ana-contract-left-title {
+  font-size: 12px;
+  font-weight: 900;
+  color: rgba(255, 255, 255, 0.78);
+  margin-bottom: 8px;
+}
+
+.ana-contract-pills {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  align-items: start;
+}
+
+.ana-contract-pill-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ana-contract-pill-label {
+  font-size: 11px;
+  font-weight: 900;
+  color: rgba(255, 255, 255, 0.70);
+}
+
+.ana-contract-pill {
+  background: rgba(18, 24, 31, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  padding: 8px 10px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+/* Modal (Simular Poupança — Potência) */
+.ana-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  z-index: 999;
+}
+
+.ana-modal {
+  width: min(560px, 96vw);
+  max-height: min(78vh, 760px);
+  overflow: auto;
+  background: rgba(18, 24, 31, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 18px;
+  box-shadow: 0 26px 48px rgba(0, 0, 0, 0.50);
+  padding: 14px;
+}
+
+.ana-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.ana-modal-title {
+  font-size: 16px;
+  font-weight: 950;
+  color: rgba(255, 255, 255, 0.94);
+}
+
+.ana-modal-close {
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(255, 255, 255, 0.92);
+  border-radius: 10px;
+  width: 34px;
+  height: 34px;
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+}
+
+.ana-modal-close:hover {
+  background: rgba(255, 255, 255, 0.10);
+}
+
+.ana-modal-subtitle {
+  color: rgba(255, 255, 255, 0.70);
+  font-size: 12px;
+  font-weight: 800;
+  margin-bottom: 12px;
+}
+
+.ana-modal-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.ana-modal-card {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  padding: 12px;
+}
+
+.ana-modal-card-title {
+  font-size: 12px;
+  font-weight: 950;
+  color: rgba(255, 255, 255, 0.84);
+  margin-bottom: 8px;
+}
+
+.ana-modal-kpis {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ana-modal-kpi {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 14px;
+  padding: 10px;
+}
+
+.ana-modal-kpi-label {
+  font-size: 11px;
+  font-weight: 900;
+  color: rgba(255, 255, 255, 0.68);
+  margin-bottom: 4px;
+}
+
+.ana-modal-kpi-value {
+  font-size: 14px;
+  font-weight: 950;
+  color: rgba(255, 255, 255, 0.94);
+}
+
+.ana-modal-note {
+  margin-top: 10px;
+  padding: 10px;
+  border-radius: 14px;
+  background: rgba(141, 224, 255, 0.10);
+  border: 1px solid rgba(141, 224, 255, 0.16);
+  color: rgba(255, 255, 255, 0.88);
+  font-weight: 800;
+  font-size: 12px;
+}
+
+.ana-modal-pill-row {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ana-modal-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.84);
+  font-weight: 900;
+  font-size: 11px;
+}
+
+.ana-modal-savings {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ana-modal-savings-main {
+  font-size: 20px;
+  font-weight: 950;
+  color: rgba(77, 225, 193, 0.98);
+}
+
+.ana-modal-savings-sub {
+  font-size: 12px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.74);
+}
+
+.ana-modal-footnote {
+  margin-top: 10px;
+  font-size: 11px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.ana-modal-table-wrap {
+  margin-top: 10px;
+}
+
+.ana-modal-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  overflow: hidden;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.ana-modal-table th,
+.ana-modal-table td {
+  padding: 10px 10px;
+  font-size: 12px;
+  font-weight: 850;
+  color: rgba(255, 255, 255, 0.84);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  text-align: left;
+}
+
+.ana-modal-table th {
+  position: sticky;
+  top: 0;
+  background: rgba(18, 24, 31, 0.92);
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 11px;
+}
+
+.ana-modal-table tr.best td {
+  background: rgba(77, 225, 193, 0.10);
+}
+
+.ana-modal-table tr.current td {
+  outline: 1px solid rgba(141, 224, 255, 0.20);
+}
+
+.ana-modal-kva {
+  font-weight: 950;
+}
+
+.ana-modal-tag {
+  margin-left: 8px;
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 950;
+  background: rgba(77, 225, 193, 0.14);
+  border: 1px solid rgba(77, 225, 193, 0.22);
+  color: rgba(255, 255, 255, 0.90);
+}
+
+.ana-modal-tag.alt {
+  background: rgba(141, 224, 255, 0.12);
+  border-color: rgba(141, 224, 255, 0.22);
+}
+
+.ana-modal-actions {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.ana-modal-primary,
+.ana-modal-secondary {
+  border: none;
+  border-radius: 999px;
+  padding: 10px 12px;
+  font-weight: 950;
+  cursor: pointer;
+}
+
+.ana-modal-primary {
+  color: rgba(18, 24, 31, 0.96);
+  background: linear-gradient(135deg, #4de1c1, #8de0ff);
+}
+
+.ana-modal-secondary {
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+@media (min-width: 520px) {
+  .ana-modal-grid {
+    grid-template-columns: 1.2fr 0.8fr;
+    align-items: stretch;
+  }
+}
+
+.ana-contract-pill.big {
+  justify-content: center;
+  padding: 12px 10px;
+}
+
+.ana-contract-pill-key {
+  font-size: 11px;
+  font-weight: 900;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.ana-contract-pill-val {
+  font-size: 18px;
+  font-weight: 900;
+  color: rgba(255, 255, 255, 0.96);
+  line-height: 1;
+}
+
+.ana-contract-right {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ana-contract-right-text {
+  font-size: 13px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.86);
+}
+
+.ana-contract-save {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(36, 230, 183, 0.14);
+  border: 1px solid rgba(36, 230, 183, 0.26);
+  color: rgba(255, 255, 255, 0.92);
+  font-weight: 900;
+  font-size: 12px;
+}
+
+.ana-contract-offers {
+  margin-top: auto;
+  border: none;
+  border-radius: 999px;
+  padding: 10px 12px;
+  font-weight: 900;
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+  transition: transform 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+
+.ana-contract-offers:hover {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(141, 224, 255, 0.30);
+}
+
+.ana-contract-offers-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: rgba(141, 224, 255, 0.18);
+  display: grid;
+  place-items: center;
+  font-weight: 900;
+}
+
+.ana-insights {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 40px;
+}
+
+.ana-insight-card {
+  background: rgba(18, 24, 31, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 18px;
+  padding: 12px;
+  display: grid;
+  grid-template-columns: 52px 1fr;
+  gap: 12px;
+  align-items: center;
+  box-shadow: 0 14px 24px rgba(0, 0, 0, 0.26);
+}
+
+.ana-insight-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 999px;
+  background: radial-gradient(circle at 30% 30%, rgba(141, 224, 255, 0.24), rgba(77, 225, 193, 0.18));
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  display: grid;
+  place-items: center;
+  color: rgba(255, 255, 255, 0.92);
+  font-weight: 900;
+  font-size: 22px;
+}
+
+.ana-insight-text {
+  font-size: 13px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.90);
+  line-height: 1.25;
+}
+
+.ana-insight-text strong {
+  font-weight: 900;
+}
+
+.ana-mini-card {
+  background: linear-gradient(180deg, rgba(21, 23, 29, 0.72), rgba(18, 24, 31, 0.62));
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 18px;
+  padding: 12px;
+  box-shadow: 0 18px 28px rgba(0, 0, 0, 0.30);
+  backdrop-filter: blur(10px);
+}
+
+.ana-mini-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.ana-mini-title {
+  font-size: 16px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.88);
+}
+
+.ana-mini-help {
+  width: 30px;
+  height: 30px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.92);
+  font-weight: 900;
+  cursor: pointer;
+  transition: transform 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+
+.ana-mini-help:hover {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(141, 224, 255, 0.35);
+}
+
+.ana-mini-body {
+  display: flex;
+  gap: 12px;
+  align-items: stretch;
+}
+
+/* Card Potência */
+.ana-power-meter {
+  width: 68px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  padding: 10px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.ana-power-top,
+.ana-power-mid {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  text-align: center;
+}
+
+.ana-power-value {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.ana-power-num {
+  font-size: 16px;
+  font-weight: 900;
+  color: rgba(255, 255, 255, 0.95);
+  line-height: 1;
+}
+
+.ana-power-unit {
+  font-size: 10px;
+  font-weight: 900;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.ana-power-label {
+  font-size: 10px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.70);
+}
+
+.ana-power-mid {
+  border-radius: 14px;
+  padding: 8px 0;
+  background: linear-gradient(180deg, rgba(255, 214, 0, 0.95), rgba(255, 214, 0, 0.70));
+  border: 1px solid rgba(0, 0, 0, 0.14);
+}
+
+.ana-power-mid .ana-power-num,
+.ana-power-mid .ana-power-unit,
+.ana-power-mid .ana-power-label {
+  color: rgba(18, 24, 31, 0.92);
+}
+
+.ana-power-max {
+  margin-top: auto;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  color: rgba(255, 214, 0, 0.95);
+}
+
+.ana-mini-copy {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.ana-mini-kpi {
+  font-size: 14px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.90);
+}
+
+.ana-mini-kpi strong {
+  font-weight: 900;
+  color: rgba(255, 255, 255, 0.98);
+}
+
+.ana-mini-pill {
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.86);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 14px;
+  padding: 10px 10px;
+}
+
+.ana-mini-pill strong {
+  font-weight: 900;
+}
+
+.ana-mini-cta {
+  margin-top: auto;
+  border: none;
+  border-radius: 999px;
+  padding: 10px 12px;
+  font-weight: 900;
+  color: rgba(18, 24, 31, 0.96);
+  background: linear-gradient(135deg, #4de1c1, #8de0ff);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  cursor: pointer;
+  box-shadow: 0 10px 18px rgba(0, 0, 0, 0.20);
+  transition: transform 0.12s ease, filter 0.12s ease;
+}
+
+.ana-mini-cta:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.02);
+}
+
+.ana-mini-cta-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  background: rgba(18, 24, 31, 0.12);
+  display: grid;
+  place-items: center;
+  font-weight: 900;
+}
+
+/* Card Eficiência Horária */
+.ana-eff {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 12px;
+  align-items: center;
+}
+
+.ana-eff-gauge {
+  width: 96px;
+  height: 96px;
+  border-radius: 999px;
+  background: conic-gradient(#ffd600 0deg, #ffd600 234deg, rgba(255, 255, 255, 0.12) 234deg 360deg);
+  display: grid;
+  place-items: center;
+  margin: 0 auto;
+}
+
+.ana-eff-gauge-inner {
+  width: 66px;
+  height: 66px;
+  border-radius: 999px;
+  background: rgba(18, 24, 31, 0.86);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  display: grid;
+  place-items: center;
+}
+
+.ana-eff-gauge-value {
+  font-size: 20px;
+  font-weight: 900;
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.ana-eff-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ana-eff-note {
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.82);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  padding: 10px;
+  border-radius: 14px;
+}
+
+.ana-eff-cta {
+  border: none;
+  border-radius: 999px;
+  background: rgba(141, 224, 255, 0.14);
+  border: 1px solid rgba(141, 224, 255, 0.22);
+  color: rgba(255, 255, 255, 0.92);
+  font-weight: 800;
+  font-size: 12px;
+  padding: 10px 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  transition: transform 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+
+.ana-eff-cta:hover {
+  transform: translateY(-1px);
+  background: rgba(141, 224, 255, 0.18);
+  border-color: rgba(141, 224, 255, 0.32);
+}
+
+.ana-eff-save {
+  font-weight: 900;
+  font-size: 11px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  color: rgba(18, 24, 31, 0.95);
+  background: linear-gradient(135deg, #4de1c1, #8de0ff);
+}
+
+@media (max-width: 420px) {
+  .ana-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ana-contract-body {
+    grid-template-columns: 1fr;
+  }
+
+  .ana-contract-pills {
+    grid-template-columns: 1fr;
+  }
+
+  .ana-contract-pill-val {
+    font-size: 16px;
+  }
+}
+
+@media print {
+  .bottom-nav-wrapper,
+  .top-actions,
+  .notif-btn,
+  .avatar-btn {
+    display: none !important;
+  }
+
+  .app-shell {
+    background: #ffffff !important;
+  }
+
+  .phone-frame {
+    box-shadow: none !important;
+    background: #ffffff !important;
+  }
+
+  .ana-card,
+  .ana-chart {
+    background: #ffffff !important;
+    border-color: rgba(0, 0, 0, 0.12) !important;
+    color: #0f141a !important;
+  }
+
+  .ana-card-title,
+  .ana-card-title b {
+    color: #0f141a !important;
+  }
+
+  .ana-line {
+    stroke: #1f66ff !important;
+    filter: none !important;
+  }
+
+  .ana-x,
+  .ana-meta-range {
+    color: rgba(0, 0, 0, 0.65) !important;
+  }
+}

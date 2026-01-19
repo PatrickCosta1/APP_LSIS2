@@ -1,0 +1,471 @@
+import React, { useMemo, useState } from 'react';
+import './Onboarding.css';
+import logoImg from '../assets/images/logo.png';
+
+type Step =
+  | {
+      id: string;
+      type: 'text';
+      label: string;
+      placeholder: string;
+      helper?: string;
+      inputType?: 'text' | 'email' | 'password' | 'number';
+      min?: number;
+      max?: number;
+      step?: number;
+    }
+  | {
+      id: string;
+      type: 'single';
+      label: string;
+      helper?: string;
+      options: string[];
+    }
+  | {
+      id: string;
+      type: 'multi';
+      label: string;
+      helper?: string;
+      options: string[];
+    };
+
+const steps: Step[] = [
+  { id: 'nome', type: 'text', label: 'Como se chama?', placeholder: 'Ex.: Ana Silva', inputType: 'text' },
+  { id: 'email', type: 'text', label: 'Qual o seu email?', placeholder: 'Ex.: ana@email.com', inputType: 'email' },
+  { id: 'password', type: 'text', label: 'Crie uma password', placeholder: '••••••••', inputType: 'password' },
+  {
+    id: 'tamanho',
+    type: 'single',
+    label: 'Tamanho da casa (m²)',
+    options: ['< 60 m²', '60-90 m²', '90-120 m²', '120-180 m²', '> 180 m²'],
+  },
+  {
+    id: 'pessoas',
+    type: 'single',
+    label: 'Quantas pessoas vivem na casa?',
+    options: ['1', '2', '3', '4', '5+',],
+  },
+  {
+    id: 'distrito',
+    type: 'single',
+    label: 'Distrito',
+    options: ['Aveiro', 'Braga', 'Coimbra', 'Faro', 'Lisboa', 'Porto', 'Setúbal', 'Outro'],
+  },
+  {
+    id: 'localidade',
+    type: 'single',
+    label: 'Tipo de localidade',
+    options: ['Urbana', 'Suburbana', 'Rural'],
+  },
+  {
+    id: 'ano',
+    type: 'single',
+    label: 'Ano de construção / renovação',
+    options: ['Antes de 1980', '1980-1999', '2000-2014', '2015-2020', '2021 ou mais recente'],
+  },
+  {
+    id: 'tipo',
+    type: 'single',
+    label: 'Tipo de habitação',
+    options: ['Apartamento', 'Moradia isolada', 'Moradia geminada', 'Duplex / Loft'],
+  },
+  {
+    id: 'aquecimento',
+    type: 'multi',
+    label: 'Fontes de aquecimento',
+    helper: 'Pode escolher várias',
+    options: ['Elétrico', 'Gás', 'Bomba de calor', 'Lenha / Pellets', 'Outro'],
+  },
+  {
+    id: 'painel',
+    type: 'single',
+    label: 'Tem painéis solares?',
+    options: ['Sim', 'Não'],
+  },
+  {
+    id: 'veiculos',
+    type: 'single',
+    label: 'Veículos elétricos',
+    options: ['Nenhum', '1', '2 ou mais'],
+  },
+  {
+    id: 'fornecedor',
+    type: 'single',
+    label: 'Fornecedor / Comercializador',
+    options: ['EDP', 'Endesa', 'Iberdrola', 'Outro', 'Não sei'],
+  },
+  {
+    id: 'tarifa_tipo',
+    type: 'single',
+    label: 'Tipo de tarifa',
+    options: ['Simples', 'Bi-horário', 'Tri-horário', 'Não sei'],
+  },
+  {
+    id: 'potencia_contratada',
+    type: 'single',
+    label: 'Potência contratada',
+    helper: 'Se não souber, escolha a mais próxima (pode alterar depois).',
+    options: ['3.45 kVA', '4.6 kVA', '5.75 kVA', '6.9 kVA', '10.35 kVA', '13.8 kVA', '17.25 kVA', 'Não sei'],
+  },
+  {
+    id: 'preco_kwh',
+    type: 'text',
+    label: 'Preço médio da energia (€/kWh)',
+    helper: 'Opcional. Ex.: 0.18',
+    placeholder: '0.18',
+    inputType: 'number',
+    min: 0,
+    max: 2,
+    step: 0.001,
+  },
+  {
+    id: 'taxa_fixa_dia',
+    type: 'text',
+    label: 'Taxa fixa / termo de potência (€/dia)',
+    helper: 'Opcional. Ex.: 0.22',
+    placeholder: '0.22',
+    inputType: 'number',
+    min: 0,
+    max: 5,
+    step: 0.01,
+  },
+  {
+    id: 'contador_inteligente',
+    type: 'single',
+    label: 'Tem contador inteligente?',
+    options: ['Sim', 'Não', 'Não sei'],
+  },
+  {
+    id: 'equipamentos',
+    type: 'multi',
+    label: 'Equipamentos principais',
+    helper: 'Pode escolher várias',
+    options: ['Ar condicionado', 'Termoacumulador', 'Piscina', 'Bomba de água', 'Secador de roupa'],
+  },
+  {
+    id: 'alertas',
+    type: 'single',
+    label: 'Sensibilidade a alertas',
+    options: ['Baixa', 'Média', 'Alta'],
+  },
+];
+
+function Onboarding() {
+  const [stepIndex, setStepIndex] = useState(0);
+  const [answers, setAnswers] = useState<Record<string, string | string[]>>({});
+  const [isReviewOpen, setIsReviewOpen] = useState(false);
+  const [isConfirmed, setIsConfirmed] = useState(false);
+
+  const step = steps[stepIndex];
+  const total = steps.length;
+  const progress = Math.round(((stepIndex + 1) / total) * 100);
+
+  function setAnswer(value: string | string[]) {
+    setAnswers((prev) => ({ ...prev, [step.id]: value }));
+  }
+
+  function toggleMulti(option: string) {
+    const current = (answers[step.id] as string[] | undefined) ?? [];
+    const exists = current.includes(option);
+    const next = exists ? current.filter((o) => o !== option) : [...current, option];
+    setAnswer(next);
+  }
+
+  function nextStep() {
+    if (stepIndex < total - 1) setStepIndex((i) => i + 1);
+  }
+
+  function prevStep() {
+    if (stepIndex > 0) setStepIndex((i) => i - 1);
+  }
+
+  function openReview() {
+    setIsReviewOpen(true);
+    setIsConfirmed(false);
+  }
+
+  function closeReview() {
+    setIsReviewOpen(false);
+    setIsConfirmed(false);
+  }
+
+  function confirmAndContinue() {
+    setIsConfirmed(true);
+
+    const apiBases = [
+      (import.meta as any).env?.VITE_API_BASE as string | undefined,
+      'http://localhost:4000',
+      'http://localhost:4100'
+    ].filter(Boolean) as string[];
+
+    const parsePowerKva = (v: unknown): number | null => {
+      if (typeof v !== 'string') return null;
+      const m = v.match(/([0-9]+(?:\.[0-9]+)?)/);
+      if (!m) return null;
+      const n = Number(m[1]);
+      return Number.isFinite(n) ? n : null;
+    };
+
+    const approxAreaM2 = (band: unknown): number => {
+      switch (band) {
+        case '< 60 m²':
+          return 50;
+        case '60-90 m²':
+          return 75;
+        case '90-120 m²':
+          return 105;
+        case '120-180 m²':
+          return 150;
+        case '> 180 m²':
+          return 210;
+        default:
+          return 80;
+      }
+    };
+
+    const parseHousehold = (v: unknown): number => {
+      if (typeof v !== 'string') return 2;
+      if (v === '5+') return 5;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : 2;
+    };
+
+    const parseEvCount = (v: unknown): number => {
+      if (v === 'Nenhum') return 0;
+      if (v === '1') return 1;
+      if (v === '2 ou mais') return 2;
+      return 0;
+    };
+
+    const toBool = (v: unknown): boolean | null => {
+      if (v === 'Sim') return true;
+      if (v === 'Não') return false;
+      return null;
+    };
+
+    const payload = {
+      name: typeof answers.nome === 'string' ? answers.nome : 'Cliente',
+      segment: 'residential',
+      city: typeof answers.distrito === 'string' ? answers.distrito : 'Porto',
+      contracted_power_kva: parsePowerKva(answers.potencia_contratada) ?? 6.9,
+      tariff: typeof answers.tarifa_tipo === 'string' ? answers.tarifa_tipo : 'Simples',
+      utility: typeof answers.fornecedor === 'string' ? answers.fornecedor : 'EDP',
+      price_eur_per_kwh:
+        typeof answers.preco_kwh === 'string' && answers.preco_kwh.trim() ? Number(answers.preco_kwh) : undefined,
+      fixed_daily_fee_eur:
+        typeof answers.taxa_fixa_dia === 'string' && answers.taxa_fixa_dia.trim() ? Number(answers.taxa_fixa_dia) : undefined,
+      has_smart_meter: toBool(answers.contador_inteligente) ?? true,
+
+      home_area_m2: approxAreaM2(answers.tamanho),
+      household_size: parseHousehold(answers.pessoas),
+      locality_type: typeof answers.localidade === 'string' ? answers.localidade : 'Urbana',
+      dwelling_type: typeof answers.tipo === 'string' ? answers.tipo : 'Apartamento',
+      build_year_band: typeof answers.ano === 'string' ? answers.ano : '2000-2014',
+      heating_sources: Array.isArray(answers.aquecimento) ? answers.aquecimento : [],
+      has_solar: toBool(answers.painel) ?? false,
+      ev_count: parseEvCount(answers.veiculos),
+      alert_sensitivity: typeof answers.alertas === 'string' ? answers.alertas : 'Média',
+      main_appliances: Array.isArray(answers.equipamentos) ? answers.equipamentos : []
+    };
+
+    try {
+      localStorage.setItem('kynex:onboarding', JSON.stringify(payload));
+    } catch {
+      // ignore
+    }
+
+    (async () => {
+      for (const base of apiBases) {
+        try {
+          const res = await fetch(`${base}/ai/customers`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          if (!res.ok) continue;
+          const json = (await res.json()) as { id?: string };
+          if (json?.id) localStorage.setItem('kynex:customerId', json.id);
+          break;
+        } catch {
+          // tenta próxima base
+        }
+      }
+    })();
+
+    window.setTimeout(() => window.location.assign('/'), 900);
+  }
+
+  const summary = useMemo(() => {
+    const labelById = new Map(steps.map((s) => [s.id, s.label] as const));
+    const order = steps.map((s) => s.id);
+
+    return order
+      .filter((id) => id !== 'password')
+      .map((id) => {
+        const v = answers[id];
+        const label = labelById.get(id) ?? id;
+        const valueText = Array.isArray(v) ? v.join(', ') : (v ?? '').toString();
+        return { id, label, valueText: valueText || '—' };
+      });
+  }, [answers]);
+
+  const value = answers[step.id];
+
+  const isNextDisabled = useMemo(() => {
+    const optionalTextIds = new Set(['preco_kwh', 'taxa_fixa_dia']);
+    if (step.type === 'multi') return false; // permite avançar mesmo sem selecionar
+    if (step.type === 'single') return !value;
+    if (step.type === 'text') {
+      if (optionalTextIds.has(step.id)) return false;
+      return !(value as string)?.trim();
+    }
+    return false;
+  }, [step, value]);
+
+  return (
+    <div className="onb-shell">
+      <div className="onb-frame">
+        <div className="onb-header">
+          <div className="onb-brand">
+            <div className="onb-brand-mark"><img src={logoImg} alt="Kynex" /></div>
+          </div>
+
+          <div className="onb-header-right">
+            <div className="onb-step">{stepIndex + 1}/{total}</div>
+            <div className="onb-progress" aria-label="Progresso">
+              <div className="onb-progress-bar" style={{ width: `${progress}%` }} />
+            </div>
+          </div>
+        </div>
+
+        <div className="onb-hero">
+          <div className="onb-hero-title">Vamos personalizar a sua experiência</div>
+          <div className="onb-hero-subtitle"> </div>
+        </div>
+
+        <div className="onb-card">
+          <div className="onb-card-top">
+            <div className="onb-chip">Passo {stepIndex + 1}</div>
+            <p className="onb-label">{step.label}</p>
+            {step.helper && <p className="onb-helper">{step.helper}</p>}
+          </div>
+
+          <div className="onb-card-body">
+            {step.type === 'text' && (
+              <input
+                className="onb-input"
+                type={step.inputType ?? 'text'}
+                placeholder={step.placeholder}
+                value={(value as string) ?? ''}
+                onChange={(e) => setAnswer(e.target.value)}
+                min={step.inputType === 'number' ? step.min : undefined}
+                max={step.inputType === 'number' ? step.max : undefined}
+                step={step.inputType === 'number' ? step.step : undefined}
+                autoFocus
+              />
+            )}
+
+            {step.type === 'single' && (
+              <div className="onb-options grid">
+                {step.options.map((opt) => {
+                  const active = value === opt;
+                  return (
+                    <button
+                      key={opt}
+                      className={`onb-opt ${active ? 'active' : ''}`}
+                      onClick={() => setAnswer(opt)}
+                      type="button"
+                    >
+                      {opt}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {step.type === 'multi' && (
+              <div className="onb-options grid">
+                {step.options.map((opt) => {
+                  const selected = Array.isArray(value) && value.includes(opt);
+                  return (
+                    <button
+                      key={opt}
+                      className={`onb-opt ${selected ? 'active' : ''}`}
+                      onClick={() => toggleMulti(opt)}
+                      type="button"
+                    >
+                      {opt}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div className="onb-actions">
+            <button className="onb-btn ghost" onClick={prevStep} disabled={stepIndex === 0} type="button">
+              Anterior
+            </button>
+            {stepIndex < total - 1 ? (
+              <button className="onb-btn" onClick={nextStep} disabled={isNextDisabled} type="button">
+                Seguinte
+              </button>
+            ) : (
+              <button className="onb-btn" onClick={openReview} type="button">
+                Concluir
+              </button>
+            )}
+          </div>
+        </div>
+
+        {isReviewOpen && (
+          <div className="onb-modal-overlay" role="dialog" aria-modal="true" aria-label="Confirmar informações">
+            <div className="onb-modal">
+              {!isConfirmed ? (
+                <>
+                  <div className="onb-modal-header">
+                    <div className="onb-modal-title">Confirmar informações</div>
+                    <button className="onb-icon-btn" type="button" onClick={closeReview} aria-label="Fechar">
+                      ✕
+                    </button>
+                  </div>
+
+                  <div className="onb-modal-subtitle">
+                    Está tudo certo? Isto ajuda-nos a adaptar comparações e sugestões.
+                    <span className="onb-modal-note"> (Guardamos localmente e sincronizamos com a API quando disponível.)</span>
+                  </div>
+
+                  <div className="onb-summary">
+                    {summary.map((row) => (
+                      <div key={row.id} className="onb-summary-row">
+                        <div className="onb-summary-label">{row.label}</div>
+                        <div className="onb-summary-value">{row.valueText}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="onb-modal-actions">
+                    <button className="onb-btn ghost" type="button" onClick={closeReview}>
+                      Editar
+                    </button>
+                    <button className="onb-btn" type="button" onClick={confirmAndContinue}>
+                      Confirmar e entrar
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div className="onb-success">
+                  <div className="onb-success-icon">✓</div>
+                  <div className="onb-success-title">Perfeito, {typeof answers.nome === 'string' && answers.nome.trim() ? answers.nome.split(' ')[0] : 'bem-vindo'}!</div>
+                  <div className="onb-success-subtitle">A preparar a sua dashboard personalizada…</div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export default Onboarding;

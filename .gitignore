@@ -1,0 +1,17 @@
+node_modules/
+dist/
+build/
+coverage/
+.vscode/
+.env
+.env.*
+.DS_Store
+npm-debug.log*
+pnpm-lock.yaml
+yarn.lock
+*.log
+
+# SQLite
+app.db
+app.db-wal
+app.db-shm
