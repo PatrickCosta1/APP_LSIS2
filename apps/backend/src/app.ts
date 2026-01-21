@@ -6,7 +6,7 @@ import { getCollections, initDb, type Collections } from './db';
 import { clampPredictionForCustomer, loadAiModel, makeFeatures, predictNextWatts, type CustomerProfile } from './ai';
 import { clampSuggestedPowerKva, loadPowerModel, makePowerFeatures, predictRidge } from './powerAi';
 import { getAiRetrainStatus, runAiRetrainOnce } from './aiTrainer';
-import { getCustomerChatHistory, handleCustomerChat } from './chat';
+import { getCustomerChatHistory, handleCustomerChat, type ChatAction } from './chat';
 
 const app = express();
 
@@ -1030,6 +1030,192 @@ app.post('/customers/:customerId/chat', async (req, res) => {
 
   const out = await handleCustomerChat(c, customerId, req.body);
   return res.status(out.status).json(out.body);
+});
+
+app.get('/customers/:customerId/assistant/prefs', async (req, res) => {
+  const { customerId } = req.params;
+  const c = await collections();
+
+  const customer = await c.customers.findOne({ id: customerId }, { projection: { _id: 0, id: 1 } });
+  if (!customer) return res.status(404).json({ message: 'Cliente não encontrado' });
+
+  const row = await c.assistantPrefs.findOne({ customer_id: customerId }, { projection: { _id: 0, customer_id: 1, style: 1, focus: 1, updated_at: 1 } });
+  return res.json(
+    row
+      ? { customerId, style: row.style ?? 'detailed', focus: row.focus ?? 'geral', updatedAt: row.updated_at?.toISOString?.() ?? null }
+      : { customerId, style: 'detailed', focus: 'geral', updatedAt: null }
+  );
+});
+
+app.put('/customers/:customerId/assistant/prefs', async (req, res) => {
+  const { customerId } = req.params;
+  const schema = z
+    .object({
+      style: z.enum(['short', 'detailed']).optional(),
+      focus: z.enum(['poupanca', 'equipamentos', 'potencia', 'geral']).optional()
+    })
+    .refine((v) => typeof v.style === 'string' || typeof v.focus === 'string', { message: 'Nada para atualizar' });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ errors: parsed.error.flatten().fieldErrors });
+
+  const c = await collections();
+  const customer = await c.customers.findOne({ id: customerId }, { projection: { _id: 0, id: 1 } });
+  if (!customer) return res.status(404).json({ message: 'Cliente não encontrado' });
+
+  const updated_at = new Date();
+  await c.assistantPrefs.updateOne(
+    { customer_id: customerId },
+    { $set: { customer_id: customerId, ...parsed.data, updated_at } },
+    { upsert: true }
+  );
+
+  return res.json({ ok: true });
+});
+
+app.get('/customers/:customerId/assistant/notifications', async (req, res) => {
+  const { customerId } = req.params;
+  const c = await collections();
+
+  const customer = await c.customers.findOne(
+    { id: customerId },
+    { projection: { _id: 0, id: 1, contracted_power_kva: 1, tariff: 1, price_eur_per_kwh: 1, household_size: 1 } }
+  );
+  if (!customer) return res.status(404).json({ message: 'Cliente não encontrado' });
+
+  const latest = await c.customerTelemetry15m
+    .find({ customer_id: customerId }, { projection: { _id: 0, ts: 1 } })
+    .sort({ ts: -1 })
+    .limit(1)
+    .toArray();
+  const end = latest[0]?.ts ? new Date(latest[0].ts) : null;
+  if (!end) return res.json({ customerId, lastUpdated: null, notifications: [] });
+
+  const sumWatts = async (from: Date, to: Date) => {
+    const agg = await c.customerTelemetry15m
+      .aggregate([
+        { $match: { customer_id: customerId, ts: { $gte: from, $lte: to } } },
+        { $group: { _id: null, sumWatts: { $sum: '$watts' } } }
+      ])
+      .toArray();
+    const s = Number((agg[0] as any)?.sumWatts ?? 0);
+    return (s * 0.25) / 1000;
+  };
+
+  const kwh24 = await sumWatts(new Date(end.getTime() - 24 * 60 * 60 * 1000), end);
+  const kwhPrev24 = await sumWatts(new Date(end.getTime() - 48 * 60 * 60 * 1000), new Date(end.getTime() - 24 * 60 * 60 * 1000));
+  const deltaPct = kwhPrev24 > 0.01 ? (kwh24 - kwhPrev24) / kwhPrev24 : 0;
+
+  const since7d = new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const peakAgg = await c.customerTelemetry15m
+    .aggregate([
+      { $match: { customer_id: customerId, ts: { $gte: since7d, $lte: end } } },
+      { $group: { _id: null, peakWatts: { $max: '$watts' } } }
+    ])
+    .toArray();
+  const peakWatts = Number((peakAgg[0] as any)?.peakWatts ?? 0);
+  const peakKva = peakWatts / 1000;
+  const contracted = Number((customer as any).contracted_power_kva ?? 0);
+
+  const nightAgg = await c.customerTelemetry15m
+    .aggregate([
+      { $match: { customer_id: customerId, ts: { $gte: since7d, $lte: end } } },
+      { $project: { watts: 1, hour: { $hour: '$ts' } } },
+      { $match: { hour: { $in: [2, 3, 4, 5] } } },
+      { $group: { _id: null, avgWatts: { $avg: '$watts' } } }
+    ])
+    .toArray();
+  const nightAvgWatts = Number((nightAgg[0] as any)?.avgWatts ?? 0);
+  const hh = Number((customer as any).household_size ?? 2);
+  const standbyThreshold = 140 + Math.max(0, Math.min(5, hh)) * 35;
+
+  const notifications: Array<{ id: string; type: string; severity: 'info' | 'warning' | 'critical'; title: string; message: string; actions?: ChatAction[] }> = [];
+
+  if (deltaPct > 0.18) {
+    notifications.push({
+      id: `${customerId}:spike_24h`,
+      type: 'spike_24h',
+      severity: 'warning',
+      title: 'Aumento nas últimas 24h',
+      message: `Consumo 24h: ~${kwh24.toFixed(2)} kWh (≈ ${(deltaPct * 100).toFixed(0)}% acima do dia anterior).`,
+      actions: [
+        { kind: 'button', id: 'n_top', label: 'Ver top equipamentos', message: 'Qual o equipamento que mais consome?' },
+        { kind: 'button', id: 'n_plan', label: 'Plano 7 dias', message: '__ACTION:PLAN_7D__' }
+      ]
+    });
+  }
+
+  if (contracted > 0 && peakKva > contracted * 0.9) {
+    notifications.push({
+      id: `${customerId}:near_power_limit`,
+      type: 'near_power_limit',
+      severity: 'warning',
+      title: 'Pico perto do limite',
+      message: `Pico (7d): ~${peakKva.toFixed(2)} kVA vs contratada ${contracted.toFixed(2)} kVA.`,
+      actions: [
+        { kind: 'button', id: 'n_power', label: 'Analisar potência', message: 'Potência contratada' },
+        { kind: 'button', id: 'n_plan', label: 'Plano 7 dias', message: '__ACTION:PLAN_7D__' }
+      ]
+    });
+  }
+
+  if (nightAvgWatts > standbyThreshold) {
+    notifications.push({
+      id: `${customerId}:high_standby`,
+      type: 'high_standby',
+      severity: 'info',
+      title: 'Stand-by noturno elevado',
+      message: `Média 02:00–06:00: ~${nightAvgWatts.toFixed(0)} W (acima do esperado).`,
+      actions: [
+        { kind: 'button', id: 'n_tips', label: 'Dicas para stand-by', message: 'Dá-me 3 dicas para poupar (stand-by).' },
+        { kind: 'button', id: 'n_plan', label: 'Plano 7 dias', message: '__ACTION:PLAN_7D__' }
+      ]
+    });
+  }
+
+  const now = new Date();
+  await Promise.all(
+    notifications.map((n) =>
+      c.assistantNotifications.updateOne(
+        { id: n.id },
+        {
+          $set: {
+            id: n.id,
+            customer_id: customerId,
+            type: n.type,
+            severity: n.severity,
+            title: n.title,
+            message: n.message,
+            status: 'open',
+            created_at: now
+          }
+        },
+        { upsert: true }
+      )
+    )
+  );
+
+  const rows = await c.assistantNotifications
+    .find({ customer_id: customerId, status: 'open' }, { projection: { _id: 0 } })
+    .sort({ created_at: -1 })
+    .limit(10)
+    .toArray();
+
+  const merged = rows.map((r: any) => {
+    const extra = notifications.find((n) => n.id === r.id)?.actions;
+    return {
+      id: String(r.id),
+      type: String(r.type),
+      severity: r.severity as 'info' | 'warning' | 'critical',
+      title: String(r.title),
+      message: String(r.message),
+      status: String(r.status),
+      createdAt: (r.created_at ? new Date(r.created_at) : now).toISOString(),
+      actions: extra
+    };
+  });
+
+  return res.json({ customerId, lastUpdated: end.toISOString(), notifications: merged });
 });
 
 const defaultRatesFromAvg = (avg: number, tariff: TariffType) => {

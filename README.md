@@ -45,13 +45,21 @@ Monorepo académico com frontend React + TypeScript (Vite) e backend Express + T
 - Endpoints:
 	- `GET /customers/:id/chat?conversationId=...&limit=50` (histórico)
 	- `POST /customers/:id/chat` com `{ "message": "...", "conversationId"?: "..." }`
+	- `GET /customers/:id/assistant/notifications` (alertas/oportunidades proativas + botões)
+	- `GET /customers/:id/assistant/prefs` e `PUT /customers/:id/assistant/prefs` (personalização)
 - Perguntas suportadas (exemplos):
 	- "Quanto gastei nas últimas 24h?" / "na última semana" / "este mês"
 	- "Qual o equipamento que mais consome?"
 	- "Eficiência horária" / "melhores horas" / "horas de pico"
 	- "Potência contratada" / "kVA" / "estou perto do limite?"
 	- "Dá-me 3 dicas para poupar"
-- As respostas podem incluir `cards` estruturados (metric/tip/list) e memória por conversa (ex.: "sim", "mais").
+- Modo explicação:
+	- Depois de uma sugestão, pergunta "porquê?" para obter a justificação.
+- Ações guiadas:
+	- "Plano 7 dias" / "aplicar plano" devolve um checklist no chat.
+- Feedback:
+	- As respostas incluem botões "Útil" e "Não ajudou" para o assistente ajustar o comportamento.
+- As respostas podem incluir `cards` estruturados (metric/tip/list), `actions` (botões/plano) e memória por conversa (ex.: "sim", "mais").
 - Coleções MongoDB:
 	- `chat_conversations`
 	- `chat_messages`

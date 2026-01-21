@@ -215,4 +215,279 @@ describe('chat', () => {
     expect(String(follow.body.reply)).toContain('2)');
     expect(String(follow.body.reply)).not.toContain('Quer que eu sugira 2 ações rápidas');
   });
+
+  it('ações de feedback registam e respondem', async () => {
+    const c = getCollections();
+
+    const customerId = 'U_chat_fb';
+    await c.customers.insertOne({
+      id: customerId,
+      name: 'Cliente Feedback',
+      segment: 'residential',
+      city: 'Porto',
+      contracted_power_kva: 6.9,
+      tariff: 'Bi-horário',
+      utility: 'EDP',
+      price_eur_per_kwh: 0.2,
+      fixed_daily_fee_eur: 0,
+      has_smart_meter: 1,
+      home_area_m2: 80,
+      household_size: 2,
+      locality_type: 'Urbana',
+      dwelling_type: 'Apartamento',
+      build_year_band: '2000-2014',
+      heating_sources: 'Elétrico',
+      has_solar: 0,
+      ev_count: 0,
+      alert_sensitivity: 'Média',
+      main_appliances: 'Termoacumulador',
+      created_at: new Date('2026-01-01T00:00:00.000Z')
+    });
+
+    const end = new Date('2026-01-15T00:00:00.000Z');
+    await c.customerTelemetry15m.insertMany([
+      { customer_id: customerId, ts: new Date(end.getTime() - 15 * 60 * 1000), watts: 900, euros: 0.0, temp_c: 15, is_estimated: false },
+      { customer_id: customerId, ts: end, watts: 1100, euros: 0.0, temp_c: 15, is_estimated: false }
+    ]);
+
+    const first = await request(app).post(`/customers/${customerId}/chat`).send({ message: 'Quanto gastei nas últimas 24h?' });
+    expect(first.status).toBe(200);
+    const convId = String(first.body.conversationId);
+
+    const fb = await request(app).post(`/customers/${customerId}/chat`).send({ message: '__ACTION:FEEDBACK:UP__', conversationId: convId });
+    expect(fb.status).toBe(200);
+    expect(String(fb.body.reply)).toContain('obrigado');
+
+    const rows = await c.assistantFeedback.find({ customer_id: customerId }).toArray();
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('"porquê?" explica a última sugestão (com contexto)', async () => {
+    const c = getCollections();
+
+    const customerId = 'U_chat_explain';
+    await c.customers.insertOne({
+      id: customerId,
+      name: 'Cliente Explica',
+      segment: 'residential',
+      city: 'Porto',
+      contracted_power_kva: 6.9,
+      tariff: 'Bi-horário',
+      utility: 'EDP',
+      price_eur_per_kwh: 0.2,
+      fixed_daily_fee_eur: 0,
+      has_smart_meter: 1,
+      home_area_m2: 80,
+      household_size: 2,
+      locality_type: 'Urbana',
+      dwelling_type: 'Apartamento',
+      build_year_band: '2000-2014',
+      heating_sources: 'Elétrico',
+      has_solar: 0,
+      ev_count: 0,
+      alert_sensitivity: 'Média',
+      main_appliances: 'Termoacumulador',
+      created_at: new Date('2026-01-01T00:00:00.000Z')
+    });
+
+    const end = new Date('2026-01-15T00:00:00.000Z');
+    await c.customerTelemetry15m.insertMany([
+      { customer_id: customerId, ts: new Date(end.getTime() - 15 * 60 * 1000), watts: 900, euros: 0.0, temp_c: 15, is_estimated: false },
+      { customer_id: customerId, ts: end, watts: 1100, euros: 0.0, temp_c: 15, is_estimated: false }
+    ]);
+
+    const s = new Date(end.getTime() - 2 * 24 * 60 * 60 * 1000);
+    await c.customerApplianceUsage.insertMany([
+      {
+        customer_id: customerId,
+        appliance_id: 1,
+        start_ts: s,
+        end_ts: new Date(s.getTime() + 60 * 60 * 1000),
+        energy_wh: 430,
+        cost_eur: 0.05,
+        confidence: 0.9,
+        source: 'synthetic'
+      }
+    ]);
+
+    const first = await request(app).post(`/customers/${customerId}/chat`).send({ message: 'Qual o equipamento que mais consome?' });
+    expect(first.status).toBe(200);
+    expect(first.body).toHaveProperty('conversationId');
+
+    const convId = String(first.body.conversationId);
+    const explain = await request(app).post(`/customers/${customerId}/chat`).send({ message: 'porquê?', conversationId: convId });
+    expect(explain.status).toBe(200);
+    expect(String(explain.body.reply)).toContain('Eu baseio o ranking');
+    expect(Array.isArray(explain.body.actions)).toBe(true);
+  });
+
+  it('ação de plano 7 dias devolve checklist', async () => {
+    const c = getCollections();
+
+    const customerId = 'U_chat_plan';
+    await c.customers.insertOne({
+      id: customerId,
+      name: 'Cliente Plano',
+      segment: 'residential',
+      city: 'Porto',
+      contracted_power_kva: 6.9,
+      tariff: 'Bi-horário',
+      utility: 'EDP',
+      price_eur_per_kwh: 0.2,
+      fixed_daily_fee_eur: 0,
+      has_smart_meter: 1,
+      home_area_m2: 80,
+      household_size: 2,
+      locality_type: 'Urbana',
+      dwelling_type: 'Apartamento',
+      build_year_band: '2000-2014',
+      heating_sources: 'Elétrico',
+      has_solar: 0,
+      ev_count: 0,
+      alert_sensitivity: 'Média',
+      main_appliances: 'Termoacumulador',
+      created_at: new Date('2026-01-01T00:00:00.000Z')
+    });
+
+    const res = await request(app).post(`/customers/${customerId}/chat`).send({ message: '__ACTION:PLAN_7D__' });
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('reply');
+    expect(Array.isArray(res.body.actions)).toBe(true);
+    const plan = (res.body.actions as any[]).find((a) => a && a.kind === 'plan');
+    expect(plan).toBeTruthy();
+    expect(plan).toHaveProperty('items');
+    expect(Array.isArray(plan.items)).toBe(true);
+    expect(plan.items.length).toBeGreaterThanOrEqual(5);
+  });
+
+  it('follow-up "sim" após 7 dias mostra eficiência', async () => {
+    const c = getCollections();
+
+    const customerId = 'U_chat_eff';
+    await c.customers.insertOne({
+      id: customerId,
+      name: 'Cliente Eficiência',
+      segment: 'residential',
+      city: 'Porto',
+      contracted_power_kva: 6.9,
+      tariff: 'Bi-horário',
+      utility: 'EDP',
+      price_eur_per_kwh: 0.2,
+      fixed_daily_fee_eur: 0,
+      has_smart_meter: 1,
+      home_area_m2: 80,
+      household_size: 2,
+      locality_type: 'Urbana',
+      dwelling_type: 'Apartamento',
+      build_year_band: '2000-2014',
+      heating_sources: 'Elétrico',
+      has_solar: 0,
+      ev_count: 0,
+      alert_sensitivity: 'Média',
+      main_appliances: 'Termoacumulador',
+      created_at: new Date('2026-01-01T00:00:00.000Z')
+    });
+
+    const start = new Date('2026-01-10T00:00:00.000Z');
+    const docs = [] as Array<{ customer_id: string; ts: Date; watts: number; euros: number; temp_c: number | null; is_estimated: boolean }>;
+    for (let i = 0; i < 7 * 24 * 4; i += 1) {
+      const ts = new Date(start.getTime() + i * 15 * 60 * 1000);
+      const hour = ts.getUTCHours();
+      const watts = hour >= 18 && hour <= 21 ? 2200 : hour >= 0 && hour <= 7 ? 900 : 1300;
+      docs.push({ customer_id: customerId, ts, watts, euros: 0.0, temp_c: 15, is_estimated: false });
+    }
+    await c.customerTelemetry15m.insertMany(docs);
+
+    const first = await request(app).post(`/customers/${customerId}/chat`).send({ message: 'Quanto gastei na última semana?' });
+    expect(first.status).toBe(200);
+    expect(first.body).toHaveProperty('conversationId');
+    expect(String(first.body.reply)).toContain('Quer ver as melhores horas');
+
+    const convId = String(first.body.conversationId);
+    const follow = await request(app).post(`/customers/${customerId}/chat`).send({ message: 'sim', conversationId: convId });
+    expect(follow.status).toBe(200);
+    expect(String(follow.body.reply)).toContain('Eficiência horária');
+  });
+});
+
+describe('assistant', () => {
+  it('guarda e lê preferências do assistente', async () => {
+    const c = getCollections();
+    const customerId = 'U_prefs';
+    await c.customers.insertOne({
+      id: customerId,
+      name: 'Cliente Prefs',
+      segment: 'residential',
+      city: 'Porto',
+      contracted_power_kva: 6.9,
+      tariff: 'Bi-horário',
+      utility: 'EDP',
+      price_eur_per_kwh: 0.2,
+      fixed_daily_fee_eur: 0,
+      has_smart_meter: 1,
+      home_area_m2: 80,
+      household_size: 2,
+      locality_type: 'Urbana',
+      dwelling_type: 'Apartamento',
+      build_year_band: '2000-2014',
+      heating_sources: 'Elétrico',
+      has_solar: 0,
+      ev_count: 0,
+      alert_sensitivity: 'Média',
+      main_appliances: 'Termoacumulador',
+      created_at: new Date('2026-01-01T00:00:00.000Z')
+    });
+
+    const put = await request(app).put(`/customers/${customerId}/assistant/prefs`).send({ style: 'short', focus: 'poupanca' });
+    expect(put.status).toBe(200);
+
+    const get = await request(app).get(`/customers/${customerId}/assistant/prefs`);
+    expect(get.status).toBe(200);
+    expect(get.body).toHaveProperty('style', 'short');
+    expect(get.body).toHaveProperty('focus', 'poupanca');
+  });
+
+  it('retorna notificações proativas quando há telemetria', async () => {
+    const c = getCollections();
+    const customerId = 'U_notifs';
+    await c.customers.insertOne({
+      id: customerId,
+      name: 'Cliente Notifs',
+      segment: 'residential',
+      city: 'Porto',
+      contracted_power_kva: 3.45,
+      tariff: 'Bi-horário',
+      utility: 'EDP',
+      price_eur_per_kwh: 0.2,
+      fixed_daily_fee_eur: 0,
+      has_smart_meter: 1,
+      home_area_m2: 80,
+      household_size: 2,
+      locality_type: 'Urbana',
+      dwelling_type: 'Apartamento',
+      build_year_band: '2000-2014',
+      heating_sources: 'Elétrico',
+      has_solar: 0,
+      ev_count: 0,
+      alert_sensitivity: 'Média',
+      main_appliances: 'Termoacumulador',
+      created_at: new Date('2026-01-01T00:00:00.000Z')
+    });
+
+    const end = new Date('2026-01-15T06:00:00.000Z');
+    const docs = [] as Array<{ customer_id: string; ts: Date; watts: number; euros: number; temp_c: number | null; is_estimated: boolean }>;
+    // 2 dias de telemetria: dia atual com consumo maior e pico alto
+    for (let i = 0; i < 2 * 24 * 4; i += 1) {
+      const ts = new Date(end.getTime() - (2 * 24 * 4 - 1 - i) * 15 * 60 * 1000);
+      const hour = ts.getUTCHours();
+      const watts = hour >= 18 && hour <= 21 ? 3400 : hour >= 2 && hour <= 5 ? 260 : 1200;
+      docs.push({ customer_id: customerId, ts, watts, euros: 0.0, temp_c: 15, is_estimated: false });
+    }
+    await c.customerTelemetry15m.insertMany(docs);
+
+    const res = await request(app).get(`/customers/${customerId}/assistant/notifications`);
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('notifications');
+    expect(Array.isArray(res.body.notifications)).toBe(true);
+  });
 });

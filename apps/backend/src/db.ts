@@ -46,6 +46,9 @@ export type Collections = {
   customerApplianceUsage: Collection<{ customer_id: string; appliance_id: number; start_ts: Date; end_ts: Date; energy_wh: number; cost_eur: number; confidence: number; source?: 'synthetic' | 'estimated' }>; 
   chatConversations: Collection<{ id: string; customer_id: string; title: string | null; state?: any; created_at: Date; updated_at: Date }>;
   chatMessages: Collection<{ id: string; customer_id: string; conversation_id: string; role: 'user' | 'assistant' | 'system'; content: string; created_at: Date }>;
+  assistantPrefs: Collection<{ customer_id: string; style?: 'short' | 'detailed'; focus?: 'poupanca' | 'equipamentos' | 'potencia' | 'geral'; updated_at: Date }>;
+  assistantFeedback: Collection<{ id: string; customer_id: string; conversation_id: string; rating: 'up' | 'down'; topic?: string; created_at: Date }>;
+  assistantNotifications: Collection<{ id: string; customer_id: string; type: string; severity: 'info' | 'warning' | 'critical'; title: string; message: string; status: 'open' | 'closed'; created_at: Date }>;
   alerts: Collection<{ id: number; message: string; severity: string; status: string; type: string; created_at: Date }>;
   advice: Collection<{ id: number; current_power: number; suggested_power: number; tariff: string; savings_per_month: number; created_at: Date }>;
   contractProfile: Collection<{ _id: 1; power_kva: number; tariff: string; utility: string; updated_at: Date }>;
@@ -99,6 +102,9 @@ export function getCollections(db: Db = getDb()): Collections {
     customerApplianceUsage: db.collection('customer_appliance_usage'),
     chatConversations: db.collection('chat_conversations'),
     chatMessages: db.collection('chat_messages'),
+    assistantPrefs: db.collection('assistant_prefs'),
+    assistantFeedback: db.collection('assistant_feedback'),
+    assistantNotifications: db.collection('assistant_notifications'),
     alerts: db.collection('alerts'),
     advice: db.collection('advice'),
     contractProfile: db.collection('contract_profile'),
@@ -131,6 +137,13 @@ async function ensureIndexesAndSeed(db: Db) {
     c.chatMessages.createIndex({ id: 1 }, { unique: true }),
     c.chatMessages.createIndex({ conversation_id: 1, created_at: 1 }),
     c.chatMessages.createIndex({ customer_id: 1, created_at: 1 }),
+    c.assistantPrefs.createIndex({ customer_id: 1 }, { unique: true }),
+    c.assistantFeedback.createIndex({ id: 1 }, { unique: true }),
+    c.assistantFeedback.createIndex({ customer_id: 1, created_at: -1 }),
+    c.assistantFeedback.createIndex({ conversation_id: 1, created_at: -1 }),
+    c.assistantNotifications.createIndex({ id: 1 }, { unique: true }),
+    c.assistantNotifications.createIndex({ customer_id: 1, created_at: -1 }),
+    c.assistantNotifications.createIndex({ customer_id: 1, status: 1, created_at: -1 }),
     c.alerts.createIndex({ id: 1 }, { unique: true }),
     c.alerts.createIndex({ created_at: -1 }),
     c.advice.createIndex({ id: 1 }, { unique: true }),

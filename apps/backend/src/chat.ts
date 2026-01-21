@@ -14,6 +14,15 @@ export type ChatCard =
   | { kind: 'tip'; title: string; detail: string }
   | { kind: 'list'; title: string; items: string[]; subtitle?: string };
 
+export type ChatAction =
+  | { kind: 'button'; id: string; label: string; message: string }
+  | {
+      kind: 'plan';
+      id: string;
+      title: string;
+      items: Array<{ id: string; label: string; detail?: string }>;
+    };
+
 export type ChatHistoryItem = { role: ChatMessageRole; content: string; createdAt: string };
 
 export type ChatHistoryResponse = {
@@ -25,6 +34,7 @@ export type ChatReplyResponse = {
   conversationId: string;
   reply: string;
   cards?: ChatCard[];
+  actions?: ChatAction[];
 };
 
 const SAFE_MAX_HISTORY = 50;
@@ -32,6 +42,14 @@ const SAFE_MAX_HISTORY = 50;
 type ChatIntent =
   | 'help'
   | 'sensitive'
+  | 'feedback'
+  | 'prefs'
+  | 'explain'
+  | 'plan_7d'
+  | 'tariff_sim'
+  | 'compare_peers'
+  | 'what_if'
+  | 'alerts'
   | 'last_24h'
   | 'last_7d'
   | 'month_to_date'
@@ -47,6 +65,10 @@ type PendingState =
       windowDays?: number;
     }
   | {
+      type: 'show_appliances_top';
+      windowDays?: number;
+    }
+  | {
       type: 'show_efficiency';
       windowDays?: number;
     };
@@ -54,8 +76,110 @@ type PendingState =
 type ConversationState = {
   lastIntent?: ChatIntent;
   lastWindowDays?: number;
+  lastTopLimit?: number;
   pending?: PendingState;
+  lastExplain?: {
+    topic: 'appliances_top' | 'appliance_actions' | 'efficiency' | 'power' | 'tips' | 'last_24h' | 'last_7d' | 'month_to_date';
+    windowDays?: number;
+    applianceName?: string;
+  };
 };
+
+const ACTION_PLAN_7D = '__ACTION:PLAN_7D__';
+const ACTION_FEEDBACK_UP = '__ACTION:FEEDBACK:UP__';
+const ACTION_FEEDBACK_DOWN = '__ACTION:FEEDBACK:DOWN__';
+
+type AssistantPrefs = {
+  style: 'short' | 'detailed';
+  focus: 'poupanca' | 'equipamentos' | 'potencia' | 'geral';
+};
+
+function parseNumberPt(s: string): number | null {
+  const cleaned = s.replace(',', '.');
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : null;
+}
+
+function parseRequestedPowerKva(message: string): number | null {
+  const m = message.toLowerCase();
+  const mm = m.match(/\b([0-9]{1,2}(?:[\.,][0-9]{1,2})?)\s*kva\b/);
+  if (mm) {
+    const n = parseNumberPt(mm[1]);
+    if (n && n > 0 && n <= 60) return n;
+  }
+  return null;
+}
+
+function parseRequestedTariff(message: string): 'simples' | 'bi' | 'tri' | null {
+  const m = message.toLowerCase();
+  if (m.includes('bi-hor') || m.includes('bi hor') || m.includes('bihor')) return 'bi';
+  if (m.includes('tri-hor') || m.includes('tri hor') || m.includes('trihor')) return 'tri';
+  if (m.includes('simples')) return 'simples';
+  return null;
+}
+
+function parseAlertCommand(message: string): { kind: 'spike_pct' | 'standby_watts' | 'near_power_pct'; value: number } | null {
+  const m = message.toLowerCase();
+  // exemplos: "alerta 20%", "alerta standby 180w", "alerta potencia 90%"
+  const spike = m.match(/\balerta\b.*\b([0-9]{1,3})\s*%\b/);
+  if (spike && !m.includes('poten')) {
+    const n = Number(spike[1]);
+    if (Number.isFinite(n) && n >= 5 && n <= 200) return { kind: 'spike_pct', value: n };
+  }
+  const standby = m.match(/\balerta\b.*\bstand\w*\b.*\b([0-9]{2,4})\s*w\b/);
+  if (standby) {
+    const n = Number(standby[1]);
+    if (Number.isFinite(n) && n >= 50 && n <= 2000) return { kind: 'standby_watts', value: n };
+  }
+  const power = m.match(/\balerta\b.*\bpoten\w*\b.*\b([0-9]{2,3})\s*%\b/);
+  if (power) {
+    const n = Number(power[1]);
+    if (Number.isFinite(n) && n >= 60 && n <= 100) return { kind: 'near_power_pct', value: n };
+  }
+  return null;
+}
+
+function parseFeedbackAction(message: string): 'up' | 'down' | null {
+  const t = message.trim();
+  if (t === ACTION_FEEDBACK_UP) return 'up';
+  if (t === ACTION_FEEDBACK_DOWN) return 'down';
+  return null;
+}
+
+function inferPrefsFromMessage(message: string): Partial<AssistantPrefs> | null {
+  const m = message.toLowerCase();
+  const next: Partial<AssistantPrefs> = {};
+
+  if (m.includes('responde curto') || m.includes('mais curto') || m.includes('curto e direto') || m.includes('curto')) {
+    next.style = 'short';
+  }
+  if (m.includes('mais detalhe') || m.includes('detalha') || m.includes('explica melhor') || m.includes('detalhado')) {
+    next.style = 'detailed';
+  }
+
+  if (m.includes('foco em poupan') || m.includes('quero poupar') || m.includes('poupança')) next.focus = 'poupanca';
+  if (m.includes('foco em equip') || m.includes('equipamentos')) next.focus = 'equipamentos';
+  if (m.includes('foco em pot') || m.includes('potência') || m.includes('potencia')) next.focus = 'potencia';
+  if (m.includes('foco geral') || m.includes('geral')) next.focus = 'geral';
+
+  return Object.keys(next).length ? next : null;
+}
+
+function isExplainRequest(message: string) {
+  const t = message.trim().toLowerCase();
+  if (!t) return false;
+  if (t === 'porquê' || t === 'por que' || t === 'porque' || t === 'porquê?' || t === 'por que?' || t === 'porque?') return true;
+  if (t.startsWith('porquê') || t.startsWith('por que') || t.startsWith('porque')) return true;
+  return false;
+}
+
+function isPlan7dRequest(message: string) {
+  const t = message.trim().toLowerCase();
+  if (t === ACTION_PLAN_7D.toLowerCase()) return true;
+  if (t.includes('plano') && (t.includes('7 dias') || t.includes('sete dias'))) return true;
+  if (t.includes('aplicar') && t.includes('plano')) return true;
+  return false;
+}
 
 function wattsSamplesToKwh(sumWatts: number) {
   // Cada amostra representa 15 minutos -> 0.25 horas
@@ -111,9 +235,21 @@ function isShortMore(message: string) {
 function detectIntent(message: string, prev?: ConversationState | null): ChatIntent {
   if (isSensitiveRequest(message)) return 'sensitive';
 
+  if (parseFeedbackAction(message)) return 'feedback';
+  if (inferPrefsFromMessage(message)) return 'prefs';
+
   const m = message.toLowerCase();
+  if (m.includes('alerta') || m.includes('notifica')) return 'alerts';
+  if (m.includes('compar') || m.includes('vizin') || m.includes('semelh')) return 'compare_peers';
+  if (m.includes('tarifa') || m.includes('bi-hor') || m.includes('tri-hor') || m.includes('mudar de tarifa') || m.includes('simular tarifa')) return 'tariff_sim';
+  if (m.includes('e se ') || m.startsWith('e se') || m.includes('what if')) return 'what_if';
+
+  if (isPlan7dRequest(message)) return 'plan_7d';
+  if (isExplainRequest(message)) return 'explain';
+
   if (isShortAffirmative(message) || isShortMore(message)) {
     if (prev?.pending?.type === 'suggest_appliance_actions') return 'appliance_actions';
+    if (prev?.pending?.type === 'show_appliances_top') return 'appliances_top';
     if (prev?.pending?.type === 'show_efficiency') return 'efficiency';
     return prev?.lastIntent ?? 'help';
   }
@@ -127,6 +263,92 @@ function detectIntent(message: string, prev?: ConversationState | null): ChatInt
   if (m.includes('24h') || m.includes('24 h') || m.includes('ontem') || m.includes('últimas') || m.includes('ultimas')) return 'last_24h';
 
   return 'help';
+}
+
+async function getPeerComparison(c: Collections, customerId: string, end: Date, days = 7) {
+  const customer = await c.customers.findOne(
+    { id: customerId },
+    { projection: { _id: 0, segment: 1, city: 1, household_size: 1 } }
+  );
+  if (!customer) return null;
+
+  const seg = String((customer as any).segment ?? '');
+  const city = String((customer as any).city ?? '');
+  const hh = Number((customer as any).household_size ?? 0);
+
+  const peerIds = await c.customers
+    .find(
+      {
+        id: { $ne: customerId },
+        segment: seg,
+        city: city,
+        household_size: hh > 0 ? { $gte: Math.max(1, hh - 1), $lte: Math.min(10, hh + 1) } : { $exists: true }
+      },
+      { projection: { _id: 0, id: 1 } }
+    )
+    .limit(25)
+    .toArray();
+
+  const ids = peerIds.map((r: any) => String(r.id)).filter(Boolean);
+  if (!ids.length) return { peers: 0, yourAvgKwhDay: null, peersAvgKwhDay: null };
+
+  const since = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
+  const agg = await c.customerTelemetry15m
+    .aggregate([
+      { $match: { customer_id: { $in: [customerId, ...ids] }, ts: { $gte: since, $lte: end } } },
+      { $group: { _id: '$customer_id', sumWatts: { $sum: '$watts' } } }
+    ])
+    .toArray();
+
+  const kwhById = new Map<string, number>();
+  for (const r of agg as any[]) {
+    const cid = String(r?._id);
+    const sumWatts = Number(r?.sumWatts ?? 0);
+    const kwh = (sumWatts * 0.25) / 1000;
+    kwhById.set(cid, kwh);
+  }
+
+  const your = kwhById.get(customerId);
+  const peers = ids.map((id) => kwhById.get(id)).filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+  const peersAvg = peers.length ? peers.reduce((a, b) => a + b, 0) / peers.length : null;
+
+  const yourAvgKwhDay = typeof your === 'number' ? Number((your / days).toFixed(2)) : null;
+  const peersAvgKwhDay = typeof peersAvg === 'number' ? Number(((peersAvg as number) / days).toFixed(2)) : null;
+
+  return { peers: peers.length, yourAvgKwhDay, peersAvgKwhDay };
+}
+
+function estimateMonthlySavingsForAppliance(applianceName: string, windowDays: number, windowCostEur: number) {
+  const n = applianceName.toLowerCase();
+  const days = Math.max(1, Math.min(60, Math.floor(windowDays || 30)));
+  const monthlyCost = windowCostEur * (30 / days);
+
+  let factor = 0.1;
+  if (n.includes('stand')) factor = 0.6;
+  else if (n.includes('luz') || n.includes('ilumin')) factor = 0.25;
+  else if (n.includes('água quente') || n.includes('agua quente') || n.includes('termo') || n.includes('acumul')) factor = 0.18;
+  else if (n.includes('ar condicionado') || n.includes('a/c') || n.includes('climat')) factor = 0.2;
+  else if (n.includes('frigor') || n.includes('congel') || n.includes('arca')) factor = 0.08;
+  else if (n.includes('forno') || n.includes('placa') || n.includes('fog')) factor = 0.12;
+  else if (n.includes('lavar')) factor = 0.1;
+
+  const eur = Number((Math.max(0, monthlyCost) * factor).toFixed(2));
+  return eur;
+}
+
+function parseTopLimit(message: string): number | null {
+  const m = message.toLowerCase();
+  const mm = m.match(/\btop\s*([0-9]{1,2})\b/);
+  if (mm) {
+    const n = Number(mm[1]);
+    if (Number.isFinite(n)) return Math.max(3, Math.min(15, Math.floor(n)));
+  }
+  const mm2 = m.match(/\bmostra\s*([0-9]{1,2})\b/);
+  if (mm2) {
+    const n = Number(mm2[1]);
+    if (Number.isFinite(n)) return Math.max(3, Math.min(15, Math.floor(n)));
+  }
+  return null;
 }
 
 function pickApplianceActions(applianceName: string) {
@@ -344,14 +566,15 @@ async function getPowerSuggestionQuick(c: Collections, customerId: string, end: 
   return { contractedKva: contracted, peakKva: Number(peakKva.toFixed(2)), suggestedKva: suggested, status };
 }
 
-async function getTopAppliancesByCost(c: Collections, customerId: string, end: Date, windowDays = 30) {
+async function getTopAppliancesByCost(c: Collections, customerId: string, end: Date, windowDays = 30, limit = 5) {
   const start = new Date(end.getTime() - windowDays * 24 * 60 * 60 * 1000);
+  const lim = Math.max(3, Math.min(15, Math.floor(limit)));
   const rows = await c.customerApplianceUsage
     .aggregate([
       { $match: { customer_id: customerId, start_ts: { $gte: start, $lte: end } } },
       { $group: { _id: '$appliance_id', cost_eur: { $sum: '$cost_eur' }, energy_wh: { $sum: '$energy_wh' } } },
       { $sort: { cost_eur: -1 } },
-      { $limit: 5 }
+      { $limit: lim }
     ])
     .toArray();
 
@@ -423,17 +646,20 @@ function buildFallbackReply(
   message: string,
   intent: ChatIntent,
   customer: Pick<CustomerDoc, 'name' | 'tariff' | 'contracted_power_kva' | 'price_eur_per_kwh'>,
+  prevState: ConversationState | null,
+  prefs: AssistantPrefs,
   context: {
     last24hKwh?: number;
     last7dKwh?: number;
     monthToDateKwh?: number;
     appliancesWindowDays?: number;
+    topLimit?: number;
     followUpKind?: 'confirm' | 'more';
     topAppliances?: Array<{ name: string; costEur: number; energyKwh: number }>;
     efficiency?: { scorePct: number; bestHoursUtc: number[]; peakHoursUtc: number[]; estimatedSavingsMonthEur: number };
     power?: { contractedKva: number; peakKva: number; suggestedKva: number; status: 'ok' | 'sobredimensionado' | 'subdimensionado' };
   }
-): { reply: string; cards?: ChatCard[] } {
+): { reply: string; cards?: ChatCard[]; actions?: ChatAction[] } {
   if (intent === 'sensitive') {
     return {
       reply: 'Não consigo ajudar com credenciais/segredos (ex.: chaves, tokens, URIs privadas). Posso ajudar a configurar variáveis de ambiente de forma segura.',
@@ -441,20 +667,129 @@ function buildFallbackReply(
     };
   }
 
+  if (intent === 'plan_7d') {
+    return {
+      reply:
+        'Plano guiado de 7 dias (rápido e realista). Marca o que vais fazendo — eu posso ajustar conforme o teu consumo e os teus equipamentos.',
+      actions: [
+        {
+          kind: 'plan',
+          id: 'plan_7d_v1',
+          title: 'Plano de poupança (7 dias)',
+          items: [
+            { id: 'd1_standby', label: 'Dia 1: cortar stand-by à noite', detail: 'Regletas/smart plugs em TV/box/consolas e carregadores.' },
+            { id: 'd2_termo', label: 'Dia 2: ajustar termoacumulador', detail: '55–60°C e (se possível) aquecer fora do pico.' },
+            { id: 'd3_lavagens', label: 'Dia 3: deslocar lavagens', detail: 'Máquina roupa/loiça para horário mais barato (se existir vazio).' },
+            { id: 'd4_frio', label: 'Dia 4: otimizar frio', detail: 'Frigorífico ~4°C e congelador ~-18°C; verificar borrachas/ventilação.' },
+            { id: 'd5_cozinha', label: 'Dia 5: cozinhar em lotes', detail: 'Aproveitar calor residual e evitar pré-aquecimentos longos.' },
+            { id: 'd6_clima', label: 'Dia 6: setpoints moderados', detail: 'A/C 24–26°C (verão) / 19–21°C (inverno) e filtros limpos.' },
+            { id: 'd7_medicao', label: 'Dia 7: medir antes/depois', detail: 'Compara 7 dias e escolhe 2 hábitos para manter.' }
+          ]
+        },
+        { kind: 'button', id: 'why_plan', label: 'Porquê este plano?', message: 'porquê?' }
+      ]
+    };
+  }
+
   const m = message.toLowerCase();
   const top = context.topAppliances?.[0];
   const appliancesDays = Number(context.appliancesWindowDays ?? 30);
+  const topLimit = Math.max(3, Math.min(15, Math.floor(context.topLimit ?? (context.topAppliances?.length ?? 5) ?? 5)));
+
+  if (intent === 'explain') {
+    const last = prevState?.lastExplain;
+    if (!last) {
+      return {
+        reply:
+          'Consigo explicar o “porquê”, mas preciso de contexto. Primeiro pede um resumo (ex.: “últimas 24h”, “top equipamento”, “eficiência”), e depois pergunta “porquê?”.',
+        actions: [
+          { kind: 'button', id: 'q_24h', label: 'Ver 24h', message: 'Quanto gastei nas últimas 24h?' },
+          { kind: 'button', id: 'q_top', label: 'Top equipamento', message: 'Qual o equipamento que mais consome?' }
+        ]
+      };
+    }
+
+    if (last.topic === 'appliances_top' || last.topic === 'appliance_actions') {
+      const d = last.windowDays ?? appliancesDays;
+      const ap = last.applianceName ? ` (ex.: “${last.applianceName}”)` : '';
+      const totalCost = (context.topAppliances ?? []).reduce((acc, a) => acc + (a?.costEur ?? 0), 0);
+      const topName = top?.name;
+      const topCost = top?.costEur;
+      const topShare =
+        typeof topCost === 'number' && totalCost > 0 ? `${Math.round((topCost / totalCost) * 100)}%` : null;
+      return {
+        reply:
+          `Eu baseio o ranking/sugestões em sessões estimadas por equipamento nos últimos ${d} dias${ap}. ` +
+          (topName && typeof topCost === 'number'
+            ? `Neste período, o topo é “${topName}” com ~${fmtEur(topCost)}${topShare ? ` (≈ ${topShare} do top)` : ''}. `
+            : '') +
+          'A lógica é: atacar primeiro onde há maior custo/kWh e onde pequenas mudanças dão mais impacto (temperatura, horários, stand-by e picos). Se quiser, eu explico como medir o “antes/depois” em 7 dias.',
+        actions: [
+          { kind: 'button', id: 'apply_plan', label: 'Aplicar plano 7 dias', message: ACTION_PLAN_7D },
+          { kind: 'button', id: 'measure', label: 'Como medir em 7 dias?', message: 'Como medir o impacto em 7 dias?' }
+        ]
+      };
+    }
+
+    if (last.topic === 'efficiency') {
+      const d = last.windowDays ?? 7;
+      const score = context.efficiency?.scorePct;
+      const best = (context.efficiency?.bestHoursUtc ?? []).slice(0, 3).map(fmtHour);
+      const worst = (context.efficiency?.peakHoursUtc ?? []).slice(0, 3).map(fmtHour);
+      const save = context.efficiency?.estimatedSavingsMonthEur ?? 0;
+      return {
+        reply:
+          `Eu calculo um “score” de eficiência horária com base no padrão de consumo ao longo do dia nos últimos ${d} dias. ` +
+          (typeof score === 'number' ? `O teu score atual é ${score}/100. ` : '') +
+          (best.length ? `Horas mais leves: ${best.join(', ')}. ` : '') +
+          (worst.length ? `Horas mais pesadas: ${worst.join(', ')}. ` : '') +
+          (save > 0 ? `A poupança estimada assume deslocar consumos flexíveis (ex.: lavagens) e dá ~${fmtEur(save)}/mês. ` : '') +
+          'Quando a tua tarifa tem vazio, estas trocas tendem a ter melhor retorno.',
+        actions: [{ kind: 'button', id: 'apply_plan', label: 'Aplicar plano 7 dias', message: ACTION_PLAN_7D }]
+      };
+    }
+
+    if (last.topic === 'power') {
+      const p = context.power;
+      return {
+        reply:
+          `Eu comparo a potência contratada (kVA) com o pico observado (kVA) e classifico: OK / sobredimensionado / perto do limite. ` +
+          (p
+            ? `No teu caso: contratada ${p.contractedKva.toFixed(2)} kVA, pico ~${p.peakKva.toFixed(2)} kVA, sugestão ${p.suggestedKva.toFixed(2)} kVA (${p.status}). `
+            : '') +
+          'A sugestão tenta evitar cortes por excesso e, ao mesmo tempo, não pagar potência a mais sem necessidade.',
+        actions: [{ kind: 'button', id: 'apply_plan', label: 'Aplicar plano 7 dias', message: ACTION_PLAN_7D }]
+      };
+    }
+
+    return {
+      reply:
+        'Eu priorizo o que tende a dar mais resultado: reduzir stand-by, reduzir picos e otimizar os maiores consumidores. Se quiser, aplico um plano guiado de 7 dias.',
+      actions: [{ kind: 'button', id: 'apply_plan', label: 'Aplicar plano 7 dias', message: ACTION_PLAN_7D }]
+    };
+  }
 
   if (intent === 'appliance_actions') {
     if (top) {
       const actions = pickApplianceActions(top.name);
       const more = context.followUpKind === 'more';
       const items = more ? [...actions, 'Se quiser, digo como medir (antes/depois) e estimo poupança mensal.'] : actions;
+      const saveEur = estimateMonthlySavingsForAppliance(top.name, appliancesDays, top.costEur);
+      const replyBase = `Perfeito — 2 ações rápidas para “${top.name}” (últimos ${appliancesDays} dias):\n1) ${actions[0]}\n2) ${actions[1]}`;
+      const replyExtra = saveEur > 0 ? `\nImpacto típico (estimado): ~${fmtEur(saveEur)}/mês (depende do teu uso).` : '';
       return {
-        reply: `Perfeito — 2 ações rápidas para “${top.name}” (últimos ${appliancesDays} dias):\n1) ${actions[0]}\n2) ${actions[1]}\nSe quiseres, digo também como medir o impacto em 7 dias.`,
+        reply:
+          prefs.style === 'short'
+            ? `${replyBase}${replyExtra}`
+            : `${replyBase}${replyExtra}\nSe quiseres, digo também como medir o impacto em 7 dias.`,
         cards: [
           { kind: 'metric', title: `Top equipamento (${appliancesDays}d)`, value: top.name, subtitle: `${fmtEur(top.costEur)} · ${top.energyKwh.toFixed(2)} kWh` },
+          ...(saveEur > 0 ? [{ kind: 'metric', title: 'Poupança estimada', value: `${fmtEur(saveEur)}/mês`, subtitle: 'Heurística (depende do hábito)' } as ChatCard] : []),
           { kind: 'list', title: 'Ações rápidas', items }
+        ],
+        actions: [
+          { kind: 'button', id: 'why_actions', label: 'Porquê estas ações?', message: 'porquê?' },
+          { kind: 'button', id: 'apply_plan', label: 'Aplicar plano 7 dias', message: ACTION_PLAN_7D }
         ]
       };
     }
@@ -470,10 +805,17 @@ function buildFallbackReply(
     if (typeof kwh === 'number') {
       const cost = kwh * (customer.price_eur_per_kwh ?? 0.2);
       return {
-        reply: `Nas últimas 24h estimamos ~${kwh.toFixed(2)} kWh (≈ ${fmtEur(cost)}). Se quiser, digo quais os equipamentos que mais pesaram no último mês.`,
+        reply:
+          prefs.style === 'short'
+            ? `24h: ~${kwh.toFixed(2)} kWh (≈ ${fmtEur(cost)}).`
+            : `Nas últimas 24h estimamos ~${kwh.toFixed(2)} kWh (≈ ${fmtEur(cost)}). Se quiser, digo quais os equipamentos que mais pesaram nos últimos 30 dias.`,
         cards: [
           { kind: 'metric', title: 'Energia (24h)', value: `${kwh.toFixed(2)} kWh` },
           { kind: 'metric', title: 'Custo (24h)', value: fmtEur(cost), subtitle: `Tarifa: ${String(customer.tariff ?? '—')}` }
+        ],
+        actions: [
+          { kind: 'button', id: 'show_top', label: 'Ver top equipamentos', message: 'sim' },
+          { kind: 'button', id: 'why_24h', label: 'Porquê?', message: 'porquê?' }
         ]
       };
     }
@@ -488,6 +830,10 @@ function buildFallbackReply(
         cards: [
           { kind: 'metric', title: 'Energia (7 dias)', value: `${kwh.toFixed(2)} kWh` },
           { kind: 'metric', title: 'Custo (7 dias)', value: fmtEur(cost) }
+        ],
+        actions: [
+          { kind: 'button', id: 'show_eff', label: 'Sim — melhores horas', message: 'sim' },
+          { kind: 'button', id: 'why_7d', label: 'Porquê?', message: 'porquê?' }
         ]
       };
     }
@@ -502,6 +848,10 @@ function buildFallbackReply(
         cards: [
           { kind: 'metric', title: 'Energia (mês)', value: `${kwh.toFixed(2)} kWh` },
           { kind: 'metric', title: 'Custo (mês)', value: fmtEur(cost) }
+        ],
+        actions: [
+          { kind: 'button', id: 'show_eff', label: 'Ver eficiência horária', message: 'sim' },
+          { kind: 'button', id: 'why_mtd', label: 'Porquê?', message: 'porquê?' }
         ]
       };
     }
@@ -511,10 +861,18 @@ function buildFallbackReply(
     if (top) {
       const list = (context.topAppliances ?? []).map((a) => `${a.name}: ${fmtEur(a.costEur)} · ${a.energyKwh.toFixed(2)} kWh`);
       return {
-        reply: `Neste momento, o maior impacto estimado é “${top.name}”: ~${fmtEur(top.costEur)} e ~${top.energyKwh.toFixed(2)} kWh (últimos ${appliancesDays} dias). Quer que eu sugira 2 ações rápidas para reduzir este consumo?`,
+        reply:
+          prefs.style === 'short'
+            ? `Top: “${top.name}” ~${fmtEur(top.costEur)} · ${top.energyKwh.toFixed(2)} kWh (${appliancesDays}d). Queres 2 ações rápidas?`
+            : `Neste momento, o maior impacto estimado é “${top.name}”: ~${fmtEur(top.costEur)} e ~${top.energyKwh.toFixed(2)} kWh (últimos ${appliancesDays} dias). Quer que eu sugira 2 ações rápidas para reduzir este consumo?`,
         cards: [
           { kind: 'metric', title: `Top equipamento (${appliancesDays}d)`, value: top.name, subtitle: `${fmtEur(top.costEur)} · ${top.energyKwh.toFixed(2)} kWh` },
-          ...(list.length ? [{ kind: 'list', title: `Top 5 (${appliancesDays}d)`, items: list, subtitle: 'Estimativa por sessões' } as ChatCard] : [])
+          ...(list.length ? [{ kind: 'list', title: `Top ${Math.min(topLimit, list.length)} (${appliancesDays}d)`, items: list, subtitle: 'Estimativa por sessões' } as ChatCard] : [])
+        ],
+        actions: [
+          { kind: 'button', id: 'do_actions', label: 'Sim — 2 ações rápidas', message: 'sim' },
+          { kind: 'button', id: 'why_top', label: 'Porquê este ranking?', message: 'porquê?' },
+          { kind: 'button', id: 'apply_plan', label: 'Aplicar plano 7 dias', message: ACTION_PLAN_7D }
         ]
       };
     }
@@ -535,6 +893,10 @@ Horas mais pesadas: ${peak || '—'}.`,
         cards: [
           { kind: 'metric', title: 'Eficiência', value: `${context.efficiency.scorePct}%` },
           { kind: 'metric', title: 'Poupança potencial', value: `${fmtEur(context.efficiency.estimatedSavingsMonthEur)}/mês`, subtitle: 'Deslocar parte do pico para vazio' }
+        ],
+        actions: [
+          { kind: 'button', id: 'why_eff', label: 'Porquê?', message: 'porquê?' },
+          { kind: 'button', id: 'apply_plan', label: 'Aplicar plano 7 dias', message: ACTION_PLAN_7D }
         ]
       };
     }
@@ -550,6 +912,10 @@ Estado: ${st}. Sugestão rápida: ${context.power.suggestedKva.toFixed(2)} kVA.`
           { kind: 'metric', title: 'Contratada', value: `${context.power.contractedKva.toFixed(2)} kVA` },
           { kind: 'metric', title: 'Pico (30d)', value: `${context.power.peakKva.toFixed(2)} kVA` },
           { kind: 'metric', title: 'Sugestão', value: `${context.power.suggestedKva.toFixed(2)} kVA`, subtitle: 'Heurística rápida' }
+        ],
+        actions: [
+          { kind: 'button', id: 'why_power', label: 'Porquê?', message: 'porquê?' },
+          { kind: 'button', id: 'apply_plan', label: 'Aplicar plano 7 dias', message: ACTION_PLAN_7D }
         ]
       };
     }
@@ -572,7 +938,11 @@ Estado: ${st}. Sugestão rápida: ${context.power.suggestedKva.toFixed(2)} kVA.`
 
     return {
       reply: `Aqui vão 3 ações rápidas:\n1) ${tips[0] ?? '—'}\n2) ${tips[1] ?? '—'}\n3) ${tips[2] ?? '—'}`,
-      cards: [{ kind: 'tip', title: 'Ações rápidas', detail: 'Se quiser, eu detalho por equipamento e por horário.' }]
+      cards: [{ kind: 'tip', title: 'Ações rápidas', detail: 'Se quiser, eu detalho por equipamento e por horário.' }],
+      actions: [
+        { kind: 'button', id: 'apply_plan', label: 'Aplicar plano 7 dias', message: ACTION_PLAN_7D },
+        { kind: 'button', id: 'why_tips', label: 'Porquê estas dicas?', message: 'porquê?' }
+      ]
     };
   }
 
@@ -581,6 +951,11 @@ Estado: ${st}. Sugestão rápida: ${context.power.suggestedKva.toFixed(2)} kVA.`
     cards: [
       { kind: 'metric', title: 'Potência contratada', value: `${Number(customer.contracted_power_kva ?? 0).toFixed(2)} kVA` },
       { kind: 'metric', title: 'Tarifa', value: String(customer.tariff ?? '—') }
+    ],
+    actions: [
+      { kind: 'button', id: 'q_24h', label: '24h', message: 'Quanto gastei nas últimas 24h?' },
+      { kind: 'button', id: 'q_top', label: 'Top equipamento', message: 'Qual o equipamento que mais consome?' },
+      { kind: 'button', id: 'q_plan', label: 'Plano 7 dias', message: ACTION_PLAN_7D }
     ]
   };
 }
@@ -623,6 +998,12 @@ export async function handleCustomerChat(c: Collections, customerId: string, bod
   const prevState = await getConversationState(c, customerId, conversationId);
   const intent = detectIntent(parsed.data.message, prevState);
 
+  const prefsRow = await c.assistantPrefs.findOne({ customer_id: customerId }, { projection: { _id: 0, style: 1, focus: 1 } });
+  const prefs: AssistantPrefs = {
+    style: (prefsRow as any)?.style === 'short' ? 'short' : 'detailed',
+    focus: (['poupanca', 'equipamentos', 'potencia', 'geral'] as const).includes((prefsRow as any)?.focus) ? ((prefsRow as any)?.focus as any) : 'geral'
+  };
+
   const now = new Date();
   const userMsgId = crypto.randomUUID();
   await c.chatMessages.insertOne({
@@ -634,6 +1015,47 @@ export async function handleCustomerChat(c: Collections, customerId: string, bod
     created_at: now
   });
 
+  if (intent === 'feedback') {
+    const rating = parseFeedbackAction(parsed.data.message);
+    if (rating) {
+      const lastAssistant = await c.chatMessages
+        .find({ customer_id: customerId, conversation_id: conversationId, role: 'assistant' }, { projection: { _id: 0, id: 1, content: 1, created_at: 1 } })
+        .sort({ created_at: -1 })
+        .limit(1)
+        .toArray();
+
+      await c.assistantFeedback.insertOne({
+        id: crypto.randomUUID(),
+        customer_id: customerId,
+        conversation_id: conversationId,
+        rating,
+        topic: prevState?.lastIntent ?? undefined,
+        created_at: new Date()
+      });
+
+      const reply = rating === 'up' ? 'Boa — obrigado! Vou manter este estilo.' : 'Percebido — obrigado. Vou ajustar as próximas sugestões.';
+      const assistantMsgId = crypto.randomUUID();
+      await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
+
+      return { status: 200, body: { conversationId, reply, actions: [{ kind: 'button', id: 'plan', label: 'Plano 7 dias', message: ACTION_PLAN_7D }] } };
+    }
+  }
+
+  if (intent === 'prefs') {
+    const update = inferPrefsFromMessage(parsed.data.message);
+    if (update) {
+      await c.assistantPrefs.updateOne(
+        { customer_id: customerId },
+        { $set: { customer_id: customerId, ...update, updated_at: new Date() } },
+        { upsert: true }
+      );
+      const reply = `Ok — atualizado. A partir de agora respondo ${update.style === 'short' ? 'mais curto e direto' : update.style === 'detailed' ? 'com mais detalhe' : 'no estilo atual'}${update.focus ? ` (foco: ${update.focus})` : ''}.`;
+      const assistantMsgId = crypto.randomUUID();
+      await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
+      return { status: 200, body: { conversationId, reply } };
+    }
+  }
+
   const latestTs = await getLatestTelemetryTs(c, customerId);
   const end = latestTs ? new Date(latestTs) : null;
 
@@ -642,20 +1064,182 @@ export async function handleCustomerChat(c: Collections, customerId: string, bod
   const appliancesWindowDays = requestedWindowDays ?? prevState?.pending?.windowDays ?? ((intent === 'appliances_top' || intent === 'appliance_actions') ? 30 : baseWindowDays);
   const followUpKind: 'confirm' | 'more' | undefined = isShortMore(parsed.data.message) ? 'more' : isShortAffirmative(parsed.data.message) ? 'confirm' : undefined;
 
+  const requestedTop = parseTopLimit(parsed.data.message);
+  const prevTop = typeof prevState?.lastTopLimit === 'number' ? prevState.lastTopLimit : 5;
+  const topLimit = requestedTop ?? (followUpKind === 'more' ? Math.min(15, prevTop + 5) : prevTop);
+
+  // intents avançados com execução dedicada (antes de montar respostas genéricas)
+  if (intent === 'alerts') {
+    const cmd = parseAlertCommand(parsed.data.message);
+    if (cmd) {
+      const update: any = {};
+      if (cmd.kind === 'spike_pct') update.spike_threshold_pct = cmd.value;
+      if (cmd.kind === 'standby_watts') update.standby_threshold_watts = cmd.value;
+      if (cmd.kind === 'near_power_pct') update.near_power_threshold_pct = cmd.value;
+      await c.assistantPrefs.updateOne(
+        { customer_id: customerId },
+        { $set: { customer_id: customerId, ...update, updated_at: new Date() } },
+        { upsert: true }
+      );
+
+      const reply =
+        cmd.kind === 'spike_pct'
+          ? `Ok — vou alertar se as últimas 24h subirem ~${cmd.value}% vs o dia anterior.`
+          : cmd.kind === 'standby_watts'
+            ? `Ok — vou alertar se o stand-by noturno ficar acima de ~${cmd.value} W (02:00–06:00).`
+            : `Ok — vou alertar quando o pico chegar a ~${cmd.value}% da potência contratada.`;
+
+      const assistantMsgId = crypto.randomUUID();
+      await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
+      return {
+        status: 200,
+        body: {
+          conversationId,
+          reply,
+          actions: [
+            { kind: 'button', id: 'see_notifs', label: 'Ver notificações', message: 'Mostra notificações' },
+            { kind: 'button', id: 'plan', label: 'Plano 7 dias', message: ACTION_PLAN_7D }
+          ]
+        }
+      };
+    }
+
+    const reply =
+      'Consigo configurar alertas. Exemplos: "alerta 20%" (subida 24h), "alerta standby 180w", "alerta potência 90%".';
+    const assistantMsgId = crypto.randomUUID();
+    await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
+    return { status: 200, body: { conversationId, reply } };
+  }
+
+  if (intent === 'tariff_sim') {
+    if (!end) {
+      const reply = 'Consigo simular, mas preciso de telemetria deste cliente.';
+      const assistantMsgId = crypto.randomUUID();
+      await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
+      return { status: 200, body: { conversationId, reply } };
+    }
+
+    const eff = await getHourlyEfficiencyStats(c, customerId, end, Math.max(7, Math.min(30, baseWindowDays))).catch(() => null);
+    const currentTariff = String(customer.tariff ?? '').toLowerCase();
+    const isBi = currentTariff.includes('bi') || currentTariff.includes('tri');
+    const target = parseRequestedTariff(parsed.data.message);
+
+    const replyParts: string[] = [];
+    if (target && (target === 'bi' || target === 'tri') && isBi) replyParts.push('Já estás em bi/tri-horário.');
+    if (target === 'simples' && !isBi) replyParts.push('Já estás em tarifa simples.');
+
+    if (eff) {
+      const save = eff.estimatedSavingsMonthEur;
+      if (!isBi) {
+        replyParts.push(
+          `Simulação rápida: se mudares para bi-horário e deslocares ~10% do pico para vazio, a poupança potencial estimada é ~${fmtEur(save)}/mês.`
+        );
+      } else {
+        replyParts.push(
+          `Com o teu padrão atual, a poupança potencial por deslocar consumos flexíveis é ~${fmtEur(save)}/mês (mesmo já sendo bi/tri-horário).`
+        );
+      }
+    } else {
+      replyParts.push('Preciso de mais dados para estimar poupança por horários (eficiência horária indisponível).');
+    }
+
+    const reply = replyParts.join(' ');
+    const assistantMsgId = crypto.randomUUID();
+    await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
+
+    return {
+      status: 200,
+      body: {
+        conversationId,
+        reply,
+        actions: [
+          { kind: 'button', id: 'eff', label: 'Ver melhores horas', message: 'Eficiência horária' },
+          { kind: 'button', id: 'plan', label: 'Plano 7 dias', message: ACTION_PLAN_7D }
+        ]
+      }
+    };
+  }
+
+  if (intent === 'compare_peers') {
+    if (!end) {
+      const reply = 'Consigo comparar, mas preciso de telemetria deste cliente.';
+      const assistantMsgId = crypto.randomUUID();
+      await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
+      return { status: 200, body: { conversationId, reply } };
+    }
+
+    const cmp = await getPeerComparison(c, customerId, end, 7).catch(() => null);
+    if (!cmp || cmp.peers <= 0 || cmp.yourAvgKwhDay == null || cmp.peersAvgKwhDay == null) {
+      const reply = 'Ainda não tenho clientes suficientes “semelhantes” com telemetria para comparar (mesma cidade/segmento/tamanho de agregado).';
+      const assistantMsgId = crypto.randomUUID();
+      await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
+      return { status: 200, body: { conversationId, reply } };
+    }
+
+    const delta = cmp.peersAvgKwhDay > 0 ? (cmp.yourAvgKwhDay - cmp.peersAvgKwhDay) / cmp.peersAvgKwhDay : 0;
+    const side = delta > 0 ? 'acima' : 'abaixo';
+    const reply = `Comparação (7d) com ${cmp.peers} clientes semelhantes: tu ~${cmp.yourAvgKwhDay.toFixed(2)} kWh/dia vs semelhantes ~${cmp.peersAvgKwhDay.toFixed(2)} kWh/dia (≈ ${(Math.abs(delta) * 100).toFixed(0)}% ${side}).`;
+    const assistantMsgId = crypto.randomUUID();
+    await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
+    return {
+      status: 200,
+      body: {
+        conversationId,
+        reply,
+        actions: [
+          { kind: 'button', id: 'top', label: 'Ver top equipamentos', message: 'Qual o equipamento que mais consome?' },
+          { kind: 'button', id: 'plan', label: 'Plano 7 dias', message: ACTION_PLAN_7D }
+        ]
+      }
+    };
+  }
+
+  if (intent === 'what_if') {
+    const requestedKva = parseRequestedPowerKva(parsed.data.message);
+    if (requestedKva != null) {
+      if (!end) {
+        const reply = 'Consigo estimar risco/picos, mas preciso de telemetria deste cliente.';
+        const assistantMsgId = crypto.randomUUID();
+        await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
+        return { status: 200, body: { conversationId, reply } };
+      }
+
+      const power = await getPowerSuggestionQuick(c, customerId, end, 30).catch(() => null);
+      if (power) {
+        const risky = requestedKva < power.peakKva * 1.1;
+        const reply =
+          `E se mudares para ${requestedKva.toFixed(2)} kVA? Pico recente ~${power.peakKva.toFixed(2)} kVA (30d). ` +
+          (risky
+            ? 'Há risco de disparos/limitações em picos. Eu recomendaria manter uma margem de segurança.'
+            : 'Parece viável com margem de segurança, mas confirma em 2–4 semanas de uso real.');
+        const assistantMsgId = crypto.randomUUID();
+        await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
+        return { status: 200, body: { conversationId, reply, actions: [{ kind: 'button', id: 'power', label: 'Analisar potência', message: 'Potência contratada' }] } };
+      }
+    }
+
+    const reply =
+      'Diz-me o cenário: por exemplo "E se eu mudar para bi-horário?", "E se eu baixar para 4.6 kVA?" ou "E se eu deslocar lavagens para a noite?".';
+    const assistantMsgId = crypto.randomUUID();
+    await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
+    return { status: 200, body: { conversationId, reply } };
+  }
+
   const [last24h, last7d, monthToDate, topAppliances, efficiency, power] = await Promise.all([
     end ? getLast24hStats(c, customerId, end).catch(() => null) : Promise.resolve(null),
     end ? getLastNdStats(c, customerId, end, 7).catch(() => null) : Promise.resolve(null),
     end ? getMonthToDateStats(c, customerId, end).catch(() => null) : Promise.resolve(null),
-    end ? getTopAppliancesByCost(c, customerId, end, Math.max(7, Math.min(60, appliancesWindowDays))).catch(() => []) : Promise.resolve([]),
+    end ? getTopAppliancesByCost(c, customerId, end, Math.max(7, Math.min(60, appliancesWindowDays)), topLimit).catch(() => []) : Promise.resolve([]),
     end ? getHourlyEfficiencyStats(c, customerId, end, Math.max(3, Math.min(30, baseWindowDays))).catch(() => null) : Promise.resolve(null),
     end ? getPowerSuggestionQuick(c, customerId, end, 30).catch(() => null) : Promise.resolve(null)
   ]);
 
-  const { reply, cards } = buildFallbackReply(parsed.data.message, intent, customer, {
+  const { reply, cards, actions } = buildFallbackReply(parsed.data.message, intent, customer, prevState, prefs, {
     last24hKwh: last24h?.kwh,
     last7dKwh: last7d?.kwh,
     monthToDateKwh: monthToDate?.kwh,
     appliancesWindowDays,
+    topLimit,
     followUpKind,
     topAppliances
     ,
@@ -675,12 +1259,27 @@ export async function handleCustomerChat(c: Collections, customerId: string, bod
 
   const nextState: ConversationState = {
     lastIntent: intent,
-    lastWindowDays: baseWindowDays
+    lastWindowDays: baseWindowDays,
+    lastTopLimit: topLimit
   };
+
+  const top = Array.isArray(topAppliances) ? topAppliances[0] : undefined;
+  if (intent === 'appliances_top' && top?.name) nextState.lastExplain = { topic: 'appliances_top', windowDays: appliancesWindowDays, applianceName: top.name };
+  if (intent === 'appliance_actions' && top?.name) nextState.lastExplain = { topic: 'appliance_actions', windowDays: appliancesWindowDays, applianceName: top.name };
+  if (intent === 'efficiency') nextState.lastExplain = { topic: 'efficiency', windowDays: baseWindowDays };
+  if (intent === 'power') nextState.lastExplain = { topic: 'power' };
+  if (intent === 'tips') nextState.lastExplain = { topic: 'tips' };
+  if (intent === 'last_24h') nextState.lastExplain = { topic: 'last_24h', windowDays: 1 };
+  if (intent === 'last_7d') nextState.lastExplain = { topic: 'last_7d', windowDays: 7 };
+  if (intent === 'month_to_date') nextState.lastExplain = { topic: 'month_to_date' };
 
   const hasTop = Array.isArray(topAppliances) && topAppliances.length > 0;
   if (intent === 'appliances_top' && hasTop) {
     nextState.pending = { type: 'suggest_appliance_actions', windowDays: appliancesWindowDays };
+  } else if (intent === 'last_24h') {
+    nextState.pending = { type: 'show_appliances_top', windowDays: 30 };
+  } else if (intent === 'last_7d' || intent === 'month_to_date') {
+    nextState.pending = { type: 'show_efficiency', windowDays: baseWindowDays };
   } else if (intent === 'appliance_actions') {
     // resolve o pending
     nextState.pending = undefined;
@@ -696,7 +1295,17 @@ export async function handleCustomerChat(c: Collections, customerId: string, bod
     body: {
       conversationId,
       reply,
-      cards
+      cards,
+      actions: actions
+        ? [
+            ...actions,
+            { kind: 'button', id: 'fb_up', label: 'Útil', message: ACTION_FEEDBACK_UP },
+            { kind: 'button', id: 'fb_down', label: 'Não ajudou', message: ACTION_FEEDBACK_DOWN }
+          ]
+        : [
+            { kind: 'button', id: 'fb_up', label: 'Útil', message: ACTION_FEEDBACK_UP },
+            { kind: 'button', id: 'fb_down', label: 'Não ajudou', message: ACTION_FEEDBACK_DOWN }
+          ]
     }
   };
 }

@@ -138,6 +138,88 @@
   font-size: 12px;
 }
 
+.assistant-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.assistant-action-btn {
+  border-radius: 999px;
+  border: 1px solid rgba(141, 224, 255, 0.22);
+  background: rgba(141, 224, 255, 0.12);
+  color: rgba(246, 247, 251, 0.95);
+  padding: 8px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.assistant-action-btn:hover {
+  background: rgba(141, 224, 255, 0.16);
+}
+
+.assistant-action-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.assistant-plan {
+  width: 100%;
+  border-radius: 12px;
+  padding: 10px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.assistant-plan-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  font-weight: 800;
+  color: rgba(246, 247, 251, 0.94);
+  margin-bottom: 8px;
+}
+
+.assistant-plan-progress {
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(246, 247, 251, 0.72);
+}
+
+.assistant-plan-items {
+  display: grid;
+  gap: 8px;
+}
+
+.assistant-plan-item {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: 8px;
+  align-items: start;
+  font-size: 12px;
+  color: rgba(246, 247, 251, 0.86);
+}
+
+.assistant-plan-item input {
+  margin-top: 2px;
+}
+
+.assistant-plan-item-label {
+  display: block;
+  font-weight: 700;
+  color: rgba(246, 247, 251, 0.92);
+}
+
+.assistant-plan-item-detail {
+  display: block;
+  margin-top: 2px;
+  color: rgba(246, 247, 251, 0.7);
+  line-height: 1.35;
+}
+
 .assistant-msg.user .assistant-bubble {
   background: rgba(141, 224, 255, 0.18);
   border: 1px solid rgba(141, 224, 255, 0.25);

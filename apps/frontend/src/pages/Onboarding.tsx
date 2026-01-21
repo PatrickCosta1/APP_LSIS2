@@ -103,14 +103,10 @@ const steps: Step[] = [
   },
   {
     id: 'potencia_contratada',
-    type: 'text',
+    type: 'single',
     label: 'Potência contratada (kVA)',
-    helper: 'Resposta aberta. Ex.: 6.9 (se não souber, coloque um valor aproximado).',
-    placeholder: '6.9',
-    inputType: 'number',
-    min: 1,
-    max: 45,
-    step: 0.05,
+    helper: 'Escolha a potência indicada na fatura/contrato.',
+    options: ['1,15 kVA', '2,3 kVA', '3,45 kVA', '4,6 kVA', '5,75 kVA', '6,9 kVA', '10,35 kVA', '13,8 kVA', '17,25 kVA', '20,7 kVA', '27,6 kVA', '34,5 kVA', '41,4 kVA'],
   },
   {
     id: 'preco_kwh',
@@ -221,7 +217,8 @@ function Onboarding() {
 
     const parsePowerKva = (v: unknown): number | null => {
       if (typeof v !== 'string') return null;
-      const m = v.match(/([0-9]+(?:\.[0-9]+)?)/);
+      const norm = v.replace(',', '.');
+      const m = norm.match(/([0-9]+(?:\.[0-9]+)?)/);
       if (!m) return null;
       const n = Number(m[1]);
       if (!Number.isFinite(n)) return null;
@@ -342,11 +339,6 @@ function Onboarding() {
       if (optionalTextIds.has(step.id)) return false;
       const txt = (value as string) ?? '';
       if (!txt.trim()) return true;
-      if (step.id === 'potencia_contratada') {
-        const m = txt.match(/([0-9]+(?:\.[0-9]+)?)/);
-        const n = m ? Number(m[1]) : NaN;
-        return !(Number.isFinite(n) && n >= 1 && n <= 45);
-      }
       return false;
     }
     return false;

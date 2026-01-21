@@ -6,16 +6,32 @@ type ChatHistoryResponse = {
   messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string; createdAt: string }>;
 };
 
+type AssistantNotificationsResponse = {
+  customerId: string;
+  lastUpdated: string | null;
+  notifications: Array<{ id: string; type: string; severity: 'info' | 'warning' | 'critical'; title: string; message: string; createdAt: string; actions?: ChatAction[] }>;
+};
+
 type ChatReplyResponse = {
   conversationId: string;
   reply: string;
   cards?: ChatCard[];
+  actions?: ChatAction[];
 };
 
 type ChatCard =
   | { kind: 'metric'; title: string; value: string; subtitle?: string }
   | { kind: 'tip'; title: string; detail: string }
   | { kind: 'list'; title: string; items: string[]; subtitle?: string };
+
+type ChatAction =
+  | { kind: 'button'; id: string; label: string; message: string }
+  | {
+      kind: 'plan';
+      id: string;
+      title: string;
+      items: Array<{ id: string; label: string; detail?: string }>;
+    };
 
 type Props = {
   open: boolean;
@@ -44,10 +60,13 @@ export default function AssistantChatModal({ open, onClose, apiBase: apiBaseProp
   const [apiBase, setApiBase] = useState<string | null>(apiBaseProp ?? null);
   const [customerId, setCustomerId] = useState<string | null>(customerIdProp ?? null);
   const [conversationId, setConversationId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string; cards?: ChatCard[] }>>([]);
+  const [messages, setMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string; cards?: ChatCard[]; actions?: ChatAction[] }>>([]);
   const [draft, setDraft] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [didLoadNotifications, setDidLoadNotifications] = useState(false);
+
+  const [planProgress, setPlanProgress] = useState<Record<string, Record<string, boolean>>>({});
 
   const listRef = useRef<HTMLDivElement | null>(null);
 
@@ -106,6 +125,7 @@ export default function AssistantChatModal({ open, onClose, apiBase: apiBaseProp
   useEffect(() => {
     if (!open) return;
     setError(null);
+    setDidLoadNotifications(false);
 
     if (!apiBase || !customerId) {
       setMessages([
@@ -150,6 +170,37 @@ export default function AssistantChatModal({ open, onClose, apiBase: apiBaseProp
               content: 'Olá! Sou o teu assistente Kynex. Diz-me o que queres analisar: consumo, equipamentos, poupança ou potência contratada.'
             }
           ]);
+
+        // notificações proativas (não bloqueia o histórico)
+        if (!didLoadNotifications) {
+          try {
+            const nres = await fetch(`${apiBase}/customers/${customerId}/assistant/notifications`);
+            if (nres.ok) {
+              const json = (await nres.json()) as AssistantNotificationsResponse;
+              const notifs = Array.isArray(json.notifications) ? json.notifications : [];
+              if (notifs.length) {
+                const text = notifs
+                  .slice(0, 3)
+                  .map((n) => `• ${n.title}: ${n.message}`)
+                  .join('\n');
+                const actions = notifs.flatMap((n) => (Array.isArray(n.actions) ? n.actions : [])).slice(0, 6);
+
+                setMessages((prev) => [
+                  ...prev,
+                  {
+                    role: 'assistant',
+                    content: `Oportunidades/alertas recentes:\n${text}`,
+                    actions: actions.length ? actions : undefined
+                  }
+                ]);
+              }
+            }
+          } catch {
+            // ignore
+          } finally {
+            setDidLoadNotifications(true);
+          }
+        }
       } catch {
         if (!cancelled) {
           setError('Não foi possível carregar o histórico.');
@@ -177,6 +228,39 @@ export default function AssistantChatModal({ open, onClose, apiBase: apiBaseProp
     if (!el) return;
     el.scrollTop = el.scrollHeight;
   }, [open, messages, loading]);
+
+  useEffect(() => {
+    if (!customerId || !conversationId) return;
+    const needed: Array<{ storageKey: string; planId: string }> = [];
+
+    for (const msg of messages) {
+      for (const act of msg.actions ?? []) {
+        if (act.kind !== 'plan') continue;
+        const storageKey = `kynex:chatPlan:${customerId}:${conversationId}:${act.id}`;
+        if (!planProgress[storageKey]) needed.push({ storageKey, planId: act.id });
+      }
+    }
+
+    if (!needed.length) return;
+    setPlanProgress((prev) => {
+      const next = { ...prev };
+      for (const { storageKey } of needed) {
+        const raw = safeGetLocalStorage(storageKey);
+        if (raw) {
+          try {
+            const parsed = JSON.parse(raw) as Record<string, boolean>;
+            next[storageKey] = parsed && typeof parsed === 'object' ? parsed : {};
+          } catch {
+            next[storageKey] = {};
+          }
+        } else {
+          next[storageKey] = {};
+        }
+      }
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages, customerId, conversationId]);
 
   function renderCards(cards?: ChatCard[]) {
     if (!cards?.length) return null;
@@ -222,15 +306,88 @@ export default function AssistantChatModal({ open, onClose, apiBase: apiBaseProp
     );
   }
 
-  async function send(message: string) {
+  function renderActions(actions?: ChatAction[]) {
+    if (!actions?.length) return null;
+
+    return (
+      <div className="assistant-actions">
+        {actions.map((a) => {
+          if (a.kind === 'button') {
+            return (
+              <button
+                key={a.id}
+                type="button"
+                className="assistant-action-btn"
+                disabled={loading}
+                onClick={() => void send(a.message, a.label)}
+              >
+                {a.label}
+              </button>
+            );
+          }
+
+          if (a.kind === 'plan') {
+            if (!customerId || !conversationId) return null;
+            const storageKey = `kynex:chatPlan:${customerId}:${conversationId}:${a.id}`;
+            const prog = planProgress[storageKey] ?? {};
+            const doneCount = a.items.reduce((acc, it) => acc + (prog[it.id] ? 1 : 0), 0);
+            const total = a.items.length;
+
+            return (
+              <div key={a.id} className="assistant-plan">
+                <div className="assistant-plan-title">
+                  {a.title}
+                  <span className="assistant-plan-progress">
+                    {doneCount}/{total}
+                  </span>
+                </div>
+                <div className="assistant-plan-items">
+                  {a.items.map((it) => (
+                    <label key={it.id} className="assistant-plan-item">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(prog[it.id])}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setPlanProgress((prev) => {
+                            const next = { ...prev };
+                            const plan = { ...(next[storageKey] ?? {}) };
+                            plan[it.id] = checked;
+                            next[storageKey] = plan;
+                            safeSetLocalStorage(storageKey, JSON.stringify(plan));
+                            return next;
+                          });
+                        }}
+                      />
+                      <span>
+                        <span className="assistant-plan-item-label">{it.label}</span>
+                        {it.detail ? <span className="assistant-plan-item-detail">{it.detail}</span> : null}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            );
+          }
+
+          return null;
+        })}
+      </div>
+    );
+  }
+
+  async function send(message: string, displayText?: string) {
     if (!apiBase || !customerId) return;
     const trimmed = message.trim();
     if (!trimmed) return;
 
+    const display = (displayText ?? trimmed).trim();
+    if (!display) return;
+
     setError(null);
     setLoading(true);
 
-    setMessages((prev) => [...prev, { role: 'user', content: trimmed }]);
+    setMessages((prev) => [...prev, { role: 'user', content: display }]);
     setDraft('');
 
     try {
@@ -248,7 +405,12 @@ export default function AssistantChatModal({ open, onClose, apiBase: apiBaseProp
 
       setMessages((prev) => [
         ...prev,
-        { role: 'assistant', content: String(json.reply ?? ''), cards: Array.isArray(json.cards) ? (json.cards as ChatCard[]) : undefined }
+        {
+          role: 'assistant',
+          content: String(json.reply ?? ''),
+          cards: Array.isArray(json.cards) ? (json.cards as ChatCard[]) : undefined,
+          actions: Array.isArray(json.actions) ? (json.actions as ChatAction[]) : undefined
+        }
       ]);
     } catch {
       setError('Falha ao enviar mensagem.');
@@ -283,6 +445,7 @@ export default function AssistantChatModal({ open, onClose, apiBase: apiBaseProp
               <div className="assistant-bubble">
                 {m.content}
                 {m.role === 'assistant' ? renderCards(m.cards) : null}
+                {m.role === 'assistant' ? renderActions(m.actions) : null}
               </div>
             </div>
           ))}
@@ -304,6 +467,9 @@ export default function AssistantChatModal({ open, onClose, apiBase: apiBaseProp
           <button type="button" className="assistant-quick-btn" onClick={() => send('Dá-me 3 dicas para poupar esta semana.')}
           >
             3 dicas
+          </button>
+          <button type="button" className="assistant-quick-btn" onClick={() => send('__ACTION:PLAN_7D__', 'Plano 7 dias')}>
+            Plano 7 dias
           </button>
         </div>
 
