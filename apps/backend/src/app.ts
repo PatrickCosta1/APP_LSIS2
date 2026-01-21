@@ -456,12 +456,18 @@ app.get('/customers/:customerId/telemetry/now', async (req, res) => {
   }
   const similarDeltaPct = similarKwhLast24h > 0 ? ((kwhLast24h / similarKwhLast24h) - 1) * 100 : 0;
 
+  const contractedPowerKva =
+    typeof (customer as any).contracted_power_kva === 'number' && Number.isFinite((customer as any).contracted_power_kva)
+      ? Number((customer as any).contracted_power_kva)
+      : 6.9;
+
   return res.json({
     customerId: customer.id,
     name: customer.name,
     lastUpdated: latest.ts,
     wattsNow: latest.watts,
     avgWattsLastHour: Number(avgWatts1h.toFixed(1)),
+    contractedPowerKva: Number(contractedPowerKva.toFixed(2)),
     kwhLast24h: Number(kwhLast24h.toFixed(2)),
     eurosLast24h: Number(eurosLast24h.toFixed(2)),
     monthToDateKwh: Number(monthToDateKwh.toFixed(2)),
@@ -470,8 +476,7 @@ app.get('/customers/:customerId/telemetry/now', async (req, res) => {
     forecastMonthEuros: Number(forecastMonthEuros.toFixed(2)),
     similarKwhLast24h: Number(similarKwhLast24h.toFixed(2)),
     similarDeltaPct: Number(similarDeltaPct.toFixed(1)),
-    priceEurPerKwh: Number(price.toFixed(4)),
-    contractedPowerKva: typeof customer.contracted_power_kva === 'number' ? customer.contracted_power_kva : undefined
+    priceEurPerKwh: Number(price.toFixed(4))
   });
 });
 

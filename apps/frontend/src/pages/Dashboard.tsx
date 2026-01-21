@@ -12,6 +12,7 @@ type CustomerNowResponse = {
   lastUpdated: string;
   wattsNow: number;
   avgWattsLastHour: number;
+  contractedPowerKva?: number;
   kwhLast24h: number;
   eurosLast24h: number;
   monthToDateKwh: number;
@@ -21,7 +22,6 @@ type CustomerNowResponse = {
   similarKwhLast24h: number;
   similarDeltaPct: number;
   priceEurPerKwh: number;
-  contractedPowerKva?: number;
 };
 
 type CustomerChartResponse = {
@@ -122,6 +122,7 @@ function Dashboard() {
   const [customerId, setCustomerId] = useState<string | null>(null);
   const [customerName, setCustomerName] = useState<string>('Cliente');
   const [nowStats, setNowStats] = useState<CustomerNowResponse | null>(null);
+  const [contractedPowerKvaLocal, setContractedPowerKvaLocal] = useState<number | null>(null);
   const [selectedDayKey, setSelectedDayKey] = useState<string | null>(null);
   const [dayStats, setDayStats] = useState<DashboardDayResponse | null>(null);
   const [chart, setChart] = useState<CustomerChartResponse>({ title: 'Consumo', items: [] });
@@ -134,6 +135,24 @@ function Dashboard() {
   }, [nowStats?.lastUpdated]);
 
   const activeDayKey = selectedDayKey ?? todayKey;
+
+  const contractedPowerKva = React.useMemo(() => {
+    const fromApi = nowStats?.contractedPowerKva;
+    if (typeof fromApi === 'number' && Number.isFinite(fromApi) && fromApi > 0) return fromApi;
+    if (typeof contractedPowerKvaLocal === 'number' && Number.isFinite(contractedPowerKvaLocal) && contractedPowerKvaLocal > 0) {
+      return contractedPowerKvaLocal;
+    }
+    return 6.9;
+  }, [nowStats?.contractedPowerKva, contractedPowerKvaLocal]);
+
+  const usedPowerPct = React.useMemo(() => {
+    if (!nowStats) return null;
+    const usedKw = nowStats.avgWattsLastHour / 1000;
+    if (!Number.isFinite(usedKw) || usedKw < 0) return null;
+    const pct = (usedKw / contractedPowerKva) * 100;
+    if (!Number.isFinite(pct)) return null;
+    return Math.max(0, Math.min(999, pct));
+  }, [nowStats, contractedPowerKva]);
 
   const weatherView = React.useMemo(() => {
     const fallback = {
@@ -169,8 +188,11 @@ function Dashboard() {
 
       const onboardRaw = localStorage.getItem('kynex:onboarding');
       if (onboardRaw) {
-        const parsed = JSON.parse(onboardRaw) as { name?: string };
+        const parsed = JSON.parse(onboardRaw) as { name?: string; contracted_power_kva?: number };
         if (parsed?.name) setCustomerName(parsed.name);
+        if (typeof parsed?.contracted_power_kva === 'number' && Number.isFinite(parsed.contracted_power_kva)) {
+          setContractedPowerKvaLocal(parsed.contracted_power_kva);
+        }
       }
     } catch {
       // ignore
@@ -483,7 +505,7 @@ function Dashboard() {
           ) : (
             <section className="hero-card">
               <div className="hero-annotations">
-                <div className="annotation top">Potência Atual Utilizada <strong>{nowStats && nowStats.avgWattsLastHour && nowStats.contractedPowerKva ? `${Math.round((nowStats.avgWattsLastHour / (nowStats.contractedPowerKva * 1000)) * 100)}%` : '—'}</strong></div>
+                <div className="annotation top">Potência Atual Utilizada <strong>{usedPowerPct !== null ? `${Math.round(usedPowerPct)}%` : '—'}</strong></div>
                 <div className="annotation right">Consumo Atual <strong>{nowStats ? `${(nowStats.wattsNow / 1000).toFixed(2)}kW` : '—'}</strong></div>
               </div>
               <img className="hero-house" src={casaImg} alt="Visual da casa" />
