@@ -292,6 +292,8 @@ function Dashboard() {
   useEffect(() => {
     if (!apiBase || !customerId || !activeDayKey) return;
 
+    const dayKey = activeDayKey;
+
     let cancelled = false;
     const controller = new AbortController();
 
@@ -299,7 +301,7 @@ function Dashboard() {
       try {
         const token = localStorage.getItem('kynex:authToken');
         const res = await fetch(
-          `${apiBase}/customers/${customerId}/dashboard/day?date=${encodeURIComponent(activeDayKey)}`,
+          `${apiBase}/customers/${customerId}/dashboard/day?date=${encodeURIComponent(dayKey)}`,
           {
             signal: controller.signal,
             headers: token ? { Authorization: `Bearer ${token}` } : undefined,
