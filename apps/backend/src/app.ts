@@ -1,3 +1,4 @@
+import { getIpmaDailyForecast, getIpmaTempForLocalDateTime, resolveIpmaGlobalIdLocal } from './ipma';
 import cors from 'cors';
 import express from 'express';
 import crypto from 'node:crypto';
@@ -7,11 +8,44 @@ import { clampPredictionForCustomer, loadAiModel, makeFeatures, predictNextWatts
 import { clampSuggestedPowerKva, loadPowerModel, makePowerFeatures, predictRidge } from './powerAi';
 import { getAiRetrainStatus, runAiRetrainOnce } from './aiTrainer';
 import { getCustomerChatHistory, handleCustomerChat, type ChatAction } from './chat';
+import { hashPassword, hashToken, normalizeEmail, newToken, validatePassword, verifyPassword } from './auth';
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
+
+function getBearerToken(req: express.Request): string | null {
+  const raw = req.header('authorization') ?? req.header('Authorization');
+  if (!raw) return null;
+  const m = raw.match(/^Bearer\s+(.+)$/i);
+  return m?.[1]?.trim() || null;
+}
+
+async function getSessionFromRequest(req: express.Request) {
+  const token = getBearerToken(req);
+  if (!token) return null;
+  const cols = await collections();
+  const now = new Date();
+  const tokenHash = hashToken(token);
+  const session = await cols.authSessions.findOne(
+    { token_hash: tokenHash, expires_at: { $gt: now } },
+    { projection: { _id: 0, id: 1, user_id: 1, customer_id: 1, expires_at: 1 } }
+  );
+  if (!session) return null;
+  // best-effort last seen
+  cols.authSessions.updateOne({ id: session.id }, { $set: { last_seen_at: now } }).catch(() => null);
+  return { token, tokenHash, session };
+}
+
+// Protege todas as rotas /customers/:customerId/*
+app.use('/customers/:customerId', async (req, res, next) => {
+  const auth = await getSessionFromRequest(req);
+  if (!auth) return res.status(401).json({ message: 'Não autenticado' });
+  if (auth.session.customer_id !== req.params.customerId) return res.status(403).json({ message: 'Forbidden' });
+  (req as any).auth = { userId: auth.session.user_id, customerId: auth.session.customer_id, sessionId: auth.session.id };
+  return next();
+});
 
 let collectionsPromise: Promise<Collections> | null = null;
 async function collections() {
@@ -80,6 +114,26 @@ function clamp01(v: number) {
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
+});
+
+app.get('/auth/me', async (req, res) => {
+  const auth = await getSessionFromRequest(req);
+  if (!auth) return res.status(401).json({ message: 'Não autenticado' });
+  const cols = await collections();
+  const user = await cols.users.findOne(
+    { id: auth.session.user_id },
+    { projection: { _id: 0, id: 1, email: 1, customer_id: 1, created_at: 1 } }
+  );
+  if (!user) return res.status(401).json({ message: 'Sessão inválida' });
+  return res.json({ user: { id: user.id, email: user.email, customerId: user.customer_id, createdAt: user.created_at.toISOString() } });
+});
+
+app.post('/auth/logout', async (req, res) => {
+  const auth = await getSessionFromRequest(req);
+  if (!auth) return res.status(200).json({ ok: true });
+  const cols = await collections();
+  await cols.authSessions.deleteOne({ id: auth.session.id });
+  return res.json({ ok: true });
 });
 
 app.get('/telemetry/now', async (_req, res) => {
@@ -1945,86 +1999,173 @@ app.get('/ai/customers', async (_req, res) => {
   res.json(customers.map((cust) => ({ ...cust, created_at: cust.created_at.toISOString() })));
 });
 
-app.post('/ai/customers', async (req, res) => {
-  console.log('POST /ai/customers payload:', JSON.stringify(req.body));
-  const schema = z.object({
-    name: z.string().min(1).max(120),
-    segment: z.string().min(1).max(40).default('residential'),
-    city: z.string().min(1).max(80),
-    contracted_power_kva: z.number().min(1).max(60),
-    tariff: z.string().min(1).max(60),
-    utility: z.string().min(1).max(80),
+const createCustomerSchema = z.object({
+  name: z.string().min(1).max(120),
+  segment: z.string().min(1).max(40).default('residential'),
+  city: z.string().min(1).max(80),
+  contracted_power_kva: z.number().min(1).max(60),
+  tariff: z.string().min(1).max(60),
+  utility: z.string().min(1).max(80),
 
-    price_eur_per_kwh: z.number().min(0.05).max(1.2).optional(),
-    fixed_daily_fee_eur: z.number().min(0).max(5).optional(),
-    has_smart_meter: z.union([z.boolean(), z.number().int().min(0).max(1)]).optional(),
+  price_eur_per_kwh: z.number().min(0.05).max(1.2).optional(),
+  fixed_daily_fee_eur: z.number().min(0).max(5).optional(),
+  has_smart_meter: z.union([z.boolean(), z.number().int().min(0).max(1)]).optional(),
 
-    home_area_m2: z.number().min(20).max(10000).optional(),
-    household_size: z.number().int().min(1).max(50).optional(),
-    locality_type: z.string().min(1).max(30).optional(),
-    dwelling_type: z.string().min(1).max(40).optional(),
-    build_year_band: z.string().min(1).max(40).optional(),
+  home_area_m2: z.number().min(20).max(10000).optional(),
+  household_size: z.number().int().min(1).max(50).optional(),
+  locality_type: z.string().min(1).max(30).optional(),
+  dwelling_type: z.string().min(1).max(40).optional(),
+  build_year_band: z.string().min(1).max(40).optional(),
 
-    heating_sources: z.union([z.array(z.string().min(1).max(80)), z.string().max(500)]).optional(),
-    has_solar: z.union([z.boolean(), z.number().int().min(0).max(1)]).optional(),
-    ev_count: z.number().int().min(0).max(20).optional(),
+  heating_sources: z.union([z.array(z.string().min(1).max(80)), z.string().max(500)]).optional(),
+  has_solar: z.union([z.boolean(), z.number().int().min(0).max(1)]).optional(),
+  ev_count: z.number().int().min(0).max(20).optional(),
 
-    alert_sensitivity: z.string().min(1).max(20).optional(),
-    main_appliances: z.union([z.array(z.string().min(1).max(80)), z.string().max(800)]).optional()
+  alert_sensitivity: z.string().min(1).max(20).optional(),
+  main_appliances: z.union([z.array(z.string().min(1).max(80)), z.string().max(800)]).optional()
+});
+
+type CreateCustomerInput = z.infer<typeof createCustomerSchema>;
+
+const toInt01 = (v: unknown, fallback: number) => {
+  if (typeof v === 'boolean') return v ? 1 : 0;
+  if (typeof v === 'number') return v ? 1 : 0;
+  return fallback;
+};
+
+const toCsv = (v: unknown) => {
+  if (Array.isArray(v)) return v.join(',');
+  if (typeof v === 'string') return v;
+  return '';
+};
+
+async function createCustomer(cols: Collections, input: CreateCustomerInput): Promise<string> {
+  const id = `U_${crypto.randomUUID()}`;
+  const createdAt = new Date();
+  await cols.customers.insertOne({
+    id,
+    name: input.name,
+    segment: input.segment,
+    city: input.city,
+    contracted_power_kva: input.contracted_power_kva,
+    tariff: input.tariff,
+    utility: input.utility,
+
+    home_area_m2: input.home_area_m2 ?? 80,
+    household_size: input.household_size ?? 2,
+    locality_type: input.locality_type ?? 'Urbana',
+    dwelling_type: input.dwelling_type ?? 'Apartamento',
+    build_year_band: input.build_year_band ?? '2000-2014',
+    heating_sources: toCsv(input.heating_sources),
+
+    has_solar: toInt01(input.has_solar, 0),
+    ev_count: input.ev_count ?? 0,
+    has_smart_meter: toInt01(input.has_smart_meter, 1),
+    price_eur_per_kwh: input.price_eur_per_kwh ?? RATE_EUR_PER_KWH,
+    fixed_daily_fee_eur: input.fixed_daily_fee_eur ?? 0,
+
+    alert_sensitivity: input.alert_sensitivity ?? 'Média',
+    main_appliances: toCsv(input.main_appliances),
+
+    created_at: createdAt
+  });
+  return id;
+}
+
+app.post('/auth/register', async (req, res) => {
+  const schema = createCustomerSchema.extend({
+    email: z.string().email().max(180),
+    password: z.string().min(1).max(72)
   });
 
   const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ errors: parsed.error.flatten().fieldErrors });
+
+  const email = normalizeEmail(parsed.data.email);
+  const policy = validatePassword(parsed.data.password);
+  if (!policy.ok) return res.status(400).json({ message: 'Password inválida', errors: policy.errors });
+
+  const cols = await collections();
+  const exists = await cols.users.findOne({ email }, { projection: { _id: 0, id: 1 } });
+  if (exists) return res.status(409).json({ message: 'Email já registado' });
+
+  let customerId: string | null = null;
+  try {
+    customerId = await createCustomer(cols, parsed.data);
+    const userId = `USR_${crypto.randomUUID()}`;
+    const { saltB64, hashB64 } = await hashPassword(parsed.data.password);
+
+    await cols.users.insertOne({
+      id: userId,
+      customer_id: customerId,
+      email,
+      password_salt_b64: saltB64,
+      password_hash_b64: hashB64,
+      created_at: new Date()
+    });
+
+    return res.status(201).json({ ok: true });
+  } catch (err) {
+    if (customerId) {
+      cols.customers.deleteOne({ id: customerId }).catch(() => null);
+    }
+    return res.status(500).json({ message: 'Erro ao registar utilizador' });
+  }
+});
+
+app.post('/auth/login', async (req, res) => {
+  const schema = z.object({
+    email: z.string().email().max(180),
+    password: z.string().min(1).max(72)
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ errors: parsed.error.flatten().fieldErrors });
+
+  const cols = await collections();
+  const email = normalizeEmail(parsed.data.email);
+  const user = await cols.users.findOne(
+    { email },
+    { projection: { _id: 0, id: 1, email: 1, customer_id: 1, password_salt_b64: 1, password_hash_b64: 1 } }
+  );
+  if (!user) return res.status(401).json({ message: 'Credenciais inválidas' });
+
+  const ok = await verifyPassword(parsed.data.password, user.password_salt_b64, user.password_hash_b64);
+  if (!ok) return res.status(401).json({ message: 'Credenciais inválidas' });
+
+  const token = newToken();
+  const tokenHash = hashToken(token);
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+  const sessionId = `SES_${crypto.randomUUID()}`;
+  await cols.authSessions.insertOne({
+    id: sessionId,
+    user_id: user.id,
+    customer_id: user.customer_id,
+    token_hash: tokenHash,
+    created_at: now,
+    expires_at: expiresAt,
+    last_seen_at: now
+  });
+
+  return res.json({
+    token,
+    customerId: user.customer_id,
+    userId: user.id,
+    expiresAt: expiresAt.toISOString()
+  });
+});
+
+app.post('/ai/customers', async (req, res) => {
+  console.log('POST /ai/customers payload:', JSON.stringify(req.body));
+  const parsed = createCustomerSchema.safeParse(req.body);
   if (!parsed.success) {
     console.error('POST /ai/customers schema error:', JSON.stringify(parsed.error.flatten().fieldErrors));
     return res.status(400).json({ errors: parsed.error.flatten().fieldErrors });
   }
 
-  const id = `U_${crypto.randomUUID()}`;
-  const createdAt = new Date();
-  const c = parsed.data;
-  console.log('POST /ai/customers parsed data:', JSON.stringify(c));
-
-  const toInt01 = (v: unknown, fallback: number) => {
-    if (typeof v === 'boolean') return v ? 1 : 0;
-    if (typeof v === 'number') return v ? 1 : 0;
-    return fallback;
-  };
-
-  const toCsv = (v: unknown) => {
-    if (Array.isArray(v)) return v.join(',');
-    if (typeof v === 'string') return v;
-    return '';
-  };
-
   try {
     const cols = await collections();
-    await cols.customers.insertOne({
-      id,
-      name: c.name,
-      segment: c.segment,
-      city: c.city,
-      contracted_power_kva: c.contracted_power_kva,
-      tariff: c.tariff,
-      utility: c.utility,
-
-      home_area_m2: c.home_area_m2 ?? 80,
-      household_size: c.household_size ?? 2,
-      locality_type: c.locality_type ?? 'Urbana',
-      dwelling_type: c.dwelling_type ?? 'Apartamento',
-      build_year_band: c.build_year_band ?? '2000-2014',
-      heating_sources: toCsv(c.heating_sources),
-
-      has_solar: toInt01(c.has_solar, 0),
-      ev_count: c.ev_count ?? 0,
-      has_smart_meter: toInt01(c.has_smart_meter, 1),
-      price_eur_per_kwh: c.price_eur_per_kwh ?? RATE_EUR_PER_KWH,
-      fixed_daily_fee_eur: c.fixed_daily_fee_eur ?? 0,
-
-      alert_sensitivity: c.alert_sensitivity ?? 'Média',
-      main_appliances: toCsv(c.main_appliances),
-
-      created_at: createdAt
-    });
+    const id = await createCustomer(cols, parsed.data);
     console.log('POST /ai/customers created id:', id);
     return res.status(201).json({ id });
   } catch (err) {
@@ -2051,6 +2192,7 @@ app.get('/ai/forecast/:customerId', async (req, res) => {
         id: 1,
         segment: 1,
         city: 1,
+        ipma_global_id_local: 1,
         contracted_power_kva: 1,
         tariff: 1,
         home_area_m2: 1,
@@ -2075,6 +2217,19 @@ app.get('/ai/forecast/:customerId', async (req, res) => {
 
   const latest = { ts: latestDoc.ts.toISOString(), watts: latestDoc.watts, temp_c: latestDoc.temp_c ?? null };
 
+  // Meteorologia IPMA (opcional): usa temperatura prevista para melhorar as previsões.
+  // Mantém fallback para o comportamento atual se IPMA estiver indisponível.
+  let ipma: { globalIdLocal: number; dataUpdate?: string } | null = null;
+  let ipmaForecast: Awaited<ReturnType<typeof getIpmaDailyForecast>> = null;
+  try {
+    const override = (customer as any)?.ipma_global_id_local;
+    const gid = Number.isFinite(override) && Number(override) > 0 ? Number(override) : await resolveIpmaGlobalIdLocal(customer.city);
+    ipmaForecast = await getIpmaDailyForecast(gid);
+    if (ipmaForecast) ipma = { globalIdLocal: gid, dataUpdate: ipmaForecast.dataUpdate };
+  } catch {
+    // ignora e mantém fallback
+  }
+
   try {
     const featureCount = makeFeatures(new Date(latest.ts), customer, latest.watts, latest.temp_c ?? undefined).length;
     if ('feature_names' in model && model.feature_names.length !== featureCount) {
@@ -2095,11 +2250,44 @@ app.get('/ai/forecast/:customerId', async (req, res) => {
 
   let ts = new Date(latest.ts);
   let lastWatts = latest.watts;
-  const points = [] as Array<{ ts: string; predictedWatts: number; predictedKwh: number; predictedEuros: number }>;
+  const points = [] as Array<{ ts: string; predictedWatts: number; predictedKwh: number; predictedEuros: number; temp_c?: number | null }>;
+
+  const lisbonDateFmt = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Lisbon',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+  const lisbonTimeFmt = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/Lisbon',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23'
+  });
+
+  const getLisbonLocal = (d: Date): { ymd: string; minutesOfDay: number } | null => {
+    try {
+      const ymd = lisbonDateFmt.format(d); // en-CA => YYYY-MM-DD
+      const parts = lisbonTimeFmt.formatToParts(d);
+      const hh = Number(parts.find((p) => p.type === 'hour')?.value);
+      const mm = Number(parts.find((p) => p.type === 'minute')?.value);
+      if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
+      return { ymd, minutesOfDay: hh * 60 + mm };
+    } catch {
+      return null;
+    }
+  };
 
   for (let i = 0; i < horizon; i += 1) {
     ts = new Date(ts.getTime() + intervalMinutes * 60 * 1000);
-    const feats = makeFeatures(ts, customer, lastWatts, latest.temp_c ?? undefined);
+    const local = getLisbonLocal(ts);
+    const ymdLocal = local?.ymd ?? ts.toISOString().slice(0, 10);
+    const minutesLocal = local?.minutesOfDay ?? (ts.getUTCHours() * 60 + ts.getUTCMinutes());
+
+    const ipmaTemp = ipmaForecast ? getIpmaTempForLocalDateTime(ipmaForecast, ymdLocal, minutesLocal) : null;
+    const tempC = ipmaTemp != null ? ipmaTemp : (latest.temp_c ?? undefined);
+
+    const feats = makeFeatures(ts, customer, lastWatts, typeof tempC === 'number' ? tempC : undefined);
     const predictedRaw = predictNextWatts(model, feats);
     const predictedWatts = clampPredictionForCustomer(predictedRaw, customer);
     const predictedKwh = (predictedWatts / 1000) * intervalHours;
@@ -2108,7 +2296,8 @@ app.get('/ai/forecast/:customerId', async (req, res) => {
       ts: ts.toISOString(),
       predictedWatts: Math.round(predictedWatts),
       predictedKwh: Number(predictedKwh.toFixed(4)),
-      predictedEuros: Number(predictedEuros.toFixed(4))
+      predictedEuros: Number(predictedEuros.toFixed(4)),
+      temp_c: typeof tempC === 'number' ? Number(tempC.toFixed(1)) : latest.temp_c
     });
     lastWatts = predictedWatts;
   }
@@ -2118,6 +2307,7 @@ app.get('/ai/forecast/:customerId', async (req, res) => {
     horizon,
     intervalMinutes,
     lastObserved: { ts: latest.ts, watts: latest.watts },
+    weather: ipma ? { source: 'IPMA', globalIdLocal: ipma.globalIdLocal, dataUpdate: ipma.dataUpdate } : null,
     points
   });
 });

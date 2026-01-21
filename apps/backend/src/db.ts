@@ -36,6 +36,25 @@ export type CustomerTelemetry15mDoc = {
   is_estimated: boolean;
 };
 
+export type UserDoc = {
+  id: string;
+  customer_id: string;
+  email: string;
+  password_salt_b64: string;
+  password_hash_b64: string;
+  created_at: Date;
+};
+
+export type AuthSessionDoc = {
+  id: string;
+  user_id: string;
+  customer_id: string;
+  token_hash: string;
+  created_at: Date;
+  expires_at: Date;
+  last_seen_at?: Date;
+};
+
 export type Collections = {
   samples: Collection<{ ts: Date; watts: number; euros: number }>;
   telemetry15m: Collection<{ ts: Date; watts: number; euros: number }>;
@@ -54,6 +73,9 @@ export type Collections = {
   contractProfile: Collection<{ _id: 1; power_kva: number; tariff: string; utility: string; updated_at: Date }>;
   customers: Collection<CustomerDoc>;
   customerTelemetry15m: Collection<CustomerTelemetry15mDoc>;
+
+  users: Collection<UserDoc>;
+  authSessions: Collection<AuthSessionDoc>;
 };
 
 let mongoClient: MongoClient | null = null;
@@ -109,7 +131,9 @@ export function getCollections(db: Db = getDb()): Collections {
     advice: db.collection('advice'),
     contractProfile: db.collection('contract_profile'),
     customers: db.collection('customers'),
-    customerTelemetry15m: db.collection('customer_telemetry_15m')
+    customerTelemetry15m: db.collection('customer_telemetry_15m'),
+    users: db.collection('users'),
+    authSessions: db.collection('auth_sessions')
   };
 }
 
@@ -150,7 +174,14 @@ async function ensureIndexesAndSeed(db: Db) {
     c.advice.createIndex({ created_at: -1 }),
     c.customers.createIndex({ id: 1 }, { unique: true }),
     c.customers.createIndex({ created_at: -1 }),
-    c.customerTelemetry15m.createIndex({ customer_id: 1, ts: -1 })
+    c.customerTelemetry15m.createIndex({ customer_id: 1, ts: -1 }),
+    c.users.createIndex({ id: 1 }, { unique: true }),
+    c.users.createIndex({ email: 1 }, { unique: true }),
+    c.users.createIndex({ customer_id: 1 }, { unique: true }),
+    c.authSessions.createIndex({ id: 1 }, { unique: true }),
+    c.authSessions.createIndex({ token_hash: 1 }, { unique: true }),
+    c.authSessions.createIndex({ customer_id: 1, expires_at: -1 }),
+    c.authSessions.createIndex({ user_id: 1, expires_at: -1 })
   ]);
 
   // Seed dos dados globais (não dos clientes). Clientes novos continuam a começar sem telemetria.

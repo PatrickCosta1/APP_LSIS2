@@ -32,7 +32,15 @@ type Step =
 const steps: Step[] = [
   { id: 'nome', type: 'text', label: 'Como se chama?', placeholder: 'Ex.: Ana Silva', inputType: 'text' },
   { id: 'email', type: 'text', label: 'Qual o seu email?', placeholder: 'Ex.: ana@email.com', inputType: 'email' },
-  { id: 'password', type: 'text', label: 'Crie uma password', placeholder: '••••••••', inputType: 'password' },
+  {
+    id: 'password',
+    type: 'text',
+    label: 'Crie uma password',
+    placeholder: '••••••••',
+    inputType: 'password',
+    helper: 'Mín. 8 caracteres, com maiúscula, minúscula, número e símbolo (sem espaços).'
+  },
+  { id: 'password_confirm', type: 'text', label: 'Confirme a password', placeholder: '••••••••', inputType: 'password' },
   {
     id: 'tamanho',
     type: 'single',
@@ -172,6 +180,8 @@ function Onboarding() {
   const [answers, setAnswers] = useState<Record<string, string | string[]>>({});
   const [isReviewOpen, setIsReviewOpen] = useState(false);
   const [isConfirmed, setIsConfirmed] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const step = steps[stepIndex];
   const total = steps.length;
@@ -199,15 +209,31 @@ function Onboarding() {
   function openReview() {
     setIsReviewOpen(true);
     setIsConfirmed(false);
+    setSubmitError(null);
   }
 
   function closeReview() {
     setIsReviewOpen(false);
     setIsConfirmed(false);
+    setSubmitError(null);
   }
 
   function confirmAndContinue() {
+    setSubmitError(null);
+
+    const pwd = typeof answers.password === 'string' ? answers.password : '';
+    const pwd2 = typeof answers.password_confirm === 'string' ? answers.password_confirm : '';
+    if (!pwd || !pwd2) {
+      setSubmitError('Preencha a password e a confirmação.');
+      return;
+    }
+    if (pwd !== pwd2) {
+      setSubmitError('A confirmação de password não coincide.');
+      return;
+    }
+
     setIsConfirmed(true);
+    setIsSubmitting(true);
 
     const apiBases = [
       (import.meta as any).env?.VITE_API_BASE as string | undefined,
@@ -264,6 +290,8 @@ function Onboarding() {
     };
 
     const payload = {
+      email: typeof answers.email === 'string' ? answers.email : '',
+      password: pwd,
       name: typeof answers.nome === 'string' ? answers.nome : 'Cliente',
       segment: 'residential',
       city: typeof answers.distrito === 'string' ? answers.distrito : 'Porto',
@@ -289,30 +317,59 @@ function Onboarding() {
     };
 
     try {
-      localStorage.setItem('kynex:onboarding', JSON.stringify(payload));
+      const safePayload = { ...payload } as any;
+      delete safePayload.password;
+      localStorage.setItem('kynex:onboarding', JSON.stringify(safePayload));
     } catch {
       // ignore
     }
 
     (async () => {
-      for (const base of apiBases) {
-        try {
-          const res = await fetch(`${base}/ai/customers`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-          });
-          if (!res.ok) continue;
-          const json = (await res.json()) as { id?: string };
-          if (json?.id) localStorage.setItem('kynex:customerId', json.id);
-          break;
-        } catch {
-          // tenta próxima base
+      try {
+        for (const base of apiBases) {
+          try {
+            const res = await fetch(`${base}/auth/register`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+            if (!res.ok) {
+              if (res.status === 409) {
+                setSubmitError('Este email já está registado.');
+                setIsConfirmed(false);
+                return;
+              }
+              if (res.status === 400) {
+                const j = (await res.json().catch(() => null)) as any;
+                const msg = typeof j?.message === 'string' ? j.message : 'Dados inválidos.';
+                const errs = Array.isArray(j?.errors) ? j.errors.join(' ') : '';
+                setSubmitError(`${msg}${errs ? ` ${errs}` : ''}`);
+                setIsConfirmed(false);
+                return;
+              }
+              continue;
+            }
+
+            try {
+              localStorage.setItem('kynex:registerOk', new Date().toISOString());
+              if (typeof answers.email === 'string') localStorage.setItem('kynex:registeredEmail', answers.email);
+            } catch {
+              // ignore
+            }
+
+            window.setTimeout(() => window.location.assign('/login'), 900);
+            return;
+          } catch {
+            // tenta próxima base
+          }
         }
+
+        setSubmitError('Não foi possível ligar ao servidor.');
+        setIsConfirmed(false);
+      } finally {
+        setIsSubmitting(false);
       }
     })();
-
-    window.setTimeout(() => window.location.assign('/'), 900);
   }
 
   const summary = useMemo(() => {
@@ -320,7 +377,7 @@ function Onboarding() {
     const order = steps.map((s) => s.id);
 
     return order
-      .filter((id) => id !== 'password')
+      .filter((id) => id !== 'password' && id !== 'password_confirm')
       .map((id) => {
         const v = answers[id];
         const label = labelById.get(id) ?? id;
@@ -454,7 +511,7 @@ function Onboarding() {
 
                   <div className="onb-modal-subtitle">
                     Está tudo certo? Isto ajuda-nos a adaptar comparações e sugestões.
-                    <span className="onb-modal-note"> (Guardamos localmente e sincronizamos com a API quando disponível.)</span>
+                    <span className="onb-modal-note"> (Vamos criar a sua conta e perfil.)</span>
                   </div>
 
                   <div className="onb-summary">
@@ -466,12 +523,18 @@ function Onboarding() {
                     ))}
                   </div>
 
+                  {submitError && (
+                    <div className="onb-modal-subtitle" style={{ color: '#b42318', marginTop: 10 }}>
+                      {submitError}
+                    </div>
+                  )}
+
                   <div className="onb-modal-actions">
                     <button className="onb-btn ghost" type="button" onClick={closeReview}>
                       Editar
                     </button>
-                    <button className="onb-btn" type="button" onClick={confirmAndContinue}>
-                      Confirmar e entrar
+                    <button className="onb-btn" type="button" onClick={confirmAndContinue} disabled={isSubmitting}>
+                      {isSubmitting ? 'A registar…' : 'Confirmar e registar'}
                     </button>
                   </div>
                 </>
@@ -479,7 +542,7 @@ function Onboarding() {
                 <div className="onb-success">
                   <div className="onb-success-icon">✓</div>
                   <div className="onb-success-title">Perfeito, {typeof answers.nome === 'string' && answers.nome.trim() ? answers.nome.split(' ')[0] : 'bem-vindo'}!</div>
-                  <div className="onb-success-subtitle">A preparar a sua dashboard personalizada…</div>
+                  <div className="onb-success-subtitle">Conta criada. A redirecionar para login…</div>
                 </div>
               )}
             </div>

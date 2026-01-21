@@ -2,8 +2,38 @@ import request from 'supertest';
 import app from './app';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import { closeDb, getCollections, initDb } from './db';
+import { hashToken } from './auth';
 
 let mongod: MongoMemoryServer;
+
+async function seedAuth(customerId: string) {
+  const c = getCollections();
+  const userId = `USR_${customerId}`;
+  const token = `test-token-${customerId}`;
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+
+  await c.users.insertOne({
+    id: userId,
+    customer_id: customerId,
+    email: `${customerId}@test.local`,
+    password_salt_b64: 'test_salt',
+    password_hash_b64: 'test_hash',
+    created_at: now
+  });
+
+  await c.authSessions.insertOne({
+    id: `SES_${customerId}`,
+    user_id: userId,
+    customer_id: customerId,
+    token_hash: hashToken(token),
+    created_at: now,
+    expires_at: expiresAt,
+    last_seen_at: now
+  });
+
+  return token;
+}
 
 beforeAll(async () => {
   mongod = await MongoMemoryServer.create();
@@ -90,7 +120,10 @@ describe('analytics', () => {
     }
     await c.customerTelemetry15m.insertMany(docs);
 
-    const res = await request(app).get(`/customers/${customerId}/analytics/hourly-efficiency?days=7`);
+    const token = await seedAuth(customerId);
+    const res = await request(app)
+      .get(`/customers/${customerId}/analytics/hourly-efficiency?days=7`)
+      .set('Authorization', `Bearer ${token}`);
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty('scorePct');
     expect(res.body).toHaveProperty('avgKwhByHourUtc');
@@ -128,14 +161,20 @@ describe('chat', () => {
       created_at: new Date('2026-01-01T00:00:00.000Z')
     });
 
-    const res = await request(app).post(`/customers/${customerId}/chat`).send({ message: 'Olá! Quanto gastei nas últimas 24h?' });
+    const token = await seedAuth(customerId);
+    const res = await request(app)
+      .post(`/customers/${customerId}/chat`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ message: 'Olá! Quanto gastei nas últimas 24h?' });
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty('conversationId');
     expect(res.body).toHaveProperty('reply');
     expect(typeof res.body.reply).toBe('string');
 
     const convId = String(res.body.conversationId);
-    const history = await request(app).get(`/customers/${customerId}/chat?conversationId=${encodeURIComponent(convId)}&limit=50`);
+    const history = await request(app)
+      .get(`/customers/${customerId}/chat?conversationId=${encodeURIComponent(convId)}&limit=50`)
+      .set('Authorization', `Bearer ${token}`);
     expect(history.status).toBe(200);
     expect(history.body).toHaveProperty('conversationId');
     expect(history.body.conversationId).toBe(convId);
@@ -203,13 +242,20 @@ describe('chat', () => {
       }
     ]);
 
-    const first = await request(app).post(`/customers/${customerId}/chat`).send({ message: 'Qual o equipamento que mais consome?' });
+    const token = await seedAuth(customerId);
+    const first = await request(app)
+      .post(`/customers/${customerId}/chat`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ message: 'Qual o equipamento que mais consome?' });
     expect(first.status).toBe(200);
     expect(first.body).toHaveProperty('conversationId');
     expect(String(first.body.reply)).toContain('Quer que eu sugira 2 ações rápidas');
 
     const convId = String(first.body.conversationId);
-    const follow = await request(app).post(`/customers/${customerId}/chat`).send({ message: 'sim', conversationId: convId });
+    const follow = await request(app)
+      .post(`/customers/${customerId}/chat`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ message: 'sim', conversationId: convId });
     expect(follow.status).toBe(200);
     expect(String(follow.body.reply)).toContain('1)');
     expect(String(follow.body.reply)).toContain('2)');
@@ -250,11 +296,18 @@ describe('chat', () => {
       { customer_id: customerId, ts: end, watts: 1100, euros: 0.0, temp_c: 15, is_estimated: false }
     ]);
 
-    const first = await request(app).post(`/customers/${customerId}/chat`).send({ message: 'Quanto gastei nas últimas 24h?' });
+    const token = await seedAuth(customerId);
+    const first = await request(app)
+      .post(`/customers/${customerId}/chat`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ message: 'Quanto gastei nas últimas 24h?' });
     expect(first.status).toBe(200);
     const convId = String(first.body.conversationId);
 
-    const fb = await request(app).post(`/customers/${customerId}/chat`).send({ message: '__ACTION:FEEDBACK:UP__', conversationId: convId });
+    const fb = await request(app)
+      .post(`/customers/${customerId}/chat`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ message: '__ACTION:FEEDBACK:UP__', conversationId: convId });
     expect(fb.status).toBe(200);
     expect(String(fb.body.reply)).toContain('obrigado');
 
@@ -310,12 +363,19 @@ describe('chat', () => {
       }
     ]);
 
-    const first = await request(app).post(`/customers/${customerId}/chat`).send({ message: 'Qual o equipamento que mais consome?' });
+    const token = await seedAuth(customerId);
+    const first = await request(app)
+      .post(`/customers/${customerId}/chat`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ message: 'Qual o equipamento que mais consome?' });
     expect(first.status).toBe(200);
     expect(first.body).toHaveProperty('conversationId');
 
     const convId = String(first.body.conversationId);
-    const explain = await request(app).post(`/customers/${customerId}/chat`).send({ message: 'porquê?', conversationId: convId });
+    const explain = await request(app)
+      .post(`/customers/${customerId}/chat`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ message: 'porquê?', conversationId: convId });
     expect(explain.status).toBe(200);
     expect(String(explain.body.reply)).toContain('Eu baseio o ranking');
     expect(Array.isArray(explain.body.actions)).toBe(true);
@@ -349,7 +409,11 @@ describe('chat', () => {
       created_at: new Date('2026-01-01T00:00:00.000Z')
     });
 
-    const res = await request(app).post(`/customers/${customerId}/chat`).send({ message: '__ACTION:PLAN_7D__' });
+    const token = await seedAuth(customerId);
+    const res = await request(app)
+      .post(`/customers/${customerId}/chat`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ message: '__ACTION:PLAN_7D__' });
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty('reply');
     expect(Array.isArray(res.body.actions)).toBe(true);
@@ -398,13 +462,20 @@ describe('chat', () => {
     }
     await c.customerTelemetry15m.insertMany(docs);
 
-    const first = await request(app).post(`/customers/${customerId}/chat`).send({ message: 'Quanto gastei na última semana?' });
+    const token = await seedAuth(customerId);
+    const first = await request(app)
+      .post(`/customers/${customerId}/chat`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ message: 'Quanto gastei na última semana?' });
     expect(first.status).toBe(200);
     expect(first.body).toHaveProperty('conversationId');
     expect(String(first.body.reply)).toContain('Quer ver as melhores horas');
 
     const convId = String(first.body.conversationId);
-    const follow = await request(app).post(`/customers/${customerId}/chat`).send({ message: 'sim', conversationId: convId });
+    const follow = await request(app)
+      .post(`/customers/${customerId}/chat`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ message: 'sim', conversationId: convId });
     expect(follow.status).toBe(200);
     expect(String(follow.body.reply)).toContain('Eficiência horária');
   });
@@ -438,10 +509,16 @@ describe('assistant', () => {
       created_at: new Date('2026-01-01T00:00:00.000Z')
     });
 
-    const put = await request(app).put(`/customers/${customerId}/assistant/prefs`).send({ style: 'short', focus: 'poupanca' });
+    const token = await seedAuth(customerId);
+    const put = await request(app)
+      .put(`/customers/${customerId}/assistant/prefs`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ style: 'short', focus: 'poupanca' });
     expect(put.status).toBe(200);
 
-    const get = await request(app).get(`/customers/${customerId}/assistant/prefs`);
+    const get = await request(app)
+      .get(`/customers/${customerId}/assistant/prefs`)
+      .set('Authorization', `Bearer ${token}`);
     expect(get.status).toBe(200);
     expect(get.body).toHaveProperty('style', 'short');
     expect(get.body).toHaveProperty('focus', 'poupanca');
@@ -485,7 +562,10 @@ describe('assistant', () => {
     }
     await c.customerTelemetry15m.insertMany(docs);
 
-    const res = await request(app).get(`/customers/${customerId}/assistant/notifications`);
+    const token = await seedAuth(customerId);
+    const res = await request(app)
+      .get(`/customers/${customerId}/assistant/notifications`)
+      .set('Authorization', `Bearer ${token}`);
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty('notifications');
     expect(Array.isArray(res.body.notifications)).toBe(true);

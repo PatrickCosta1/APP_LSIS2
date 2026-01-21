@@ -1,11 +1,11 @@
 {
-  "trained_at": "2026-01-20T18:04:14.341Z",
-  "last_telemetry_ts": "2026-03-21T10:00:00.000Z",
+  "trained_at": "2026-01-21T15:00:35.222Z",
+  "last_telemetry_ts": "2026-04-18T10:30:00.000Z",
   "model_type": "ridge",
-  "samples": 3288,
+  "samples": 3174,
   "metrics": {
-    "mae": 117.33,
-    "rmse": 168.77,
-    "r2": 0.865
+    "mae": 120.85,
+    "rmse": 168.83,
+    "r2": 0.853
   }
 }

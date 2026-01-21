@@ -147,7 +147,10 @@ export default function AssistantChatModal({ open, onClose, apiBase: apiBaseProp
         if (existingConv) qs.set('conversationId', existingConv);
         qs.set('limit', '50');
 
-        const res = await fetch(`${apiBase}/customers/${customerId}/chat?${qs.toString()}`);
+        const token = localStorage.getItem('kynex:authToken');
+        const res = await fetch(`${apiBase}/customers/${customerId}/chat?${qs.toString()}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined
+        });
         if (!res.ok) throw new Error('history');
         const json = (await res.json()) as ChatHistoryResponse;
 
@@ -174,7 +177,10 @@ export default function AssistantChatModal({ open, onClose, apiBase: apiBaseProp
         // notificações proativas (não bloqueia o histórico)
         if (!didLoadNotifications) {
           try {
-            const nres = await fetch(`${apiBase}/customers/${customerId}/assistant/notifications`);
+            const token = localStorage.getItem('kynex:authToken');
+            const nres = await fetch(`${apiBase}/customers/${customerId}/assistant/notifications`, {
+              headers: token ? { Authorization: `Bearer ${token}` } : undefined
+            });
             if (nres.ok) {
               const json = (await nres.json()) as AssistantNotificationsResponse;
               const notifs = Array.isArray(json.notifications) ? json.notifications : [];
@@ -391,9 +397,13 @@ export default function AssistantChatModal({ open, onClose, apiBase: apiBaseProp
     setDraft('');
 
     try {
+      const token = localStorage.getItem('kynex:authToken');
       const res = await fetch(`${apiBase}/customers/${customerId}/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
         body: JSON.stringify({ message: trimmed, conversationId: conversationId ?? undefined })
       });
 

@@ -294,7 +294,10 @@ function Charts() {
 
     async function loadSeries() {
       try {
-        const res = await fetch(`${apiBase}/customers/${customerId}/analytics/consumption?range=${encodeURIComponent(range)}`);
+        const token = localStorage.getItem('kynex:authToken');
+        const res = await fetch(`${apiBase}/customers/${customerId}/analytics/consumption?range=${encodeURIComponent(range)}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined
+        });
         if (!res.ok) throw new Error('series');
         const json = (await res.json()) as ConsumptionSeriesResponse;
         if (!cancelled) setSeries(json);
@@ -305,7 +308,10 @@ function Charts() {
 
     async function loadPower() {
       try {
-        const res = await fetch(`${apiBase}/customers/${customerId}/power/suggestion`);
+        const token = localStorage.getItem('kynex:authToken');
+        const res = await fetch(`${apiBase}/customers/${customerId}/power/suggestion`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined
+        });
         if (!res.ok) throw new Error('power');
         const json = (await res.json()) as PowerSuggestionResponse;
         if (!cancelled) setPower(json);
@@ -316,7 +322,10 @@ function Charts() {
 
     async function loadHourlyEfficiency() {
       try {
-        const res = await fetch(`${apiBase}/customers/${customerId}/analytics/hourly-efficiency`);
+        const token = localStorage.getItem('kynex:authToken');
+        const res = await fetch(`${apiBase}/customers/${customerId}/analytics/hourly-efficiency`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined
+        });
         if (!res.ok) throw new Error('eff');
         const json = (await res.json()) as HourlyEfficiencyResponse;
         if (!cancelled) setEff(json);
@@ -327,7 +336,10 @@ function Charts() {
 
     async function loadContract() {
       try {
-        const res = await fetch(`${apiBase}/customers/${customerId}/contract/analysis`);
+        const token = localStorage.getItem('kynex:authToken');
+        const res = await fetch(`${apiBase}/customers/${customerId}/contract/analysis`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined
+        });
         if (!res.ok) throw new Error('contract');
         const json = (await res.json()) as ContractAnalysisResponse;
         if (!cancelled) setContract(json);
@@ -338,7 +350,10 @@ function Charts() {
 
     async function loadOffers() {
       try {
-        const res = await fetch(`${apiBase}/customers/${customerId}/market/offers`);
+        const token = localStorage.getItem('kynex:authToken');
+        const res = await fetch(`${apiBase}/customers/${customerId}/market/offers`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined
+        });
         if (!res.ok) throw new Error('offers');
         const json = (await res.json()) as MarketOffersResponse;
         if (!cancelled) setOffers(json);
@@ -349,7 +364,10 @@ function Charts() {
 
     async function loadInsights() {
       try {
-        const res = await fetch(`${apiBase}/customers/${customerId}/ai/insights?limit=3`);
+        const token = localStorage.getItem('kynex:authToken');
+        const res = await fetch(`${apiBase}/customers/${customerId}/ai/insights?limit=3`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined
+        });
         if (!res.ok) throw new Error('insights');
         const json = (await res.json()) as InsightsResponse;
         if (!cancelled) setInsights(json);
@@ -428,9 +446,13 @@ function Charts() {
   async function runSimulation() {
     if (!apiBase || !customerId || !simReq) return;
     try {
+      const token = localStorage.getItem('kynex:authToken');
       const res = await fetch(`${apiBase}/customers/${customerId}/contract/simulate`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
         body: JSON.stringify(simReq)
       });
       if (!res.ok) throw new Error('simulate');

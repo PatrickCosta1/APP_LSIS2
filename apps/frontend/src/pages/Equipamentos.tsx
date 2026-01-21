@@ -223,7 +223,10 @@ function Equipamentos() {
 
     async function load() {
       try {
-        const res = await fetch(`${apiBase}/customers/${customerId}/appliances/summary?days=30`);
+        const token = localStorage.getItem('kynex:authToken');
+        const res = await fetch(`${apiBase}/customers/${customerId}/appliances/summary?days=30`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined
+        });
         if (!res.ok) throw new Error('summary');
         const json = (await res.json()) as AppliancesSummaryResponse;
         if (!cancelled) setSummary(json);
@@ -232,7 +235,10 @@ function Equipamentos() {
       }
 
       try {
-        const res = await fetch(`${apiBase}/customers/${customerId}/analytics/hourly-efficiency?days=7`);
+        const token = localStorage.getItem('kynex:authToken');
+        const res = await fetch(`${apiBase}/customers/${customerId}/analytics/hourly-efficiency?days=7`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined
+        });
         if (!res.ok) throw new Error('eff');
         const json = (await res.json()) as HourlyEfficiencyResponse;
         if (!cancelled) setEfficiencyPct(Number.isFinite(json.scorePct) ? json.scorePct : null);

@@ -188,7 +188,10 @@ function Dashboard() {
 
     async function loadNow() {
       try {
-        const res = await fetch(`${apiBase}/customers/${customerId}/telemetry/now`);
+        const token = localStorage.getItem('kynex:authToken');
+        const res = await fetch(`${apiBase}/customers/${customerId}/telemetry/now`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined
+        });
         if (!res.ok) throw new Error('now');
         const json = (await res.json()) as CustomerNowResponse;
         if (!cancelled) {
@@ -203,7 +206,10 @@ function Dashboard() {
 
     async function loadChart() {
       try {
-        const res = await fetch(`${apiBase}/customers/${customerId}/chart?range=${encodeURIComponent(chartRange)}`);
+        const token = localStorage.getItem('kynex:authToken');
+        const res = await fetch(`${apiBase}/customers/${customerId}/chart?range=${encodeURIComponent(chartRange)}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined
+        });
         if (!res.ok) throw new Error('chart');
         const json = (await res.json()) as CustomerChartResponse;
         if (!cancelled) setChart(json);

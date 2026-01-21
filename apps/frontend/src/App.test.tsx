@@ -56,10 +56,22 @@ const mockFetch = () => {
 };
 
 describe('App', () => {
-  it('mostra Dashboard quando existe customerId', async () => {
+  it('mostra Login quando não autenticado', async () => {
+    mockFetch();
+
+    localStorage.removeItem('kynex:authToken');
+    localStorage.removeItem('kynex:customerId');
+
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText(/bem-vindo\(a\) de volta/i)).toBeInTheDocument());
+  });
+
+  it('mostra Dashboard quando autenticado', async () => {
     mockFetch();
 
     localStorage.setItem('kynex:customerId', 'U_test');
+    localStorage.setItem('kynex:authToken', 'test-token');
     localStorage.setItem('kynex:onboarding', JSON.stringify({ name: 'Susana' }));
 
     render(<App />);
