@@ -1,4 +1,4 @@
-import { getIpmaDailyForecast, getIpmaTempForLocalDateTime, resolveIpmaGlobalIdLocal } from './ipma';
+import { getIpmaDailyForecast, getIpmaTempForLocalDateTime, getIpmaWeatherTypeDescPt, resolveIpmaGlobalIdLocal } from './ipma';
 import cors from 'cors';
 import express from 'express';
 import crypto from 'node:crypto';
@@ -59,6 +59,11 @@ const RATE_EUR_PER_KWH = 0.2;
 const SAMPLE_INTERVAL_HOURS = 0.25; // 15m dos dados sintéticos
 
 type ChartKind = 'consumido' | 'previsto';
+
+function isValidYmd(s: string | undefined | null): s is string {
+  if (typeof s !== 'string') return false;
+  return /^\d{4}-\d{2}-\d{2}$/.test(s);
+}
 
 function toDayKeyUtc(d: Date) {
   return d.toISOString().slice(0, 10);
@@ -362,7 +367,7 @@ app.get('/customers/:customerId/telemetry/now', async (req, res) => {
 
   const customer = await c.customers.findOne(
     { id: customerId },
-    { projection: { _id: 0, id: 1, name: 1, segment: 1, home_area_m2: 1, price_eur_per_kwh: 1 } }
+    { projection: { _id: 0, id: 1, name: 1, segment: 1, home_area_m2: 1, price_eur_per_kwh: 1, contracted_power_kva: 1 } }
   );
   if (!customer) return res.status(404).json({ message: 'Cliente não encontrado' });
 
@@ -465,7 +470,8 @@ app.get('/customers/:customerId/telemetry/now', async (req, res) => {
     forecastMonthEuros: Number(forecastMonthEuros.toFixed(2)),
     similarKwhLast24h: Number(similarKwhLast24h.toFixed(2)),
     similarDeltaPct: Number(similarDeltaPct.toFixed(1)),
-    priceEurPerKwh: Number(price.toFixed(4))
+    priceEurPerKwh: Number(price.toFixed(4)),
+    contractedPowerKva: typeof customer.contracted_power_kva === 'number' ? customer.contracted_power_kva : undefined
   });
 });
 
@@ -579,11 +585,13 @@ app.get('/customers/:customerId/chart', async (req, res) => {
       const dayKey = toDayKeyUtc(addUtcDays(weekStart, idx));
       const kind: ChartKind = dayKey > todayKey ? 'previsto' : 'consumido';
       const value = kind === 'previsto' ? (predicted.get(dayKey) ?? 0) : (actual.get(dayKey) ?? 0);
-      return { label, value: Number(value.toFixed(2)), kind };
+      return { label, date: dayKey, value: Number(value.toFixed(2)), kind };
     });
 
     return res.json({ title: 'Consumo', items });
   }
+
+  // restante range mantém formato anterior
 
   if (range === 'semana') {
     const labels = ['S1', 'S2', 'S3', 'S4'];
@@ -631,6 +639,164 @@ app.get('/customers/:customerId/chart', async (req, res) => {
   );
 
   return res.json({ title: 'Consumo', items });
+});
+
+app.get('/customers/:customerId/dashboard/day', async (req, res) => {
+  const { customerId } = req.params;
+  const date = (req.query.date as string | undefined) ?? undefined;
+  if (date !== undefined && !isValidYmd(date)) return res.status(400).json({ message: 'date inválida (YYYY-MM-DD)' });
+
+  const c = await collections();
+
+  const customer = (await c.customers.findOne(
+    { id: customerId },
+    {
+      projection: {
+        _id: 0,
+        id: 1,
+        name: 1,
+        segment: 1,
+        city: 1,
+        household_size: 1,
+        price_eur_per_kwh: 1
+      }
+    }
+  )) as
+    | { id: string; name: string; segment: string; city: string; household_size?: number; price_eur_per_kwh?: number }
+    | null;
+  if (!customer) return res.status(404).json({ message: 'Cliente não encontrado' });
+
+  const latestRow = await c.customerTelemetry15m
+    .find({ customer_id: customerId }, { projection: { _id: 0, ts: 1, watts: 1, temp_c: 1 } })
+    .sort({ ts: -1 })
+    .limit(1)
+    .toArray();
+  const latestDoc = latestRow[0];
+  if (!latestDoc) return res.status(404).json({ message: 'Sem telemetria para este cliente' });
+
+  // usa o tempo simulado do último ponto
+  const now = new Date(latestDoc.ts.toISOString());
+  const todayKey = toDayKeyUtc(now);
+  const dayKey = date ?? todayKey;
+
+  const dayStartUtc = new Date(`${dayKey}T00:00:00.000Z`);
+  const dayEndUtc = addUtcDays(dayStartUtc, 1);
+
+  const price = Number.isFinite(customer.price_eur_per_kwh as number) ? Number(customer.price_eur_per_kwh) : RATE_EUR_PER_KWH;
+
+  // consumo do dia (se futuro, prevê via modelo)
+  let kwh = 0;
+  let kind: 'consumido' | 'previsto' = 'consumido';
+
+  if (dayKey > todayKey) {
+    kind = 'previsto';
+    const model = loadAiModel();
+    if (model) {
+      try {
+        const intervalMinutes = model.interval_minutes ?? 15;
+        const intervalHours = intervalMinutes / 60;
+        const temp_c = latestDoc.temp_c ?? undefined;
+
+        let ts = new Date(latestDoc.ts.toISOString());
+        let lastWatts = latestDoc.watts;
+
+        const toExclusive = dayEndUtc;
+        const maxSteps = 31 * 96;
+        let steps = 0;
+
+        while (ts.getTime() < toExclusive.getTime() && steps < maxSteps) {
+          ts = new Date(ts.getTime() + intervalMinutes * 60 * 1000);
+          if (ts.getTime() >= toExclusive.getTime()) break;
+          const feats = makeFeatures(ts, customer as any, lastWatts, temp_c);
+          const predictedRaw = predictNextWatts(model, feats);
+          const predictedWatts = clampPredictionForCustomer(predictedRaw, customer as any);
+          if (toDayKeyUtc(ts) === dayKey) {
+            kwh += (predictedWatts / 1000) * intervalHours;
+          }
+          lastWatts = predictedWatts;
+          steps += 1;
+        }
+      } catch {
+        kwh = 0;
+      }
+    }
+  } else {
+    const rows = await c.customerTelemetry15m
+      .aggregate([
+        { $match: { customer_id: customerId, ts: { $gte: dayStartUtc, $lt: dayEndUtc } } },
+        { $group: { _id: null, sumWatts: { $sum: '$watts' } } }
+      ])
+      .toArray();
+    const sumWatts = rows?.[0]?.sumWatts ?? 0;
+    kwh = sumKwhFromSumWatts(Number(sumWatts));
+  }
+
+  const euros = kwh * price;
+
+  // semelhantes no dia
+  const similarCustomers = await c.customers
+    .find(
+      {
+        id: { $ne: customerId },
+        segment: customer.segment,
+        city: customer.city,
+        household_size: customer.household_size ?? 2
+      },
+      { projection: { _id: 0, id: 1 } }
+    )
+    .limit(30)
+    .toArray();
+
+  const similarIds = similarCustomers.map((sc) => sc.id);
+  const similarRows = similarIds.length
+    ? await c.customerTelemetry15m
+        .aggregate([
+          { $match: { customer_id: { $in: similarIds }, ts: { $gte: dayStartUtc, $lt: dayEndUtc } } },
+          { $group: { _id: '$customer_id', sumWatts: { $sum: '$watts' } } }
+        ])
+        .toArray()
+    : [];
+
+  let similarKwh = 0;
+  if (similarRows.length) {
+    const kwhs = similarRows.map((r) => sumKwhFromSumWatts(r.sumWatts ?? 0));
+    similarKwh = kwhs.reduce((a, b) => a + b, 0) / kwhs.length;
+  } else {
+    similarKwh = kwh * 1.15;
+  }
+  const similarDeltaPct = similarKwh > 0 ? ((kwh / similarKwh) - 1) * 100 : 0;
+
+  // meteorologia (IPMA) baseada na cidade do cliente
+  const globalIdLocal = await resolveIpmaGlobalIdLocal(customer.city);
+  const forecast = await getIpmaDailyForecast(globalIdLocal);
+  let weather: any = null;
+  if (forecast?.data?.length) {
+    const day = forecast.data.find((d) => d?.forecastDate === dayKey) ?? forecast.data[0];
+    const idWeatherType = day?.idWeatherType;
+    const descPT = await getIpmaWeatherTypeDescPt(idWeatherType);
+    weather = {
+      globalIdLocal: forecast.globalIdLocal,
+      dataUpdate: forecast.dataUpdate ?? null,
+      forecastDate: day?.forecastDate ?? dayKey,
+      tMin: day?.tMin ?? null,
+      tMax: day?.tMax ?? null,
+      idWeatherType: idWeatherType ?? null,
+      descPT
+    };
+  }
+
+  return res.json({
+    customerId: customer.id,
+    name: customer.name,
+    date: dayKey,
+    kind,
+    kwh: Number(kwh.toFixed(2)),
+    euros: Number(euros.toFixed(2)),
+    similarKwh: Number(similarKwh.toFixed(2)),
+    similarDeltaPct: Number(similarDeltaPct.toFixed(1)),
+    priceEurPerKwh: Number(price.toFixed(4)),
+    weather
+  });
 });
 
 app.get('/customers/:customerId/analytics/consumption', async (req, res) => {

@@ -4,7 +4,7 @@ import casaImg from '../assets/images/casa_dia.png';
 import AssistantChatModal from '../components/AssistantChatModal';
 import './Dashboard.css';
 
-type ChartItem = { label: string; value: number; kind: 'consumido' | 'previsto' };
+type ChartItem = { label: string; value: number; kind: 'consumido' | 'previsto'; date?: string };
 
 type CustomerNowResponse = {
   customerId: string;
@@ -21,6 +21,7 @@ type CustomerNowResponse = {
   similarKwhLast24h: number;
   similarDeltaPct: number;
   priceEurPerKwh: number;
+  contractedPowerKva?: number;
 };
 
 type CustomerChartResponse = {
@@ -28,26 +29,25 @@ type CustomerChartResponse = {
   items: ChartItem[];
 };
 
-type IpmaForecastDay = {
-  forecastDate: string;
-  tMax?: string;
-  tMin?: string;
-  idWeatherType?: number;
-};
-
-type IpmaForecastResponse = {
-  data: IpmaForecastDay[];
-  globalIdLocal: number;
-  dataUpdate?: string;
-};
-
-type IpmaWeatherType = {
-  idWeatherType: number;
-  descWeatherTypePT: string;
-};
-
-type IpmaWeatherTypesResponse = {
-  data: IpmaWeatherType[];
+type DashboardDayResponse = {
+  customerId: string;
+  name: string;
+  date: string; // YYYY-MM-DD
+  kind: 'consumido' | 'previsto';
+  kwh: number;
+  euros: number;
+  similarKwh: number;
+  similarDeltaPct: number;
+  priceEurPerKwh: number;
+  weather: null | {
+    globalIdLocal: number;
+    dataUpdate: string | null;
+    forecastDate: string;
+    tMin: string | null;
+    tMax: string | null;
+    idWeatherType: number | null;
+    descPT: string | null;
+  };
 };
 
 function capitalizeFirstLetter(value: string) {
@@ -122,14 +122,45 @@ function Dashboard() {
   const [customerId, setCustomerId] = useState<string | null>(null);
   const [customerName, setCustomerName] = useState<string>('Cliente');
   const [nowStats, setNowStats] = useState<CustomerNowResponse | null>(null);
+  const [selectedDayKey, setSelectedDayKey] = useState<string | null>(null);
+  const [dayStats, setDayStats] = useState<DashboardDayResponse | null>(null);
   const [chart, setChart] = useState<CustomerChartResponse>({ title: 'Consumo', items: [] });
   const [isApiOnline, setIsApiOnline] = useState<boolean>(true);
-  const [weather, setWeather] = useState<{ icon: string; tempLabel: string; dateLabel: string; ariaLabel: string; title?: string }>({
-    icon: '🌡️',
-    tempLabel: '—',
-    dateLabel: '',
-    ariaLabel: 'Meteorologia',
-  });
+
+  const todayKey = React.useMemo(() => {
+    const iso = nowStats?.lastUpdated;
+    if (!iso || iso.length < 10) return null;
+    return iso.slice(0, 10);
+  }, [nowStats?.lastUpdated]);
+
+  const activeDayKey = selectedDayKey ?? todayKey;
+
+  const weatherView = React.useMemo(() => {
+    const fallback = {
+      icon: '🌡️',
+      tempLabel: '—',
+      dateLabel: activeDayKey ? formatPtDateLabel(activeDayKey) : '',
+      ariaLabel: 'Meteorologia',
+      title: undefined as string | undefined,
+    };
+
+    const w = dayStats?.weather;
+    if (!w) return fallback;
+
+    const idWeatherType = w.idWeatherType ?? undefined;
+    const descPT = w.descPT ?? undefined;
+    const icon = pickWeatherEmoji(descPT, idWeatherType);
+
+    const tMax = w.tMax ? Number(w.tMax) : undefined;
+    const tMin = w.tMin ? Number(w.tMin) : undefined;
+    const temp = Number.isFinite(tMax) ? (tMax as number) : (Number.isFinite(tMin) ? (tMin as number) : undefined);
+    const tempLabel = Number.isFinite(temp) ? `${Math.round(temp as number)}ºC` : fallback.tempLabel;
+    const dateLabel = formatPtDateLabel(w.forecastDate ?? (activeDayKey ?? ''));
+    const ariaLabel = descPT ? `Meteorologia: ${descPT}` : 'Meteorologia';
+    const title = w.dataUpdate ? `Fonte: IPMA (atualizado em ${w.dataUpdate})` : 'Fonte: IPMA';
+
+    return { icon, tempLabel, dateLabel, ariaLabel, title };
+  }, [dayStats?.weather, activeDayKey]);
 
   useEffect(() => {
     try {
@@ -230,61 +261,42 @@ function Dashboard() {
     };
   }, [apiBase, customerId, chartRange]);
 
+  useEffect(() => {
+    if (chartRange !== 'dia') setSelectedDayKey(null);
+  }, [chartRange]);
+
   const maxValue = React.useMemo(() => Math.max(...chart.items.map((i) => i.value), 1), [chart.items]);
 
   useEffect(() => {
+    if (!apiBase || !customerId || !activeDayKey) return;
+
+    let cancelled = false;
     const controller = new AbortController();
-    const signal = controller.signal;
 
-    // Porto (globalIdLocal) por defeito
-    const globalIdLocal = 1131200;
-    const forecastUrl = `https://api.ipma.pt/open-data/forecast/meteorology/cities/daily/${globalIdLocal}.json`;
-    const typesUrl = 'https://api.ipma.pt/open-data/weather-type-classe.json';
-
-    async function loadIpmaWeather() {
+    async function loadDay() {
       try {
-        const [forecastRes, typesRes] = await Promise.all([
-          fetch(forecastUrl, { signal }),
-          fetch(typesUrl, { signal }),
-        ]);
-
-        if (!forecastRes.ok) throw new Error(`IPMA forecast HTTP ${forecastRes.status}`);
-        if (!typesRes.ok) throw new Error(`IPMA weather types HTTP ${typesRes.status}`);
-
-        const forecastJson = (await forecastRes.json()) as IpmaForecastResponse;
-        const typesJson = (await typesRes.json()) as IpmaWeatherTypesResponse;
-
-        const day0 = forecastJson.data?.[0];
-        if (!day0?.forecastDate) return;
-
-        const tMax = day0.tMax ? Number(day0.tMax) : undefined;
-        const tMin = day0.tMin ? Number(day0.tMin) : undefined;
-        const temp = Number.isFinite(tMax) ? tMax : (Number.isFinite(tMin) ? tMin : undefined);
-        const tempLabel = Number.isFinite(temp) ? `${Math.round(temp as number)}ºC` : weather.tempLabel;
-
-        const idWeatherType = day0.idWeatherType;
-        const descPT = typeof idWeatherType === 'number'
-          ? typesJson.data?.find((t) => t.idWeatherType === idWeatherType)?.descWeatherTypePT
-          : undefined;
-
-        const icon = pickWeatherEmoji(descPT, idWeatherType);
-        const dateLabel = formatPtDateLabel(day0.forecastDate);
-        const ariaLabel = descPT ? `Meteorologia: ${descPT}` : 'Meteorologia';
-
-        const title = forecastJson.dataUpdate
-          ? `Fonte: IPMA (atualizado em ${forecastJson.dataUpdate})`
-          : 'Fonte: IPMA';
-
-        setWeather({ icon, tempLabel, dateLabel, ariaLabel, title });
-      } catch (error) {
-        // Mantém fallback (evita quebrar a UI caso o IPMA esteja indisponível)
+        const token = localStorage.getItem('kynex:authToken');
+        const res = await fetch(
+          `${apiBase}/customers/${customerId}/dashboard/day?date=${encodeURIComponent(activeDayKey)}`,
+          {
+            signal: controller.signal,
+            headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+          }
+        );
+        if (!res.ok) throw new Error('day');
+        const json = (await res.json()) as DashboardDayResponse;
+        if (!cancelled) setDayStats(json);
+      } catch {
+        // mantém último dayStats (não quebra a UI)
       }
     }
 
-    loadIpmaWeather();
-    return () => controller.abort();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    loadDay();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [apiBase, customerId, activeDayKey]);
 
   useEffect(() => {
     const path = window.location.pathname;
@@ -326,10 +338,10 @@ function Dashboard() {
           <section className="summary-card">
             <div className="weather-row">
               <div className="weather-info">
-                <span className="weather-icon" role="img" aria-label={weather.ariaLabel} title={weather.title}>{weather.icon}</span>
+                <span className="weather-icon" role="img" aria-label={weatherView.ariaLabel} title={weatherView.title}>{weatherView.icon}</span>
                 <div className="weather-text">
-                  <span className="weather-temp">{weather.tempLabel}</span>
-                  <span className="weather-date">{weather.dateLabel}</span>
+                  <span className="weather-temp">{weatherView.tempLabel}</span>
+                  <span className="weather-date">{weatherView.dateLabel}</span>
                 </div>
               </div>
             </div>
@@ -341,19 +353,19 @@ function Dashboard() {
                 </div>
               ) : null}
               <div className="metric">
-                <p className="metric-value">{nowStats ? nowStats.kwhLast24h.toFixed(2) : '—'}</p>
+                <p className="metric-value">{dayStats ? dayStats.kwh.toFixed(2) : '—'}</p>
                 <p className="metric-label">Consumo (kWh)</p>
               </div>
               <div className="metric">
-                <p className="metric-value">{nowStats ? `${nowStats.eurosLast24h.toFixed(2)}€` : '—'}</p>
+                <p className="metric-value">{dayStats ? `${dayStats.euros.toFixed(2)}€` : '—'}</p>
                 <p className="metric-label">Consumo (€)</p>
               </div>
               <div className="metric">
                 <div className="metric-value-row">
-                  <p className="metric-value">{nowStats ? nowStats.similarKwhLast24h.toFixed(2) : '—'}</p>
-                  {nowStats ? (
-                    <p className={`metric-delta ${nowStats.similarDeltaPct <= 0 ? 'positive' : 'negative'}`}>
-                      {nowStats.similarDeltaPct > 0 ? `+${nowStats.similarDeltaPct.toFixed(0)}%` : `${nowStats.similarDeltaPct.toFixed(0)}%`}
+                  <p className="metric-value">{dayStats ? dayStats.similarKwh.toFixed(2) : '—'}</p>
+                  {dayStats ? (
+                    <p className={`metric-delta ${dayStats.similarDeltaPct <= 0 ? 'positive' : 'negative'}`}>
+                      {dayStats.similarDeltaPct > 0 ? `+${dayStats.similarDeltaPct.toFixed(0)}%` : `${dayStats.similarDeltaPct.toFixed(0)}%`}
                     </p>
                   ) : null}
                 </div>
@@ -425,9 +437,21 @@ function Dashboard() {
                 {chart.items.map((item) => {
                   const heightPct = Math.max(6, Math.round((item.value / maxValue) * 100));
                   const isPred = item.kind === 'previsto';
+                  const isSelectable = chartRange === 'dia' && typeof item.date === 'string' && item.date.length === 10;
+                  const isSelected = isSelectable && activeDayKey === item.date;
 
                   return (
-                    <div key={item.label} className="bar-col">
+                    <button
+                      key={item.label}
+                      className={`bar-col ${isSelected ? 'selected' : ''}`}
+                      type="button"
+                      disabled={!isSelectable}
+                      onClick={() => {
+                        if (!isSelectable || !item.date) return;
+                        setSelectedDayKey(item.date);
+                      }}
+                      aria-label={isSelectable ? `Selecionar dia ${item.label}` : `Barra ${item.label}`}
+                    >
                       <div className="bar-track" aria-hidden="true">
                         <div
                           className={`bar-fill ${isPred ? 'predicted' : 'consumed'}`}
@@ -440,7 +464,7 @@ function Dashboard() {
                         </div>
                       </div>
                       <div className="bar-label">{item.label}</div>
-                    </div>
+                    </button>
                   );
                 })}
               </div>
@@ -459,7 +483,7 @@ function Dashboard() {
           ) : (
             <section className="hero-card">
               <div className="hero-annotations">
-                <div className="annotation top">Potência Atual Utilizada <strong>{nowStats ? `${(nowStats.avgWattsLastHour / 1000).toFixed(1)}kW` : '—'}</strong></div>
+                <div className="annotation top">Potência Atual Utilizada <strong>{nowStats && nowStats.avgWattsLastHour && nowStats.contractedPowerKva ? `${Math.round((nowStats.avgWattsLastHour / (nowStats.contractedPowerKva * 1000)) * 100)}%` : '—'}</strong></div>
                 <div className="annotation right">Consumo Atual <strong>{nowStats ? `${(nowStats.wattsNow / 1000).toFixed(2)}kW` : '—'}</strong></div>
               </div>
               <img className="hero-house" src={casaImg} alt="Visual da casa" />

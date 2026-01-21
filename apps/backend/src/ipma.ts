@@ -21,10 +21,21 @@ export type IpmaDailyForecastResponse = {
   dataUpdate?: string;
 };
 
+type IpmaWeatherType = {
+  idWeatherType: number;
+  descWeatherTypePT: string;
+};
+
+type IpmaWeatherTypesResponse = {
+  data: IpmaWeatherType[];
+};
+
 const IPMA_CITIES_URL = 'https://api.ipma.pt/open-data/distrits-islands.json';
+const IPMA_WEATHER_TYPES_URL = 'https://api.ipma.pt/open-data/weather-type-classe.json';
 
 const cityCache: { expiresAt: number; data: IpmaCity[] | null } = { expiresAt: 0, data: null };
 const forecastCache = new Map<number, { expiresAt: number; data: IpmaDailyForecastResponse }>();
+const weatherTypesCache: { expiresAt: number; data: IpmaWeatherType[] | null } = { expiresAt: 0, data: null };
 
 const DEFAULT_GLOBAL_ID_LOCAL = 1131200; // Porto
 
@@ -108,6 +119,35 @@ export async function getIpmaDailyForecast(globalIdLocal: number): Promise<IpmaD
   } catch {
     return null;
   }
+}
+
+async function getIpmaWeatherTypes(): Promise<IpmaWeatherType[] | null> {
+  const now = Date.now();
+  if (weatherTypesCache.data && weatherTypesCache.expiresAt > now) return weatherTypesCache.data;
+
+  try {
+    const json = await fetchJson<IpmaWeatherTypesResponse>(IPMA_WEATHER_TYPES_URL, 5000);
+    const items = Array.isArray(json?.data) ? json.data : [];
+    const normalized = items
+      .map((t) => ({ idWeatherType: Number(t.idWeatherType), descWeatherTypePT: String(t.descWeatherTypePT ?? '') }))
+      .filter((t) => Number.isFinite(t.idWeatherType) && t.idWeatherType > 0 && t.descWeatherTypePT);
+
+    weatherTypesCache.data = normalized;
+    weatherTypesCache.expiresAt = now + 24 * 60 * 60 * 1000;
+    return normalized;
+  } catch {
+    weatherTypesCache.data = null;
+    weatherTypesCache.expiresAt = now + 30 * 60 * 1000;
+    return null;
+  }
+}
+
+export async function getIpmaWeatherTypeDescPt(idWeatherType: number | null | undefined): Promise<string | null> {
+  if (!idWeatherType || !Number.isFinite(idWeatherType)) return null;
+  const types = await getIpmaWeatherTypes();
+  if (!types?.length) return null;
+  const found = types.find((t) => t.idWeatherType === idWeatherType);
+  return found?.descWeatherTypePT ?? null;
 }
 
 function parseMaybeNumber(s: string | undefined): number | null {
