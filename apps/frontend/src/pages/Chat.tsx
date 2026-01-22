@@ -21,7 +21,7 @@ const navItems = [
   { key: 'home', label: 'Home', href: '/dashboard' },
   { key: 'stats', label: 'Estatísticas', href: '/graficos' },
   { key: 'devices', label: 'Dispositivos', href: '/equipamentos' },
-  { key: 'profile', label: 'Perfil', href: '/dashboard' }
+  { key: 'security', label: 'Segurança', href: '/seguranca' }
 ] as const;
 
 function uid() {
@@ -251,7 +251,7 @@ function Chat() {
               {navItems.map((item) => (
                 <button
                   key={item.key}
-                  className={`nav-item ${item.key === 'profile' ? '' : ''}`}
+                  className="nav-item"
                   onClick={() => window.location.assign(item.href)}
                   type="button"
                 >

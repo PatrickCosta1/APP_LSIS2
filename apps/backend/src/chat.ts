@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { z } from 'zod';
 import type { Collections, CustomerDoc } from './db';
+import { llmGenerateJson, maybeRewriteAssistantReply } from './llm';
 
 export const chatRequestSchema = z.object({
   message: z.string().min(1).max(2000),
@@ -36,6 +37,28 @@ export type ChatReplyResponse = {
   cards?: ChatCard[];
   actions?: ChatAction[];
 };
+
+const LlmChatCardSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('metric'), title: z.string().min(1).max(80), value: z.string().min(1).max(40), subtitle: z.string().min(1).max(80).optional() }),
+  z.object({ kind: z.literal('tip'), title: z.string().min(1).max(80), detail: z.string().min(1).max(240) }),
+  z.object({ kind: z.literal('list'), title: z.string().min(1).max(80), items: z.array(z.string().min(1).max(80)).min(1).max(8), subtitle: z.string().min(1).max(80).optional() })
+]);
+
+const LlmChatActionSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('button'), id: z.string().min(1).max(32), label: z.string().min(1).max(28), message: z.string().min(1).max(200) }),
+  z.object({
+    kind: z.literal('plan'),
+    id: z.string().min(1).max(32),
+    title: z.string().min(1).max(60),
+    items: z.array(z.object({ id: z.string().min(1).max(32), label: z.string().min(1).max(60), detail: z.string().min(1).max(120).optional() })).min(1).max(10)
+  })
+]);
+
+const LlmChatReplySchema = z.object({
+  reply: z.string().min(1).max(2500),
+  cards: z.array(LlmChatCardSchema).max(8).optional(),
+  actions: z.array(LlmChatActionSchema).max(8).optional()
+});
 
 const SAFE_MAX_HISTORY = 50;
 
@@ -193,6 +216,21 @@ function fmtEur(v: number) {
 function fmtHour(h: number) {
   const hh = ((h % 24) + 24) % 24;
   return `${String(hh).padStart(2, '0')}:00`;
+}
+
+async function persistAssistantMessage(c: Collections, customerId: string, conversationId: string, reply: string): Promise<string> {
+  const maybeRewritten = await maybeRewriteAssistantReply(reply);
+  const content = maybeRewritten ?? reply;
+  const assistantMsgId = crypto.randomUUID();
+  await c.chatMessages.insertOne({
+    id: assistantMsgId,
+    customer_id: customerId,
+    conversation_id: conversationId,
+    role: 'assistant',
+    content,
+    created_at: new Date()
+  });
+  return content;
 }
 
 function parseWindowDays(message: string): number | null {
@@ -1034,10 +1072,9 @@ export async function handleCustomerChat(c: Collections, customerId: string, bod
       });
 
       const reply = rating === 'up' ? 'Boa — obrigado! Vou manter este estilo.' : 'Percebido — obrigado. Vou ajustar as próximas sugestões.';
-      const assistantMsgId = crypto.randomUUID();
-      await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
+      const finalReply = await persistAssistantMessage(c, customerId, conversationId, reply);
 
-      return { status: 200, body: { conversationId, reply, actions: [{ kind: 'button', id: 'plan', label: 'Plano 7 dias', message: ACTION_PLAN_7D }] } };
+      return { status: 200, body: { conversationId, reply: finalReply, actions: [{ kind: 'button', id: 'plan', label: 'Plano 7 dias', message: ACTION_PLAN_7D }] } };
     }
   }
 
@@ -1050,9 +1087,8 @@ export async function handleCustomerChat(c: Collections, customerId: string, bod
         { upsert: true }
       );
       const reply = `Ok — atualizado. A partir de agora respondo ${update.style === 'short' ? 'mais curto e direto' : update.style === 'detailed' ? 'com mais detalhe' : 'no estilo atual'}${update.focus ? ` (foco: ${update.focus})` : ''}.`;
-      const assistantMsgId = crypto.randomUUID();
-      await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
-      return { status: 200, body: { conversationId, reply } };
+      const finalReply = await persistAssistantMessage(c, customerId, conversationId, reply);
+      return { status: 200, body: { conversationId, reply: finalReply } };
     }
   }
 
@@ -1089,13 +1125,12 @@ export async function handleCustomerChat(c: Collections, customerId: string, bod
             ? `Ok — vou alertar se o stand-by noturno ficar acima de ~${cmd.value} W (02:00–06:00).`
             : `Ok — vou alertar quando o pico chegar a ~${cmd.value}% da potência contratada.`;
 
-      const assistantMsgId = crypto.randomUUID();
-      await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
+      const finalReply = await persistAssistantMessage(c, customerId, conversationId, reply);
       return {
         status: 200,
         body: {
           conversationId,
-          reply,
+          reply: finalReply,
           actions: [
             { kind: 'button', id: 'see_notifs', label: 'Ver notificações', message: 'Mostra notificações' },
             { kind: 'button', id: 'plan', label: 'Plano 7 dias', message: ACTION_PLAN_7D }
@@ -1106,17 +1141,15 @@ export async function handleCustomerChat(c: Collections, customerId: string, bod
 
     const reply =
       'Consigo configurar alertas. Exemplos: "alerta 20%" (subida 24h), "alerta standby 180w", "alerta potência 90%".';
-    const assistantMsgId = crypto.randomUUID();
-    await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
-    return { status: 200, body: { conversationId, reply } };
+    const finalReply = await persistAssistantMessage(c, customerId, conversationId, reply);
+    return { status: 200, body: { conversationId, reply: finalReply } };
   }
 
   if (intent === 'tariff_sim') {
     if (!end) {
       const reply = 'Consigo simular, mas preciso de telemetria deste cliente.';
-      const assistantMsgId = crypto.randomUUID();
-      await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
-      return { status: 200, body: { conversationId, reply } };
+      const finalReply = await persistAssistantMessage(c, customerId, conversationId, reply);
+      return { status: 200, body: { conversationId, reply: finalReply } };
     }
 
     const eff = await getHourlyEfficiencyStats(c, customerId, end, Math.max(7, Math.min(30, baseWindowDays))).catch(() => null);
@@ -1144,14 +1177,13 @@ export async function handleCustomerChat(c: Collections, customerId: string, bod
     }
 
     const reply = replyParts.join(' ');
-    const assistantMsgId = crypto.randomUUID();
-    await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
+    const finalReply = await persistAssistantMessage(c, customerId, conversationId, reply);
 
     return {
       status: 200,
       body: {
         conversationId,
-        reply,
+        reply: finalReply,
         actions: [
           { kind: 'button', id: 'eff', label: 'Ver melhores horas', message: 'Eficiência horária' },
           { kind: 'button', id: 'plan', label: 'Plano 7 dias', message: ACTION_PLAN_7D }
@@ -1163,29 +1195,26 @@ export async function handleCustomerChat(c: Collections, customerId: string, bod
   if (intent === 'compare_peers') {
     if (!end) {
       const reply = 'Consigo comparar, mas preciso de telemetria deste cliente.';
-      const assistantMsgId = crypto.randomUUID();
-      await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
-      return { status: 200, body: { conversationId, reply } };
+      const finalReply = await persistAssistantMessage(c, customerId, conversationId, reply);
+      return { status: 200, body: { conversationId, reply: finalReply } };
     }
 
     const cmp = await getPeerComparison(c, customerId, end, 7).catch(() => null);
     if (!cmp || cmp.peers <= 0 || cmp.yourAvgKwhDay == null || cmp.peersAvgKwhDay == null) {
       const reply = 'Ainda não tenho clientes suficientes “semelhantes” com telemetria para comparar (mesma cidade/segmento/tamanho de agregado).';
-      const assistantMsgId = crypto.randomUUID();
-      await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
-      return { status: 200, body: { conversationId, reply } };
+      const finalReply = await persistAssistantMessage(c, customerId, conversationId, reply);
+      return { status: 200, body: { conversationId, reply: finalReply } };
     }
 
     const delta = cmp.peersAvgKwhDay > 0 ? (cmp.yourAvgKwhDay - cmp.peersAvgKwhDay) / cmp.peersAvgKwhDay : 0;
     const side = delta > 0 ? 'acima' : 'abaixo';
     const reply = `Comparação (7d) com ${cmp.peers} clientes semelhantes: tu ~${cmp.yourAvgKwhDay.toFixed(2)} kWh/dia vs semelhantes ~${cmp.peersAvgKwhDay.toFixed(2)} kWh/dia (≈ ${(Math.abs(delta) * 100).toFixed(0)}% ${side}).`;
-    const assistantMsgId = crypto.randomUUID();
-    await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
+    const finalReply = await persistAssistantMessage(c, customerId, conversationId, reply);
     return {
       status: 200,
       body: {
         conversationId,
-        reply,
+        reply: finalReply,
         actions: [
           { kind: 'button', id: 'top', label: 'Ver top equipamentos', message: 'Qual o equipamento que mais consome?' },
           { kind: 'button', id: 'plan', label: 'Plano 7 dias', message: ACTION_PLAN_7D }
@@ -1199,9 +1228,8 @@ export async function handleCustomerChat(c: Collections, customerId: string, bod
     if (requestedKva != null) {
       if (!end) {
         const reply = 'Consigo estimar risco/picos, mas preciso de telemetria deste cliente.';
-        const assistantMsgId = crypto.randomUUID();
-        await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
-        return { status: 200, body: { conversationId, reply } };
+        const finalReply = await persistAssistantMessage(c, customerId, conversationId, reply);
+        return { status: 200, body: { conversationId, reply: finalReply } };
       }
 
       const power = await getPowerSuggestionQuick(c, customerId, end, 30).catch(() => null);
@@ -1212,17 +1240,15 @@ export async function handleCustomerChat(c: Collections, customerId: string, bod
           (risky
             ? 'Há risco de disparos/limitações em picos. Eu recomendaria manter uma margem de segurança.'
             : 'Parece viável com margem de segurança, mas confirma em 2–4 semanas de uso real.');
-        const assistantMsgId = crypto.randomUUID();
-        await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
-        return { status: 200, body: { conversationId, reply, actions: [{ kind: 'button', id: 'power', label: 'Analisar potência', message: 'Potência contratada' }] } };
+        const finalReply = await persistAssistantMessage(c, customerId, conversationId, reply);
+        return { status: 200, body: { conversationId, reply: finalReply, actions: [{ kind: 'button', id: 'power', label: 'Analisar potência', message: 'Potência contratada' }] } };
       }
     }
 
     const reply =
       'Diz-me o cenário: por exemplo "E se eu mudar para bi-horário?", "E se eu baixar para 4.6 kVA?" ou "E se eu deslocar lavagens para a noite?".';
-    const assistantMsgId = crypto.randomUUID();
-    await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
-    return { status: 200, body: { conversationId, reply } };
+    const finalReply = await persistAssistantMessage(c, customerId, conversationId, reply);
+    return { status: 200, body: { conversationId, reply: finalReply } };
   }
 
   const [last24h, last7d, monthToDate, topAppliances, efficiency, power] = await Promise.all([
@@ -1234,28 +1260,45 @@ export async function handleCustomerChat(c: Collections, customerId: string, bod
     end ? getPowerSuggestionQuick(c, customerId, end, 30).catch(() => null) : Promise.resolve(null)
   ]);
 
-  const { reply, cards, actions } = buildFallbackReply(parsed.data.message, intent, customer, prevState, prefs, {
-    last24hKwh: last24h?.kwh,
-    last7dKwh: last7d?.kwh,
-    monthToDateKwh: monthToDate?.kwh,
-    appliancesWindowDays,
-    topLimit,
-    followUpKind,
-    topAppliances
-    ,
-    efficiency: efficiency ?? undefined,
-    power: power ?? undefined
+  const generated = await llmGenerateJson<z.infer<typeof LlmChatReplySchema>>({
+    system:
+      'És o assistente Kynex para energia residencial. Responde em português (Portugal), com foco em utilidade e clareza.\n' +
+      '- Usa APENAS os dados fornecidos; se faltarem dados, faz 1 pergunta curta de clarificação.\n' +
+      '- Nunca digas que és uma IA, nem menciones modelos.\n' +
+      '- Podes devolver cards e actions para o UI quando fizer sentido, mas mantém tudo simples.\n' +
+      '- Se sugerires um plano, usa um botão com message "__ACTION:PLAN_7D__".\n' +
+      'Formato: {"reply":"...","cards":[...],"actions":[...]} (cards/actions opcionais).',
+    user: {
+      message: parsed.data.message,
+      intent,
+      prefs,
+      state: prevState ?? null,
+      context: {
+        now: end ? end.toISOString() : null,
+        last24hKwh: last24h?.kwh ?? null,
+        last7dKwh: last7d?.kwh ?? null,
+        monthToDateKwh: monthToDate?.kwh ?? null,
+        appliancesWindowDays,
+        topLimit,
+        followUpKind,
+        topAppliances,
+        efficiency: efficiency ?? null,
+        power: power ?? null
+      }
+    },
+    schema: LlmChatReplySchema,
+    mock: () => ({ reply: 'Posso ajudar — diz-me se queres ver consumo, top equipamentos ou dicas de poupança.', cards: [], actions: [] })
   });
 
-  const assistantMsgId = crypto.randomUUID();
-  await c.chatMessages.insertOne({
-    id: assistantMsgId,
-    customer_id: customerId,
-    conversation_id: conversationId,
-    role: 'assistant',
-    content: reply,
-    created_at: new Date()
-  });
+  if (!generated) {
+    return { status: 503, body: { message: 'LLM indisponível' } };
+  }
+
+  const reply = generated.reply;
+  const cards = generated.cards as ChatCard[] | undefined;
+  const actions = generated.actions as ChatAction[] | undefined;
+
+  const finalReply = await persistAssistantMessage(c, customerId, conversationId, reply);
 
   const nextState: ConversationState = {
     lastIntent: intent,
@@ -1294,7 +1337,7 @@ export async function handleCustomerChat(c: Collections, customerId: string, bod
     status: 200,
     body: {
       conversationId,
-      reply,
+      reply: finalReply,
       cards,
       actions: actions
         ? [

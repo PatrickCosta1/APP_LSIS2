@@ -2,14 +2,19 @@ node_modules/
 dist/
 build/
 coverage/
-.vscode/
+.vscode/*
+!.vscode/tasks.json
 .env
 .env.*
+!.env.example
 .DS_Store
 npm-debug.log*
 pnpm-lock.yaml
 yarn.lock
 *.log
+
+# TypeScript incremental build artifacts
+*.tsbuildinfo
 
 # SQLite
 app.db

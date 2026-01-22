@@ -1,0 +1,235 @@
+.sec-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sec-alert {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  background: rgba(21, 23, 29, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 16px 26px rgba(0, 0, 0, 0.26);
+  backdrop-filter: blur(10px);
+}
+
+.sec-alert-left {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sec-alert-title {
+  font-weight: 900;
+  font-size: 13px;
+  line-height: 1.1;
+}
+
+.sec-alert-sub {
+  margin-top: 2px;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+}
+
+.sec-card {
+  background: rgba(21, 23, 29, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 18px;
+  padding: 12px;
+  box-shadow: 0 18px 28px rgba(0, 0, 0, 0.30);
+  backdrop-filter: blur(10px);
+}
+
+.sec-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.sec-card-title {
+  font-weight: 900;
+  font-size: 16px;
+}
+
+.sec-card-sub {
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.sec-buy {
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.92);
+  border-radius: 999px;
+  padding: 7px 10px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.sec-devices {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.sec-device {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 14px;
+  padding: 10px;
+  min-height: 72px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.sec-device-name {
+  font-weight: 800;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.92);
+  line-height: 1.15;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  line-clamp: 2;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  word-break: break-word;
+}
+
+.sec-device-state {
+  margin-top: 10px;
+  font-weight: 900;
+  font-size: 11px;
+  opacity: 0.88;
+}
+
+.sec-device-state.off {
+  opacity: 0.6;
+}
+
+.sec-empty {
+  grid-column: 1 / -1;
+  color: rgba(255, 255, 255, 0.70);
+  font-size: 12px;
+  padding: 6px 2px;
+}
+
+.sec-empty-title {
+  font-weight: 900;
+  font-size: 16px;
+}
+
+.sec-empty-sub {
+  margin-top: 4px;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+}
+
+.sec-cta {
+  margin-top: 10px;
+  border: none;
+  border-radius: 14px;
+  padding: 10px 12px;
+  font-weight: 900;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.sec-cta.ghost {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.sec-add {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sec-input {
+  width: 100%;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(0, 0, 0, 0.25);
+  padding: 10px 12px;
+  color: rgba(255, 255, 255, 0.92);
+  outline: none;
+}
+
+.sec-add-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.sec-add-actions .sec-cta {
+  flex: 1;
+}
+
+.sec-person-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.sec-person-name {
+  font-weight: 900;
+  font-size: 18px;
+}
+
+.sec-person-status {
+  margin-top: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: rgba(255, 255, 255, 0.78);
+  font-weight: 800;
+}
+
+.sec-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: rgba(143, 227, 143, 0.95);
+}
+
+.sec-dot.atencao {
+  background: rgba(255, 211, 77, 0.95);
+}
+
+.sec-dot.risco {
+  background: rgba(255, 107, 107, 0.95);
+}
+
+.sec-person-metrics {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.sec-person-metric-k {
+  font-weight: 900;
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+.sec-person-metric-v {
+  font-size: 12px;
+  opacity: 0.9;
+}

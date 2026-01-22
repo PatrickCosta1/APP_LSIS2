@@ -12,6 +12,13 @@ Monorepo académico com frontend React + TypeScript (Vite) e backend Express + T
 	- `MONGODB_URI` (obrigatória)
 	- `MONGODB_DB` (opcional)
 	- (Produção) garantir que a variável está definida no serviço (ex.: Render)
+- Configurar LLM/OpenRouter (opcional):
+	- Por defeito, o LLM está **desligado** (`LLM_MODE=off`).
+	- Para usar o modelo do OpenRouter para reescrita de texto (chat + insights):
+		- `LLM_MODE=rewrite`
+		- `OPENROUTER_API_KEY` (obrigatória)
+		- `OPENROUTER_MODEL` (default: `tngtech/deepseek-r1t2-chimera:free`)
+		- `OPENROUTER_TIMEOUT_MS` (default: `7000`)
 - Configurar Frontend (produção):
 	- `VITE_API_BASE` (URL do backend; ex.: Render). Sem isto, o frontend pode tentar `localhost`.
 - (Opcional) Treinar IA:
@@ -21,6 +28,12 @@ Monorepo académico com frontend React + TypeScript (Vite) e backend Express + T
 	- Ajuste com `KYNEX_SIM_TICK_MS=5000` (mais rápido) / `KYNEX_SIM_TICK_MS=30000` (mais lento)
 - Desenvolver frontend: `npm run dev:frontend`
 - Abrir a app (Vite imprime o URL) e completar o Onboarding (é a página inicial quando não existe perfil)
+
+## Launch/Debug (VS Code)
+- Use as tasks do workspace:
+	- `Backend: Dev` (sobe em `http://localhost:4100`)
+	- `Frontend: Dev` (define `VITE_API_BASE=http://localhost:4100`)
+- Se a porta `5173` estiver ocupada, o Vite escolhe outra e imprime o URL (ex.: `5174`).
 
 ## Deploy do frontend (evitar ecrã branco)
 - O frontend tem de ser publicado a partir do build do Vite (pasta `apps/frontend/dist`).
@@ -79,3 +92,4 @@ Monorepo académico com frontend React + TypeScript (Vite) e backend Express + T
 - Usar `npm install` na raiz para instalar dependências de todos os pacotes.
 - Variáveis de ambiente sensíveis ficam fora do repositório (.env).
 - Em dev, se a porta 4000 estiver ocupada, pode iniciar o backend com `PORT=4100`.
+

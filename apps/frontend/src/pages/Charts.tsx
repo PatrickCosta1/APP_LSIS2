@@ -43,6 +43,16 @@ type HourlyEfficiencyResponse = {
   forecastNext24hKwhByHourUtc: number[] | null;
 };
 
+type ElectricalHealthResponse = {
+  customerId: string;
+  lastUpdated: string;
+  status: 'ok' | 'atencao' | 'risco';
+  healthPct: number;
+  contractedPowerKva: number;
+  powerInUseKva: number;
+  warning: string | null;
+};
+
 type ContractAnalysisResponse = {
   customerId: string;
   lastUpdated: string;
@@ -157,13 +167,12 @@ const navItems = [
     ),
   },
   {
-    key: 'profile',
-    label: 'Perfil',
-    href: '/dashboard',
+    key: 'security',
+    label: 'Segurança',
+    href: '/seguranca',
     icon: (
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <circle cx="12" cy="7" r="4" />
-        <path d="M5 21v-2a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v2" />
+        <path d="M12 2L5 6v6c0 5 3.5 9.5 7 10 3.5-0.5 7-5 7-10V6l-7-4z" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
     ),
   },
@@ -218,6 +227,7 @@ function Charts() {
   const [powerModalOpen, setPowerModalOpen] = useState(false);
 
   const [eff, setEff] = useState<HourlyEfficiencyResponse | null>(null);
+  const [elec, setElec] = useState<ElectricalHealthResponse | null>(null);
 
   const [contract, setContract] = useState<ContractAnalysisResponse | null>(null);
   const [offers, setOffers] = useState<MarketOffersResponse | null>(null);
@@ -334,6 +344,20 @@ function Charts() {
       }
     }
 
+    async function loadElectricalHealth() {
+      try {
+        const token = localStorage.getItem('kynex:authToken');
+        const res = await fetch(`${apiBase}/customers/${customerId}/analytics/electrical-health`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined
+        });
+        if (!res.ok) throw new Error('electrical');
+        const json = (await res.json()) as ElectricalHealthResponse;
+        if (!cancelled) setElec(json);
+      } catch {
+        if (!cancelled) setElec(null);
+      }
+    }
+
     async function loadContract() {
       try {
         const token = localStorage.getItem('kynex:authToken');
@@ -379,6 +403,7 @@ function Charts() {
     loadSeries();
     loadPower();
     loadHourlyEfficiency();
+    loadElectricalHealth();
     loadContract();
     loadOffers();
     loadInsights();
@@ -387,6 +412,7 @@ function Charts() {
       loadSeries();
       loadPower();
       loadHourlyEfficiency();
+      loadElectricalHealth();
       loadContract();
       loadOffers();
       loadInsights();
@@ -400,6 +426,14 @@ function Charts() {
   const effScore = typeof eff?.scorePct === 'number' ? eff.scorePct : null;
   const effNote = eff?.note ?? 'A calcular com base no seu histórico e no modelo.';
   const effSavings = typeof eff?.estimatedSavingsMonthEur === 'number' ? eff.estimatedSavingsMonthEur : null;
+
+  const elecPct = typeof elec?.healthPct === 'number' ? elec.healthPct : null;
+  const elecContracted = typeof elec?.contractedPowerKva === 'number' ? elec.contractedPowerKva : null;
+  const elecInUse = typeof elec?.powerInUseKva === 'number' ? elec.powerInUseKva : null;
+  const elecWarning = elec?.warning ?? null;
+
+  const elecStatus = elec?.status ?? null;
+  const elecStatusLabel = elecStatus === 'risco' ? 'Risco' : elecStatus === 'atencao' ? 'Atenção' : elecStatus === 'ok' ? 'Ok' : '—';
 
   const contractVazio = typeof contract?.current?.price_vazio_eur_per_kwh === 'number' ? contract.current.price_vazio_eur_per_kwh : null;
   const contractCheia = typeof contract?.current?.price_cheia_eur_per_kwh === 'number' ? contract.current.price_cheia_eur_per_kwh : null;
@@ -1020,6 +1054,36 @@ function Charts() {
                   </button>
                 </div>
               </div>
+            </article>
+
+            <article
+              className={`ana-mini-card ana-health-card ${elecStatus ? `ana-health--${elecStatus}` : ''}`}
+              aria-label="Saúde Elétrica da Casa"
+            >
+              <div className="ana-mini-head">
+                <div className="ana-mini-title">Saúde Elétrica da Casa</div>
+                <div className={`ana-health-badge ${elecStatus ? `ana-health-badge--${elecStatus}` : ''}`}>{elecStatusLabel}</div>
+              </div>
+
+              <div className="ana-health-body">
+                <div className="ana-health-left" aria-label="Percentagem de saúde elétrica">
+                  <div className="ana-health-pct">{typeof elecPct === 'number' ? `${elecPct}%` : '—'}</div>
+                  <div className="ana-health-sub">Status atual</div>
+                </div>
+
+                <div className="ana-health-right" aria-label="Métricas de potência">
+                  <div className="ana-health-metric">
+                    <div className="ana-health-metric-label">Potência Contratada</div>
+                    <div className="ana-health-metric-val">{typeof elecContracted === 'number' ? `${elecContracted.toFixed(1)} kVA` : '—'}</div>
+                  </div>
+                  <div className="ana-health-metric">
+                    <div className="ana-health-metric-label">Potência em Uso</div>
+                    <div className="ana-health-metric-val">{typeof elecInUse === 'number' ? `${elecInUse.toFixed(1)} kVA` : '—'}</div>
+                  </div>
+                </div>
+              </div>
+
+              {elecWarning ? <div className="ana-health-warning">{elecWarning}</div> : null}
             </article>
 
             <article className="ana-mini-card" aria-label="Eficiência Horária">

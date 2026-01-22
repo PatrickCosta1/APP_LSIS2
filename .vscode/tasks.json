@@ -1,0 +1,163 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "AI: Treinar modelo",
+			"type": "shell",
+			"command": "py",
+			"args": [
+				"-3",
+				"apps/backend/ai_train.py",
+				"--days",
+				"14",
+				"--lambda",
+				"2.0"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Backend: Dev",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"--workspace",
+				"@kynex/backend",
+				"run",
+				"dev"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}",
+				"env": {
+					"PORT": "4100"
+				}
+			},
+			"isBackground": true,
+			"problemMatcher": []
+		},
+		{
+			"label": "Frontend: Dev",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"--workspace",
+				"@kynex/frontend",
+				"run",
+				"dev"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}",
+				"env": {
+					"VITE_API_BASE": "http://localhost:4100"
+				}
+			},
+			"isBackground": true,
+			"problemMatcher": []
+		},
+		{
+			"label": "Backend: Build",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"--workspace",
+				"@kynex/backend",
+				"run",
+				"build"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Frontend: Build",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"--workspace",
+				"@kynex/frontend",
+				"run",
+				"build"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Backend: Test",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"--workspace",
+				"@kynex/backend",
+				"run",
+				"test"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Frontend: Test",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"--workspace",
+				"@kynex/frontend",
+				"run",
+				"test"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Monorepo: Build",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"run",
+				"build"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Monorepo: Test",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"test"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Dev: Backend",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"run",
+				"dev:backend"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}",
+				"env": {
+					"PORT": "4100"
+				}
+			},
+			"isBackground": true,
+			"problemMatcher": [],
+			"group": "build"
+		}
+	]
+}

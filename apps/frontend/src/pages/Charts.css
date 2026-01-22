@@ -715,6 +715,112 @@
   align-items: stretch;
 }
 
+/* Card Saúde Elétrica */
+.ana-health-card .ana-mini-head {
+  margin-bottom: 8px;
+}
+
+.ana-health-badge {
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.90);
+}
+
+.ana-health-badge--ok {
+  background: rgba(77, 225, 193, 0.16);
+  border-color: rgba(77, 225, 193, 0.28);
+}
+
+.ana-health-badge--atencao {
+  background: rgba(255, 214, 0, 0.18);
+  border-color: rgba(255, 214, 0, 0.32);
+}
+
+.ana-health-badge--risco {
+  background: rgba(255, 92, 92, 0.16);
+  border-color: rgba(255, 92, 92, 0.28);
+}
+
+.ana-health-body {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+}
+
+.ana-health-left {
+  width: 92px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  padding: 10px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 6px;
+}
+
+.ana-health-pct {
+  font-size: 26px;
+  font-weight: 900;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.ana-health-sub {
+  font-size: 10px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.ana-health-right {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.ana-health-metric {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  padding: 10px 10px;
+}
+
+.ana-health-metric-label {
+  font-size: 11px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.72);
+  margin-bottom: 4px;
+}
+
+.ana-health-metric-val {
+  font-size: 14px;
+  font-weight: 900;
+  color: rgba(255, 255, 255, 0.94);
+}
+
+.ana-health-warning {
+  margin-top: 10px;
+  font-size: 12px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.90);
+  background: rgba(255, 92, 92, 0.10);
+  border: 1px solid rgba(255, 92, 92, 0.20);
+  border-radius: 14px;
+  padding: 10px 10px;
+  line-height: 1.25;
+}
+
 /* Card Potência */
 .ana-power-meter {
   width: 68px;

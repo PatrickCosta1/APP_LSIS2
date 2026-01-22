@@ -9,6 +9,7 @@ import { clampSuggestedPowerKva, loadPowerModel, makePowerFeatures, predictRidge
 import { getAiRetrainStatus, runAiRetrainOnce } from './aiTrainer';
 import { getCustomerChatHistory, handleCustomerChat, type ChatAction } from './chat';
 import { hashPassword, hashToken, normalizeEmail, newToken, validatePassword, verifyPassword } from './auth';
+import { llmGenerateJson, llmGenerateText } from './llm';
 
 const app = express();
 
@@ -128,6 +129,21 @@ function round1(value: number) {
 function clamp01(v: number) {
   if (!Number.isFinite(v)) return 0;
   return Math.max(0, Math.min(1, v));
+}
+
+function median(values: number[]) {
+  const v = values.filter((x) => Number.isFinite(x)).slice().sort((a, b) => a - b);
+  if (!v.length) return 0;
+  const mid = Math.floor(v.length / 2);
+  return v.length % 2 ? v[mid] : (v[mid - 1] + v[mid]) / 2;
+}
+
+function stddev(values: number[]) {
+  const v = values.filter((x) => Number.isFinite(x));
+  if (v.length < 2) return 0;
+  const mean = v.reduce((a, b) => a + b, 0) / v.length;
+  const variance = v.reduce((acc, x) => acc + (x - mean) ** 2, 0) / (v.length - 1);
+  return Math.sqrt(Math.max(0, variance));
 }
 
 app.get('/health', (_req, res) => {
@@ -1147,6 +1163,71 @@ app.get('/customers/:customerId/analytics/hourly-efficiency', async (req, res) =
   });
 });
 
+app.get('/customers/:customerId/analytics/electrical-health', async (req, res) => {
+  const { customerId } = req.params;
+  const c = await collections();
+
+  const customer = await c.customers.findOne(
+    { id: customerId },
+    { projection: { _id: 0, id: 1, contracted_power_kva: 1, tariff: 1 } }
+  );
+  if (!customer) return res.status(404).json({ message: 'Cliente não encontrado' });
+
+  const latestRow = await c.customerTelemetry15m
+    .find({ customer_id: customerId }, { projection: { _id: 0, ts: 1, watts: 1, temp_c: 1 } })
+    .sort({ ts: -1 })
+    .limit(1)
+    .toArray();
+  const latest = latestRow[0];
+  if (!latest) return res.status(404).json({ message: 'Sem telemetria para este cliente' });
+
+  const end = new Date(latest.ts);
+  const since = new Date(end.getTime() - 24 * 60 * 60 * 1000);
+  const rows = await c.customerTelemetry15m
+    .find({ customer_id: customerId, ts: { $gte: since, $lte: end } }, { projection: { _id: 0, watts: 1 } })
+    .toArray();
+
+  const contractedKva = Number(customer.contracted_power_kva ?? 0);
+  const contractedWatts = Math.max(1, contractedKva * 1000);
+  const wattsNow = Number(latest.watts ?? 0);
+  const powerInUseKva = wattsNow / 1000;
+
+  const wattsSeries = rows.map((r) => Number(r.watts ?? 0)).filter((w) => Number.isFinite(w));
+  const peakWatts = wattsSeries.length ? Math.max(...wattsSeries) : wattsNow;
+  const avgWatts = wattsSeries.length ? wattsSeries.reduce((a, b) => a + b, 0) / wattsSeries.length : wattsNow;
+  const sdWatts = stddev(wattsSeries);
+
+  const nearLimitCount = wattsSeries.filter((w) => w >= 0.92 * contractedWatts).length;
+  const peakRatio = peakWatts / contractedWatts;
+
+  const headroomScore = clamp01(1 - peakRatio) * 70;
+  const volatilityRatio = avgWatts > 0 ? sdWatts / avgWatts : 0;
+  const volatilityPenalty = clamp01(volatilityRatio / 1.2) * 18;
+  const nearLimitPenalty = Math.min(25, nearLimitCount * 3);
+  const base = 30;
+  const scoreRaw = base + headroomScore - volatilityPenalty - nearLimitPenalty;
+  const healthPct = Math.round(Math.max(1, Math.min(99, scoreRaw)));
+
+  const status = peakRatio >= 0.98 || nearLimitCount >= 3 ? 'risco' : peakRatio >= 0.9 || nearLimitCount >= 1 ? 'atencao' : 'ok';
+
+  const warning =
+    status === 'risco'
+      ? 'Evite ligar equipamentos pesados ao mesmo tempo.'
+      : status === 'atencao'
+        ? 'Há momentos em que fica perto do limite. Distribua os consumos.'
+        : null;
+
+  return res.json({
+    customerId,
+    lastUpdated: end.toISOString(),
+    status,
+    healthPct,
+    contractedPowerKva: Number(contractedKva.toFixed(1)),
+    powerInUseKva: Number(powerInUseKva.toFixed(1)),
+    warning
+  });
+});
+
 type TariffType = 'Simples' | 'Bi-horário' | 'Tri-horário' | string;
 
 const isBiTariff = (tariff: TariffType) => String(tariff ?? '').toLowerCase().includes('bi');
@@ -1518,26 +1599,41 @@ app.get('/customers/:customerId/appliances/:applianceId/weekly', async (req, res
   const dominantInOffpeak = offpeakHoursUtc.has(dominantHour);
   const dominantInPeak = peakHoursUtc.has(dominantHour);
 
-  let tip = 'Use o modo eco e evite deixar ligado sem necessidade.';
+  const tip = await llmGenerateText({
+    system:
+      'És um assistente de poupança de energia. Cria UMA dica curta (máx. 160 caracteres), concreta e acionável, sobre como reduzir consumo deste equipamento.\n' +
+      '- Não uses números, percentagens, kWh, €, nem linguagem de relatório.\n' +
+      '- Baseia-te apenas nos sinais fornecidos (tarifa, flexibilidade, padrão por horas, stand-by e clima).\n' +
+      '- Português (Portugal).',
+    user: {
+      appliance: {
+        name: String(appliance.name ?? ''),
+        category: String((appliance as any).category ?? ''),
+        standbyWatts,
+        isFlexible,
+        nameHints: {
+          hasAc: nameLower.includes('ar condicionado'),
+          hasWaterHeat: nameLower.includes('água quente') || nameLower.includes('termo'),
+          hasFridge: nameLower.includes('frigor'),
+          hasLights: nameLower.includes('luz')
+        }
+      },
+      tariff: String((customer as any).tariff ?? ''),
+      isTou,
+      usage: {
+        dominantHourUtc: dominantHour,
+        dominantInOffpeak,
+        dominantInPeak,
+        offPct,
+        peakPct,
+        corrHotCold
+      }
+    },
+    maxChars: 160,
+    mock: () => 'Evite deixar em stand-by quando não estiver a usar e, se possível, programe o uso fora do pico.'
+  });
 
-  // stand-by personalizado
-  if (standbyWatts != null && standbyWatts >= 6 && thisTotalKwh / Math.max(1, windowDays) < 0.35) {
-    tip = 'Desligue da tomada quando não estiver a usar (o stand-by está a pesar no seu caso).';
-  } else if (isTou && isFlexible && !dominantInOffpeak) {
-    tip = 'Agende este equipamento para o vazio (à noite) e evite o fim da tarde para pagar menos.';
-  } else if (isTou && dominantInPeak) {
-    tip = 'Evite usar no pico do fim da tarde; se der, adie para vazio ou reduza a intensidade.';
-  } else if (nameLower.includes('ar condicionado')) {
-    tip = corrHotCold > 0.05 ? 'Em dias mais quentes, feche janelas/portas e use 24–25°C para manter conforto gastando menos.' : 'Use 24–25°C e mantenha filtros limpos; evita picos sem perder conforto.';
-  } else if (nameLower.includes('água quente') || nameLower.includes('termo')) {
-    tip = isTou ? 'Concentre o aquecimento de água no vazio e evite reforços no fim da tarde.' : 'Concentre o aquecimento de água num período curto e evite deixar a resistência a ligar várias vezes ao dia.';
-  } else if (nameLower.includes('frigor')) {
-    tip = 'Evite abrir portas muitas vezes e confirme a vedação; isso reduz o consumo sem mudar hábitos.';
-  } else if (nameLower.includes('luz')) {
-    tip = 'Desligue divisões vazias e use LEDs; é a ação mais rápida para reduzir o seu consumo.';
-  } else if (isTou && dominantInOffpeak && offPct >= 0.55) {
-    tip = 'Boa prática: você já usa mais no vazio; mantenha tarefas flexíveis nesse período.';
-  }
+  if (!tip) return res.status(503).json({ message: 'LLM indisponível' });
 
   return res.json({
     customerId,
@@ -1673,47 +1769,104 @@ app.get('/customers/:customerId/assistant/notifications', async (req, res) => {
   const hh = Number((customer as any).household_size ?? 2);
   const standbyThreshold = 140 + Math.max(0, Math.min(5, hh)) * 35;
 
-  const notifications: Array<{ id: string; type: string; severity: 'info' | 'warning' | 'critical'; title: string; message: string; actions?: ChatAction[] }> = [];
+  const candidates: Array<{ type: string; severity: 'info' | 'warning' | 'critical'; actions?: ChatAction[]; data: any }> = [];
 
   if (deltaPct > 0.18) {
-    notifications.push({
-      id: `${customerId}:spike_24h`,
+    candidates.push({
       type: 'spike_24h',
       severity: 'warning',
-      title: 'Aumento nas últimas 24h',
-      message: `Consumo 24h: ~${kwh24.toFixed(2)} kWh (≈ ${(deltaPct * 100).toFixed(0)}% acima do dia anterior).`,
       actions: [
         { kind: 'button', id: 'n_top', label: 'Ver top equipamentos', message: 'Qual o equipamento que mais consome?' },
         { kind: 'button', id: 'n_plan', label: 'Plano 7 dias', message: '__ACTION:PLAN_7D__' }
-      ]
+      ],
+      data: { kwh24, kwhPrev24, deltaPct }
     });
   }
 
   if (contracted > 0 && peakKva > contracted * 0.9) {
-    notifications.push({
-      id: `${customerId}:near_power_limit`,
+    candidates.push({
       type: 'near_power_limit',
       severity: 'warning',
-      title: 'Pico perto do limite',
-      message: `Pico (7d): ~${peakKva.toFixed(2)} kVA vs contratada ${contracted.toFixed(2)} kVA.`,
       actions: [
         { kind: 'button', id: 'n_power', label: 'Analisar potência', message: 'Potência contratada' },
         { kind: 'button', id: 'n_plan', label: 'Plano 7 dias', message: '__ACTION:PLAN_7D__' }
-      ]
+      ],
+      data: { peakKva, contracted }
     });
   }
 
   if (nightAvgWatts > standbyThreshold) {
-    notifications.push({
-      id: `${customerId}:high_standby`,
+    candidates.push({
       type: 'high_standby',
       severity: 'info',
-      title: 'Stand-by noturno elevado',
-      message: `Média 02:00–06:00: ~${nightAvgWatts.toFixed(0)} W (acima do esperado).`,
       actions: [
         { kind: 'button', id: 'n_tips', label: 'Dicas para stand-by', message: 'Dá-me 3 dicas para poupar (stand-by).' },
         { kind: 'button', id: 'n_plan', label: 'Plano 7 dias', message: '__ACTION:PLAN_7D__' }
-      ]
+      ],
+      data: { nightAvgWatts, standbyThreshold, householdSize: hh }
+    });
+  }
+
+  if (!candidates.length) {
+    return res.json({ customerId, lastUpdated: end.toISOString(), notifications: [] });
+  }
+
+  const NotifSchema = z.object({
+    notifications: z
+      .array(
+        z.object({
+          type: z.string().min(1),
+          severity: z.enum(['info', 'warning', 'critical']),
+          title: z.string().min(1).max(60),
+          message: z.string().min(1).max(240)
+        })
+      )
+      .min(1)
+  });
+
+  const generated = await llmGenerateJson<z.infer<typeof NotifSchema>>({
+    system:
+      'És um assistente de energia residencial. Vais gerar notificações curtas e úteis em português (Portugal).\n' +
+      '- Usa APENAS os dados fornecidos. Não inventes números.\n' +
+      '- Mantém o campo severity exatamente como fornecido por tipo.\n' +
+      'Formato: {"notifications":[{"type":"...","severity":"info|warning|critical","title":"...","message":"..."}]}',
+    user: {
+      customer: {
+        id: customerId,
+        tariff: (customer as any).tariff ?? null,
+        contractedPowerKva: contracted || null
+      },
+      candidates
+    },
+    schema: NotifSchema,
+    mock: (u) => {
+      const cand = (u as any)?.candidates ?? [];
+      return {
+        notifications: cand.map((c: any) => ({
+          type: String(c.type),
+          severity: c.severity,
+          title: c.type === 'spike_24h' ? 'Consumo acima do normal' : c.type === 'near_power_limit' ? 'Pico perto do limite' : 'Stand-by noturno elevado',
+          message: 'Sugestão: reveja os consumos e escolha uma ação para investigar.'
+        }))
+      };
+    }
+  });
+
+  if (!generated) return res.status(503).json({ message: 'LLM indisponível' });
+
+  const byType = new Map(generated.notifications.map((n) => [n.type, n] as const));
+
+  const notifications: Array<{ id: string; type: string; severity: 'info' | 'warning' | 'critical'; title: string; message: string; actions?: ChatAction[] }> = [];
+  for (const cnd of candidates) {
+    const n = byType.get(cnd.type);
+    if (!n) continue;
+    notifications.push({
+      id: `${customerId}:${cnd.type}`,
+      type: cnd.type,
+      severity: cnd.severity,
+      title: n.title,
+      message: n.message,
+      actions: cnd.actions
     });
   }
 
@@ -1770,6 +1923,212 @@ const defaultRatesFromAvg = (avg: number, tariff: TariffType) => {
   }
   return { vazio: Number(price.toFixed(4)), cheia: Number(price.toFixed(4)) };
 };
+
+app.get('/customers/:customerId/security/kynex-node', async (req, res) => {
+  const { customerId } = req.params;
+  const c = await collections();
+
+  const latestTs = await getCustomerLatestTs(customerId);
+  if (!latestTs) return res.status(404).json({ message: 'Sem telemetria para este cliente' });
+
+  const end = new Date(latestTs);
+  const since48h = new Date(end.getTime() - 48 * 60 * 60 * 1000);
+  const since14d = new Date(end.getTime() - 14 * 24 * 60 * 60 * 1000);
+
+  const sessions48h = await c.customerApplianceUsage
+    .find(
+      { customer_id: customerId, start_ts: { $gte: since48h, $lte: end } },
+      { projection: { _id: 0, appliance_id: 1, start_ts: 1, end_ts: 1, energy_wh: 1 } }
+    )
+    .toArray();
+
+  const byAppliance = new Map<number, { wh: number; lastStart: Date; lastEnd: Date; lastEnergyWh: number }>();
+  for (const s of sessions48h as any[]) {
+    const applianceId = Number(s?.appliance_id);
+    if (!Number.isFinite(applianceId)) continue;
+    const wh = Number(s?.energy_wh ?? 0);
+    const startTs = new Date(s?.start_ts);
+    const endTs = new Date(s?.end_ts);
+
+    const prev = byAppliance.get(applianceId);
+    const next = {
+      wh: (prev?.wh ?? 0) + (Number.isFinite(wh) ? wh : 0),
+      lastStart: prev?.lastStart ?? startTs,
+      lastEnd: prev?.lastEnd ?? endTs,
+      lastEnergyWh: prev?.lastEnergyWh ?? wh
+    };
+
+    // mantém o último evento
+    if (!prev || endTs.getTime() > prev.lastEnd.getTime()) {
+      next.lastStart = startTs;
+      next.lastEnd = endTs;
+      next.lastEnergyWh = wh;
+    }
+
+    byAppliance.set(applianceId, next);
+  }
+
+  let topIds = Array.from(byAppliance.entries())
+    .sort((a, b) => (b[1]?.wh ?? 0) - (a[1]?.wh ?? 0))
+    .map(([id]) => id)
+    .slice(0, 3);
+
+  if (!topIds.length) {
+    // fallback: mostra alguns equipamentos "típicos" (sem depender de ter sessões já)
+    const fallback = await c.appliances
+      .find({ id: { $in: [2, 3, 7, 1, 6] } }, { projection: { _id: 0, id: 1 } })
+      .limit(3)
+      .toArray();
+    topIds = fallback.map((x: any) => Number(x.id)).filter((x) => Number.isFinite(x)).slice(0, 3);
+  }
+
+  const applianceRows = await c.appliances
+    .find({ id: { $in: topIds } }, { projection: { _id: 0, id: 1, name: 1, category: 1 } })
+    .toArray();
+
+  const nameById = new Map<number, { name: string; category: string }>();
+  for (const a of applianceRows as any[]) {
+    nameById.set(Number(a.id), { name: String(a.name ?? 'Dispositivo'), category: String(a.category ?? '') });
+  }
+
+  const devices = topIds.map((id) => {
+    const meta = nameById.get(id);
+    const last = byAppliance.get(id);
+    const lastEnd = last?.lastEnd ? new Date(last.lastEnd) : null;
+    const recentlyActive = lastEnd ? end.getTime() - lastEnd.getTime() <= 30 * 60 * 1000 : false;
+    return {
+      applianceId: id,
+      name: meta?.name ?? `Dispositivo ${id}`,
+      state: recentlyActive ? 'on' : 'off'
+    };
+  });
+
+  // --- IA (heurística): deteta anomalia por duração/energia vs histórico + consumo global recente ---
+  let alert: null | { title: string; message: string; severity: 'info' | 'warning' | 'critical' } = null;
+
+  // 1) anomalia por dispositivo (sessão mais recente muito acima do padrão)
+  let anomalyDevice: null | { id: number; name: string } = null;
+  for (const id of topIds) {
+    const last = byAppliance.get(id);
+    if (!last) continue;
+
+    const durationMin = Math.max(0, (last.lastEnd.getTime() - last.lastStart.getTime()) / (60 * 1000));
+    if (durationMin < 20) continue;
+
+    const hist = await c.customerApplianceUsage
+      .find(
+        { customer_id: customerId, appliance_id: id, start_ts: { $gte: since14d, $lte: end } },
+        { projection: { _id: 0, start_ts: 1, end_ts: 1, energy_wh: 1 } }
+      )
+      .limit(400)
+      .toArray();
+
+    const durations = (hist as any[])
+      .map((x) => (new Date(x.end_ts).getTime() - new Date(x.start_ts).getTime()) / (60 * 1000))
+      .filter((x) => Number.isFinite(x) && x > 0);
+    const energies = (hist as any[])
+      .map((x) => Number(x.energy_wh ?? 0))
+      .filter((x) => Number.isFinite(x) && x > 0);
+
+    const medDur = Math.max(1, median(durations));
+    const medWh = Math.max(1, median(energies));
+
+    const longRun = durationMin >= Math.max(60, medDur * 2.2);
+    const highWh = last.lastEnergyWh >= medWh * 2.0;
+
+    if (longRun || highWh) {
+      anomalyDevice = { id, name: nameById.get(id)?.name ?? `Dispositivo ${id}` };
+      break;
+    }
+  }
+
+  // 2) anomalia global (últimas 2h muito acima do padrão)
+  const since2h = new Date(end.getTime() - 2 * 60 * 60 * 1000);
+  const last2h = await c.customerTelemetry15m
+    .find({ customer_id: customerId, ts: { $gte: since2h, $lte: end } }, { projection: { _id: 0, watts: 1 } })
+    .toArray();
+  const last2hAvg = last2h.length ? last2h.reduce((acc: number, r: any) => acc + Number(r.watts ?? 0), 0) / last2h.length : 0;
+
+  const since7d = new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const hourNow = end.getUTCHours();
+  const weekRows = await c.customerTelemetry15m
+    .find({ customer_id: customerId, ts: { $gte: since7d, $lte: end } }, { projection: { _id: 0, ts: 1, watts: 1 } })
+    .limit(4000)
+    .toArray();
+
+  const sameHourWatts = (weekRows as any[])
+    .filter((r) => new Date(r.ts).getUTCHours() === hourNow)
+    .map((r) => Number(r.watts ?? 0))
+    .filter((w) => Number.isFinite(w));
+  const hourMedian = median(sameHourWatts);
+  const globalAnomaly = hourMedian > 0 ? last2hAvg >= hourMedian * 1.85 && last2hAvg >= 900 : false;
+
+  if (anomalyDevice || globalAnomaly) {
+    const target = anomalyDevice?.name;
+    alert = {
+      title: 'Consumo anómalo!',
+      message: target ? `Verifique o ${target}: pode ter ficado ligado.` : 'Há um pico fora do padrão. Verifique os equipamentos ligados.',
+      severity: 'warning'
+    };
+  }
+
+  return res.json({
+    customerId,
+    lastUpdated: end.toISOString(),
+    devices,
+    alert
+  });
+});
+
+app.get('/customers/:customerId/security/third-parties', async (req, res) => {
+  const { customerId } = req.params;
+  const c = await collections();
+
+  const latestTs = await getCustomerLatestTs(customerId);
+  const now = latestTs ? new Date(latestTs) : new Date();
+
+  const rows = await c.customerThirdParties
+    .find({ customer_id: customerId }, { projection: { _id: 0 } })
+    .sort({ created_at: -1 })
+    .limit(20)
+    .toArray();
+
+  const items = rows.map((r: any) => {
+    const alerts = Number(r.alerts_last_48h ?? 0);
+    const status = alerts >= 3 ? 'risco' : alerts >= 1 ? 'atencao' : 'normal';
+    return {
+      id: String(r.id),
+      name: String(r.name ?? 'Terceiro'),
+      status,
+      alertsLast48h: alerts,
+      lastActivity: (r.last_activity_at ? new Date(r.last_activity_at) : r.created_at ? new Date(r.created_at) : null)?.toISOString() ?? null
+    };
+  });
+
+  return res.json({ customerId, lastUpdated: now.toISOString(), items });
+});
+
+app.post('/customers/:customerId/security/third-parties', async (req, res) => {
+  const { customerId } = req.params;
+  const schema = z.object({ name: z.string().min(2).max(60) });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ errors: parsed.error.flatten().fieldErrors });
+
+  const c = await collections();
+  const now = new Date();
+  const id = `TP_${crypto.randomUUID()}`;
+
+  await c.customerThirdParties.insertOne({
+    id,
+    customer_id: customerId,
+    name: parsed.data.name,
+    created_at: now,
+    last_activity_at: now,
+    alerts_last_48h: 0
+  });
+
+  return res.status(201).json({ id });
+});
 
 app.get('/customers/:customerId/contract/analysis', async (req, res) => {
   const { customerId } = req.params;
@@ -2090,61 +2449,59 @@ app.get('/customers/:customerId/ai/insights', async (req, res) => {
   const currentTariff = String((customer as any).tariff ?? 'Simples');
   const shouldBi = offPct >= 0.42;
 
-  const tips: Array<{ id: string; icon: string; text: string }>
-    = [];
-
-  if (isBiTariff(currentTariff) || isTriTariff(currentTariff)) {
-    const pct = Math.round(offPct * 100);
-    tips.push({
-      id: 'tariff-usage',
-      icon: '✦',
-      text: pct >= 50
-        ? `Muito bom: ~${pct}% do seu consumo está em vazio. Continue a agendar tarefas flexíveis para a noite.`
-        : `Tem bi-horário mas só ~${pct}% do consumo está em vazio. Se mover alguns consumos 18h–21h para depois das 22h, ganha mais.`
-    });
-  } else {
-    if (shouldBi) {
-      tips.push({
-        id: 'tariff-switch',
-        icon: '✦',
-        text: `O seu consumo tem ~${Math.round(offPct * 100)}% em vazio. Um bi-horário pode fazer sentido para reduzir custo sem mexer muito nos hábitos.`
-      });
-    } else {
-      tips.push({
-        id: 'tariff-stable',
-        icon: '✦',
-        text: 'O seu consumo não está muito concentrado em vazio. Tarifa simples tende a ser mais previsível para si.'
-      });
-    }
-  }
-
-  if (nightAvgWatts >= 180) {
-    tips.push({
-      id: 'standby',
-      icon: '✦',
-      text: `Detetámos consumo noturno médio ~${Math.round(nightAvgWatts)}W (2h–5h). Verifique stand-by (TV/Box/PC) e carregadores sempre ligados.`
-    });
-  } else {
-    tips.push({
-      id: 'night-ok',
-      icon: '✦',
-      text: 'Boa notícia: o consumo noturno (2h–5h) está baixo — sinal de pouco stand-by.'
-    });
-  }
-
   const peakHour = hourly.avgByHourKwhUtc
     .map((v, h) => ({ h, v }))
     .sort((a, b) => b.v - a.v)[0]?.h;
-  if (typeof peakHour === 'number') {
-    tips.push({
-      id: 'peak-hour',
-      icon: '✦',
-      text: `A sua hora mais intensa costuma ser às ${String(peakHour).padStart(2, '0')}h. Se conseguir espalhar alguns consumos por 1–2 horas, reduz picos e stress no contador.`
-    });
-  }
 
-  // Mantém só as melhores (com “pé e cabeça” e sem redundância)
-  const out = tips.slice(0, limit);
+  const InsightsSchema = z.object({
+    tips: z
+      .array(
+        z.object({
+          id: z.string().min(1),
+          icon: z.string().min(1).max(2),
+          text: z.string().min(1).max(260)
+        })
+      )
+      .min(1)
+  });
+
+  const generated = await llmGenerateJson({
+    system:
+      'És um assistente de eficiência energética. Gera dicas curtas e úteis, em português (Portugal), com base em telemetria agregada.\n' +
+      '- Usa APENAS os números fornecidos; não inventes dados.\n' +
+      '- Evita redundância e frases muito longas.\n' +
+      `- Devolve até ${limit} dicas (idealmente ${limit}).\n` +
+      'Formato: {"tips":[{"id":"...","icon":"✦","text":"..."}] }',
+    user: {
+      customer: {
+        id: customerId,
+        name: (customer as any).name ?? null,
+        tariff: currentTariff,
+        avgPriceEurPerKwh: avgPrice
+      },
+      windowDays: 7,
+      limit,
+      signals: {
+        offpeakPct: offPct,
+        nightAvgWatts,
+        peakHourUtc: typeof peakHour === 'number' ? peakHour : null,
+        shouldBi
+      }
+    },
+    schema: InsightsSchema,
+    mock: () => ({
+      tips: Array.from({ length: limit }, (_, i) => ({
+        id: `tip_${i + 1}`,
+        icon: '✦',
+        text: 'Sugestão: programe consumos flexíveis fora do pico e reduza o stand-by à noite.'
+      }))
+    })
+  });
+
+  if (!generated) return res.status(503).json({ message: 'LLM indisponível' });
+
+  const out = generated.tips.slice(0, limit);
+
   return res.json({
     customerId,
     lastUpdated: end.toISOString(),

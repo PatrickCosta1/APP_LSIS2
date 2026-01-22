@@ -74,6 +74,8 @@ export type Collections = {
   customers: Collection<CustomerDoc>;
   customerTelemetry15m: Collection<CustomerTelemetry15mDoc>;
 
+  customerThirdParties: Collection<{ id: string; customer_id: string; name: string; created_at: Date; last_activity_at?: Date; alerts_last_48h?: number }>;
+
   users: Collection<UserDoc>;
   authSessions: Collection<AuthSessionDoc>;
 };
@@ -132,6 +134,7 @@ export function getCollections(db: Db = getDb()): Collections {
     contractProfile: db.collection('contract_profile'),
     customers: db.collection('customers'),
     customerTelemetry15m: db.collection('customer_telemetry_15m'),
+    customerThirdParties: db.collection('customer_third_parties'),
     users: db.collection('users'),
     authSessions: db.collection('auth_sessions')
   };
@@ -175,6 +178,8 @@ async function ensureIndexesAndSeed(db: Db) {
     c.customers.createIndex({ id: 1 }, { unique: true }),
     c.customers.createIndex({ created_at: -1 }),
     c.customerTelemetry15m.createIndex({ customer_id: 1, ts: -1 }),
+    c.customerThirdParties.createIndex({ customer_id: 1, created_at: -1 }),
+    c.customerThirdParties.createIndex({ id: 1 }, { unique: true }),
     c.users.createIndex({ id: 1 }, { unique: true }),
     c.users.createIndex({ email: 1 }, { unique: true }),
     c.users.createIndex({ customer_id: 1 }, { unique: true }),

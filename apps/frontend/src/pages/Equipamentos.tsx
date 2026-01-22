@@ -131,13 +131,12 @@ const navItems = [
     ),
   },
   {
-    key: 'profile',
-    label: 'Perfil',
-    href: '/dashboard',
+    key: 'security',
+    label: 'Segurança',
+    href: '/seguranca',
     icon: (
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <circle cx="12" cy="7" r="4" />
-        <path d="M5 21v-2a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v2" />
+        <path d="M12 2L5 6v6c0 5 3.5 9.5 7 10 3.5-0.5 7-5 7-10V6l-7-4z" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
     ),
   },

@@ -5,6 +5,7 @@ import { closeDb, getCollections, initDb } from './db';
 import { hashToken } from './auth';
 
 let mongod: MongoMemoryServer;
+const prevLlmMode = process.env.LLM_MODE;
 
 async function seedAuth(customerId: string) {
   const c = getCollections();
@@ -39,12 +40,15 @@ beforeAll(async () => {
   mongod = await MongoMemoryServer.create();
   process.env.MONGODB_URI = mongod.getUri();
   process.env.MONGODB_DB = 'kynex_test';
+  process.env.LLM_MODE = 'mock';
   await initDb();
 });
 
 afterAll(async () => {
   await closeDb();
   await mongod.stop();
+  if (typeof prevLlmMode === 'string') process.env.LLM_MODE = prevLlmMode;
+  else delete process.env.LLM_MODE;
 });
 
 describe('health', () => {
