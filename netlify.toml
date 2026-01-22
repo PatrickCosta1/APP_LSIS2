@@ -1,0 +1,12 @@
+[build]
+  command = "npm run build --workspace @kynex/frontend"
+  publish = "apps/frontend/dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# SPA fallback (Netlify também lê _redirects, isto é redundante mas útil)
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

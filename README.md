@@ -22,6 +22,13 @@ Monorepo académico com frontend React + TypeScript (Vite) e backend Express + T
 - Desenvolver frontend: `npm run dev:frontend`
 - Abrir a app (Vite imprime o URL) e completar o Onboarding (é a página inicial quando não existe perfil)
 
+## Deploy do frontend (evitar ecrã branco)
+- O frontend tem de ser publicado a partir do build do Vite (pasta `apps/frontend/dist`).
+- Se publicares a pasta `apps/frontend/` (source), o `index.html` referencia `/src/main.tsx` e o browser dá erro do tipo:
+	- “Failed to load module script… MIME type application/octet-stream”
+- Build local (gera `dist/`): `npm run build:frontend`
+- Em hosts tipo Netlify, o repositório já inclui `netlify.toml` na raiz com `publish = "apps/frontend/dist"`.
+
 ## Fluxo esperado
 - O Onboarding cria um cliente via `POST /ai/customers` e guarda o `customerId` em `localStorage` (`kynex:customerId`).
 - A Dashboard usa esse `customerId` para buscar dados reais:
