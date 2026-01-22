@@ -6,12 +6,6 @@ type ChatHistoryResponse = {
   messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string; createdAt: string }>;
 };
 
-type AssistantNotificationsResponse = {
-  customerId: string;
-  lastUpdated: string | null;
-  notifications: Array<{ id: string; type: string; severity: 'info' | 'warning' | 'critical'; title: string; message: string; createdAt: string; actions?: ChatAction[] }>;
-};
-
 type ChatReplyResponse = {
   conversationId: string;
   reply: string;
@@ -64,7 +58,6 @@ export default function AssistantChatModal({ open, onClose, apiBase: apiBaseProp
   const [draft, setDraft] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [didLoadNotifications, setDidLoadNotifications] = useState(false);
 
   const [planProgress, setPlanProgress] = useState<Record<string, Record<string, boolean>>>({});
 
@@ -125,7 +118,6 @@ export default function AssistantChatModal({ open, onClose, apiBase: apiBaseProp
   useEffect(() => {
     if (!open) return;
     setError(null);
-    setDidLoadNotifications(false);
 
     if (!apiBase || !customerId) {
       setMessages([
@@ -174,39 +166,6 @@ export default function AssistantChatModal({ open, onClose, apiBase: apiBaseProp
             }
           ]);
 
-        // notificações proativas (não bloqueia o histórico)
-        if (!didLoadNotifications) {
-          try {
-            const token = localStorage.getItem('kynex:authToken');
-            const nres = await fetch(`${apiBase}/customers/${customerId}/assistant/notifications`, {
-              headers: token ? { Authorization: `Bearer ${token}` } : undefined
-            });
-            if (nres.ok) {
-              const json = (await nres.json()) as AssistantNotificationsResponse;
-              const notifs = Array.isArray(json.notifications) ? json.notifications : [];
-              if (notifs.length) {
-                const text = notifs
-                  .slice(0, 3)
-                  .map((n) => `• ${n.title}: ${n.message}`)
-                  .join('\n');
-                const actions = notifs.flatMap((n) => (Array.isArray(n.actions) ? n.actions : [])).slice(0, 6);
-
-                setMessages((prev) => [
-                  ...prev,
-                  {
-                    role: 'assistant',
-                    content: `Oportunidades/alertas recentes:\n${text}`,
-                    actions: actions.length ? actions : undefined
-                  }
-                ]);
-              }
-            }
-          } catch {
-            // ignore
-          } finally {
-            setDidLoadNotifications(true);
-          }
-        }
       } catch {
         if (!cancelled) {
           setError('Não foi possível carregar o histórico.');

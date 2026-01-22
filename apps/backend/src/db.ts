@@ -74,6 +74,9 @@ export type Collections = {
   customers: Collection<CustomerDoc>;
   customerTelemetry15m: Collection<CustomerTelemetry15mDoc>;
 
+  eredesOpenDataLatest: Collection<{ dataset: string; fetched_at: Date; record: any }>;
+  eredesOpenDataCache: Collection<{ key: string; fetched_at: Date; data: any }>;
+
   customerThirdParties: Collection<{ id: string; customer_id: string; name: string; created_at: Date; last_activity_at?: Date; alerts_last_48h?: number }>;
 
   users: Collection<UserDoc>;
@@ -135,6 +138,9 @@ export function getCollections(db: Db = getDb()): Collections {
     customers: db.collection('customers'),
     customerTelemetry15m: db.collection('customer_telemetry_15m'),
     customerThirdParties: db.collection('customer_third_parties'),
+
+    eredesOpenDataLatest: db.collection('eredes_open_data_latest'),
+    eredesOpenDataCache: db.collection('eredes_open_data_cache'),
     users: db.collection('users'),
     authSessions: db.collection('auth_sessions')
   };
@@ -180,6 +186,11 @@ async function ensureIndexesAndSeed(db: Db) {
     c.customerTelemetry15m.createIndex({ customer_id: 1, ts: -1 }),
     c.customerThirdParties.createIndex({ customer_id: 1, created_at: -1 }),
     c.customerThirdParties.createIndex({ id: 1 }, { unique: true }),
+
+    c.eredesOpenDataLatest.createIndex({ dataset: 1 }, { unique: true }),
+    c.eredesOpenDataLatest.createIndex({ fetched_at: -1 }),
+    c.eredesOpenDataCache.createIndex({ key: 1 }, { unique: true }),
+    c.eredesOpenDataCache.createIndex({ fetched_at: -1 }),
     c.users.createIndex({ id: 1 }, { unique: true }),
     c.users.createIndex({ email: 1 }, { unique: true }),
     c.users.createIndex({ customer_id: 1 }, { unique: true }),

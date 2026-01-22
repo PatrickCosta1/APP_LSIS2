@@ -52,21 +52,21 @@ Monorepo académico com frontend React + TypeScript (Vite) e backend Express + T
 - Endpoints:
 	- `GET /customers/:id/chat?conversationId=...&limit=50` (histórico)
 	- `POST /customers/:id/chat` com `{ "message": "...", "conversationId"?: "..." }`
-	- `GET /customers/:id/assistant/notifications` (alertas/oportunidades proativas + botões)
-	- `GET /customers/:id/assistant/prefs` e `PUT /customers/:id/assistant/prefs` (personalização)
+
+### LLM (OpenRouter)
+- Para o chat responder via LLM, configure no `.env` (na raiz do monorepo):
+	- `OPENROUTER_API_KEY` (obrigatória)
+	- `LLM_MODE=full` (ou omitir; `off` desativa)
+	- (opcional) `OPENROUTER_MODEL=arcee-ai/trinity-mini:free`
+- Se `OPENROUTER_API_KEY` não estiver definida (ou o OpenRouter falhar), o backend devolve um fallback a indicar que o LLM está desativado/indisponível.
+
 - Perguntas suportadas (exemplos):
 	- "Quanto gastei nas últimas 24h?" / "na última semana" / "este mês"
 	- "Qual o equipamento que mais consome?"
 	- "Eficiência horária" / "melhores horas" / "horas de pico"
 	- "Potência contratada" / "kVA" / "estou perto do limite?"
 	- "Dá-me 3 dicas para poupar"
-- Modo explicação:
-	- Depois de uma sugestão, pergunta "porquê?" para obter a justificação.
-- Ações guiadas:
-	- "Plano 7 dias" / "aplicar plano" devolve um checklist no chat.
-- Feedback:
-	- As respostas incluem botões "Útil" e "Não ajudou" para o assistente ajustar o comportamento.
-- As respostas podem incluir `cards` estruturados (metric/tip/list), `actions` (botões/plano) e memória por conversa (ex.: "sim", "mais").
+
 - Coleções MongoDB:
 	- `chat_conversations`
 	- `chat_messages`
@@ -79,3 +79,8 @@ Monorepo académico com frontend React + TypeScript (Vite) e backend Express + T
 - Usar `npm install` na raiz para instalar dependências de todos os pacotes.
 - Variáveis de ambiente sensíveis ficam fora do repositório (.env).
 - Em dev, se a porta 4000 estiver ocupada, pode iniciar o backend com `PORT=4100`.
+
+## Open Data (E-REDES)
+- O backend faz cache periódico de alguns datasets nacionais (consumo/produção/injeção/previsão) para enriquecer insights.
+- Endpoint (por cliente): `GET /customers/:id/opendata/national`
+- Ajuste do intervalo do job (dev/test): `KYNEX_EREDES_TICK_MS` (por defeito ~6h).

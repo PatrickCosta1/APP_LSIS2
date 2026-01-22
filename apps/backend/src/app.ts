@@ -7,8 +7,11 @@ import { getCollections, initDb, type Collections } from './db';
 import { clampPredictionForCustomer, loadAiModel, makeFeatures, predictNextWatts, type CustomerProfile } from './ai';
 import { clampSuggestedPowerKva, loadPowerModel, makePowerFeatures, predictRidge } from './powerAi';
 import { getAiRetrainStatus, runAiRetrainOnce } from './aiTrainer';
-import { getCustomerChatHistory, handleCustomerChat, type ChatAction } from './chat';
+import { getCustomerChatHistory, handleCustomerChat } from './chat';
 import { hashPassword, hashToken, normalizeEmail, newToken, validatePassword, verifyPassword } from './auth';
+import { getEredesNationalContext } from './openDataContext';
+import { llmGenerateText, llmImproveText } from './llm/assistantText';
+import { buildAssistantBaseContext, buildAssistantEnvelope } from './assistantContext';
 
 const app = express();
 
@@ -45,6 +48,12 @@ app.use('/customers/:customerId', async (req, res, next) => {
   if (auth.session.customer_id !== req.params.customerId) return res.status(403).json({ message: 'Forbidden' });
   (req as any).auth = { userId: auth.session.user_id, customerId: auth.session.customer_id, sessionId: auth.session.id };
   return next();
+});
+
+app.get('/customers/:customerId/opendata/national', async (req, res) => {
+  const c = await collections();
+  const ctx = await getEredesNationalContext(c);
+  return res.json(ctx);
 });
 
 let collectionsPromise: Promise<Collections> | null = null;
@@ -1216,6 +1225,25 @@ app.get('/customers/:customerId/analytics/electrical-health', async (req, res) =
         ? 'Há momentos em que fica perto do limite. Distribua os consumos.'
         : null;
 
+  let warningOut = warning;
+  if (warningOut) {
+    const improved = await llmImproveText({
+      kind: 'electrical_health_warning',
+      customer: { id: customerId, name: null, tariff: (customer as any).tariff ?? null },
+      context: {
+        status,
+        healthPct,
+        contractedPowerKva: contractedKva,
+        powerInUseKva,
+        peakWatts,
+        nearLimitCount
+      },
+      draft: warningOut,
+      maxTokens: 120
+    });
+    if (improved) warningOut = improved;
+  }
+
   return res.json({
     customerId,
     lastUpdated: end.toISOString(),
@@ -1223,7 +1251,7 @@ app.get('/customers/:customerId/analytics/electrical-health', async (req, res) =
     healthPct,
     contractedPowerKva: Number(contractedKva.toFixed(1)),
     powerInUseKva: Number(powerInUseKva.toFixed(1)),
-    warning
+    warning: warningOut
   });
 });
 
@@ -1297,7 +1325,10 @@ app.get('/customers/:customerId/appliances/summary', async (req, res) => {
 
   const c = await collections();
 
-  const customer = await c.customers.findOne({ id: customerId }, { projection: { _id: 0, id: 1, price_eur_per_kwh: 1 } });
+  const customer = await c.customers.findOne(
+    { id: customerId },
+    { projection: { _id: 0, id: 1, name: 1, tariff: 1, contracted_power_kva: 1, utility: 1, price_eur_per_kwh: 1, fixed_daily_fee_eur: 1 } }
+  );
   if (!customer) return res.status(404).json({ message: 'Cliente não encontrado' });
 
   const latestTs = await getCustomerLatestTs(customerId);
@@ -1391,6 +1422,32 @@ app.get('/customers/:customerId/appliances/summary', async (req, res) => {
 
   const daysOut = month ? daysInUtcMonthFromIso(`${month}-01T00:00:00.000Z`) : windowDays;
 
+  // melhora o texto via LLM (se disponível) mas mantém fallback heurístico
+  const baseContext = await buildAssistantBaseContext(c, customer as any, {
+    end,
+    includeGrid: true,
+    includeEnergyWindows: true,
+    includeTopAppliances30d: false
+  });
+
+  const improvedSuggestion = await llmImproveText({
+    kind: 'appliances_summary_suggestion',
+    customer: baseContext.customer,
+    context: buildAssistantEnvelope({
+      base: baseContext,
+      extra: {
+        window: { month, days: daysOut },
+        totalCostEur: Number(totalCost.toFixed(2)),
+        top: top ? { id: top.id, name: top.name, costEur: top.costEur, sharePct: top.sharePct, status: top.status } : null,
+        itemsTop: items.slice(0, 5).map((x) => ({ id: x.id, name: x.name, costEur: x.costEur, sharePct: x.sharePct, status: x.status })),
+        estimatedSavingsMonthEur
+      }
+    }),
+    draft: suggestion,
+    maxTokens: 140
+  });
+  if (improvedSuggestion) suggestion = improvedSuggestion;
+
   return res.json({
     customerId,
     lastUpdated: end.toISOString(),
@@ -1408,20 +1465,17 @@ app.get('/customers/:customerId/appliances/:applianceId/weekly', async (req, res
   const days = Number((req.query.days as string | undefined) ?? '7');
   const windowDays = Number.isFinite(days) && days > 0 && days <= 31 ? Math.floor(days) : 7;
 
-  const applianceId = Number.parseInt(applianceIdRaw, 10);
-  if (!Number.isFinite(applianceId)) return res.status(400).json({ message: 'applianceId inválido' });
-
   const c = await collections();
 
-  const customer = await c.customers.findOne(
-    { id: customerId },
-    { projection: { _id: 0, id: 1, tariff: 1, price_eur_per_kwh: 1, contracted_power_kva: 1 } }
-  );
+  const customer = await c.customers.findOne({ id: customerId }, { projection: { _id: 0, id: 1, tariff: 1 } });
   if (!customer) return res.status(404).json({ message: 'Cliente não encontrado' });
+
+  const applianceId = Number(applianceIdRaw);
+  if (!Number.isFinite(applianceId)) return res.status(400).json({ message: 'applianceId inválido' });
 
   const appliance = await c.appliances.findOne(
     { id: applianceId },
-    { projection: { _id: 0, id: 1, name: 1, category: 1, efficiency_score: 1, standby_watts: 1 } }
+    { projection: { _id: 0, id: 1, name: 1, category: 1, standby_watts: 1 } }
   );
   if (!appliance) return res.status(404).json({ message: 'Equipamento não encontrado' });
 
@@ -1429,48 +1483,47 @@ app.get('/customers/:customerId/appliances/:applianceId/weekly', async (req, res
   if (!latestTs) return res.status(404).json({ message: 'Sem telemetria para este cliente' });
 
   const end = new Date(latestTs);
-  const endDayStart = new Date(`${toDayKeyUtc(end)}T00:00:00.000Z`);
-  const startDayStart = addUtcDays(endDayStart, -(windowDays - 1));
-  const start = startDayStart;
-  const toExclusive = addUtcDays(endDayStart, 1);
+  const endDay = startOfUtcDay(end);
+  const toExclusive = addUtcDays(endDay, 1);
+  const start = addUtcDays(toExclusive, -windowDays);
 
-  const totalsAgg = await c.customerApplianceUsage
+  const totalAgg = await c.customerApplianceUsage
     .aggregate([
       { $match: { customer_id: customerId, start_ts: { $gte: start, $lt: toExclusive } } },
-      { $group: { _id: null, cost_eur: { $sum: '$cost_eur' }, energy_wh: { $sum: '$energy_wh' } } }
+      { $group: { _id: null, totalCostEur: { $sum: '$cost_eur' } } }
     ])
     .toArray();
-  const totalCostEur = Number(totalsAgg?.[0]?.cost_eur ?? 0);
+  const totalCostEur = Number((totalAgg[0] as any)?.totalCostEur ?? 0);
 
-  const agg = await c.customerApplianceUsage
+  const dailyAgg = await c.customerApplianceUsage
     .aggregate([
       { $match: { customer_id: customerId, appliance_id: applianceId, start_ts: { $gte: start, $lt: toExclusive } } },
       {
         $group: {
           _id: { $dateToString: { format: '%Y-%m-%d', date: '$start_ts' } },
-          cost_eur: { $sum: '$cost_eur' },
-          energy_wh: { $sum: '$energy_wh' }
+          energyWh: { $sum: '$energy_wh' },
+          costEur: { $sum: '$cost_eur' }
         }
       }
     ])
     .toArray();
 
-  const byDay = new Map<string, { kwh: number; costEur: number }>();
-  for (const row of agg as any[]) {
+  const dailyByDay = new Map<string, { energyWh: number; costEur: number }>();
+  for (const row of dailyAgg as any[]) {
     const day = String(row?._id ?? '');
     if (!isValidYmd(day)) continue;
-    const kwh = Number(row?.energy_wh ?? 0) / 1000;
-    const costEur = Number(row?.cost_eur ?? 0);
-    byDay.set(day, { kwh, costEur });
+    dailyByDay.set(day, {
+      energyWh: Number(row?.energyWh ?? 0),
+      costEur: Number(row?.costEur ?? 0)
+    });
   }
 
   const daily = Array.from({ length: windowDays }, (_, i) => {
-    const d = addUtcDays(startDayStart, i);
-    const dayKey = toDayKeyUtc(d);
-    const v = byDay.get(dayKey) ?? { kwh: 0, costEur: 0 };
+    const day = toDayKeyUtc(addUtcDays(start, i));
+    const v = dailyByDay.get(day) ?? { energyWh: 0, costEur: 0 };
     return {
-      day: dayKey,
-      kwh: Number(v.kwh.toFixed(3)),
+      day,
+      kwh: Number((v.energyWh / 1000).toFixed(3)),
       costEur: Number(v.costEur.toFixed(2))
     };
   });
@@ -1619,6 +1672,40 @@ app.get('/customers/:customerId/appliances/:applianceId/weekly', async (req, res
     tip = 'Boa prática: você já usa mais no vazio; mantenha tarefas flexíveis nesse período.';
   }
 
+  // melhora a dica via LLM (se disponível), mantendo-a curta e sem números/relatórios
+  const baseContext = await buildAssistantBaseContext(c, customer as any, {
+    end,
+    includeGrid: true,
+    includeEnergyWindows: false,
+    includeTopAppliances30d: false
+  });
+
+  const improvedTip = await llmImproveText({
+    kind: 'appliance_weekly_tip',
+    customer: baseContext.customer,
+    context: buildAssistantEnvelope({
+      base: baseContext,
+      extra: {
+        appliance: { id: applianceId, name: appliance.name, category: (appliance as any).category ?? null, standbyWatts },
+        windowDays,
+        totals: {
+          totalKwh: Number(thisTotalKwh.toFixed(3)),
+          totalCostEur: Number(thisTotalCostEur.toFixed(2)),
+          sharePct: Number(sharePct.toFixed(1))
+        },
+        usage: {
+          dominantHourUtc: dominantHour,
+          offpeakPct: Number((offPct * 100).toFixed(0)),
+          peakPct: Number((peakPct * 100).toFixed(0))
+        },
+        daily: daily.map((d) => ({ day: d.day, kwh: d.kwh }))
+      }
+    }),
+    draft: tip,
+    maxTokens: 120
+  });
+  if (improvedTip) tip = improvedTip;
+
   return res.json({
     customerId,
     applianceId,
@@ -1656,192 +1743,6 @@ app.post('/customers/:customerId/chat', async (req, res) => {
   return res.status(out.status).json(out.body);
 });
 
-app.get('/customers/:customerId/assistant/prefs', async (req, res) => {
-  const { customerId } = req.params;
-  const c = await collections();
-
-  const customer = await c.customers.findOne({ id: customerId }, { projection: { _id: 0, id: 1 } });
-  if (!customer) return res.status(404).json({ message: 'Cliente não encontrado' });
-
-  const row = await c.assistantPrefs.findOne({ customer_id: customerId }, { projection: { _id: 0, customer_id: 1, style: 1, focus: 1, updated_at: 1 } });
-  return res.json(
-    row
-      ? { customerId, style: row.style ?? 'detailed', focus: row.focus ?? 'geral', updatedAt: row.updated_at?.toISOString?.() ?? null }
-      : { customerId, style: 'detailed', focus: 'geral', updatedAt: null }
-  );
-});
-
-app.put('/customers/:customerId/assistant/prefs', async (req, res) => {
-  const { customerId } = req.params;
-  const schema = z
-    .object({
-      style: z.enum(['short', 'detailed']).optional(),
-      focus: z.enum(['poupanca', 'equipamentos', 'potencia', 'geral']).optional()
-    })
-    .refine((v) => typeof v.style === 'string' || typeof v.focus === 'string', { message: 'Nada para atualizar' });
-
-  const parsed = schema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ errors: parsed.error.flatten().fieldErrors });
-
-  const c = await collections();
-  const customer = await c.customers.findOne({ id: customerId }, { projection: { _id: 0, id: 1 } });
-  if (!customer) return res.status(404).json({ message: 'Cliente não encontrado' });
-
-  const updated_at = new Date();
-  await c.assistantPrefs.updateOne(
-    { customer_id: customerId },
-    { $set: { customer_id: customerId, ...parsed.data, updated_at } },
-    { upsert: true }
-  );
-
-  return res.json({ ok: true });
-});
-
-app.get('/customers/:customerId/assistant/notifications', async (req, res) => {
-  const { customerId } = req.params;
-  const c = await collections();
-
-  const customer = await c.customers.findOne(
-    { id: customerId },
-    { projection: { _id: 0, id: 1, contracted_power_kva: 1, tariff: 1, price_eur_per_kwh: 1, household_size: 1 } }
-  );
-  if (!customer) return res.status(404).json({ message: 'Cliente não encontrado' });
-
-  const latest = await c.customerTelemetry15m
-    .find({ customer_id: customerId }, { projection: { _id: 0, ts: 1 } })
-    .sort({ ts: -1 })
-    .limit(1)
-    .toArray();
-  const end = latest[0]?.ts ? new Date(latest[0].ts) : null;
-  if (!end) return res.json({ customerId, lastUpdated: null, notifications: [] });
-
-  const sumWatts = async (from: Date, to: Date) => {
-    const agg = await c.customerTelemetry15m
-      .aggregate([
-        { $match: { customer_id: customerId, ts: { $gte: from, $lte: to } } },
-        { $group: { _id: null, sumWatts: { $sum: '$watts' } } }
-      ])
-      .toArray();
-    const s = Number((agg[0] as any)?.sumWatts ?? 0);
-    return (s * 0.25) / 1000;
-  };
-
-  const kwh24 = await sumWatts(new Date(end.getTime() - 24 * 60 * 60 * 1000), end);
-  const kwhPrev24 = await sumWatts(new Date(end.getTime() - 48 * 60 * 60 * 1000), new Date(end.getTime() - 24 * 60 * 60 * 1000));
-  const deltaPct = kwhPrev24 > 0.01 ? (kwh24 - kwhPrev24) / kwhPrev24 : 0;
-
-  const since7d = new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000);
-  const peakAgg = await c.customerTelemetry15m
-    .aggregate([
-      { $match: { customer_id: customerId, ts: { $gte: since7d, $lte: end } } },
-      { $group: { _id: null, peakWatts: { $max: '$watts' } } }
-    ])
-    .toArray();
-  const peakWatts = Number((peakAgg[0] as any)?.peakWatts ?? 0);
-  const peakKva = peakWatts / 1000;
-  const contracted = Number((customer as any).contracted_power_kva ?? 0);
-
-  const nightAgg = await c.customerTelemetry15m
-    .aggregate([
-      { $match: { customer_id: customerId, ts: { $gte: since7d, $lte: end } } },
-      { $project: { watts: 1, hour: { $hour: '$ts' } } },
-      { $match: { hour: { $in: [2, 3, 4, 5] } } },
-      { $group: { _id: null, avgWatts: { $avg: '$watts' } } }
-    ])
-    .toArray();
-  const nightAvgWatts = Number((nightAgg[0] as any)?.avgWatts ?? 0);
-  const hh = Number((customer as any).household_size ?? 2);
-  const standbyThreshold = 140 + Math.max(0, Math.min(5, hh)) * 35;
-
-  const notifications: Array<{ id: string; type: string; severity: 'info' | 'warning' | 'critical'; title: string; message: string; actions?: ChatAction[] }> = [];
-
-  if (deltaPct > 0.18) {
-    notifications.push({
-      id: `${customerId}:spike_24h`,
-      type: 'spike_24h',
-      severity: 'warning',
-      title: 'Aumento nas últimas 24h',
-      message: `Consumo 24h: ~${kwh24.toFixed(2)} kWh (≈ ${(deltaPct * 100).toFixed(0)}% acima do dia anterior).`,
-      actions: [
-        { kind: 'button', id: 'n_top', label: 'Ver top equipamentos', message: 'Qual o equipamento que mais consome?' },
-        { kind: 'button', id: 'n_plan', label: 'Plano 7 dias', message: '__ACTION:PLAN_7D__' }
-      ]
-    });
-  }
-
-  if (contracted > 0 && peakKva > contracted * 0.9) {
-    notifications.push({
-      id: `${customerId}:near_power_limit`,
-      type: 'near_power_limit',
-      severity: 'warning',
-      title: 'Pico perto do limite',
-      message: `Pico (7d): ~${peakKva.toFixed(2)} kVA vs contratada ${contracted.toFixed(2)} kVA.`,
-      actions: [
-        { kind: 'button', id: 'n_power', label: 'Analisar potência', message: 'Potência contratada' },
-        { kind: 'button', id: 'n_plan', label: 'Plano 7 dias', message: '__ACTION:PLAN_7D__' }
-      ]
-    });
-  }
-
-  if (nightAvgWatts > standbyThreshold) {
-    notifications.push({
-      id: `${customerId}:high_standby`,
-      type: 'high_standby',
-      severity: 'info',
-      title: 'Stand-by noturno elevado',
-      message: `Média 02:00–06:00: ~${nightAvgWatts.toFixed(0)} W (acima do esperado).`,
-      actions: [
-        { kind: 'button', id: 'n_tips', label: 'Dicas para stand-by', message: 'Dá-me 3 dicas para poupar (stand-by).' },
-        { kind: 'button', id: 'n_plan', label: 'Plano 7 dias', message: '__ACTION:PLAN_7D__' }
-      ]
-    });
-  }
-
-  const now = new Date();
-  await Promise.all(
-    notifications.map((n) =>
-      c.assistantNotifications.updateOne(
-        { id: n.id },
-        {
-          $set: {
-            id: n.id,
-            customer_id: customerId,
-            type: n.type,
-            severity: n.severity,
-            title: n.title,
-            message: n.message,
-            status: 'open',
-            created_at: now
-          }
-        },
-        { upsert: true }
-      )
-    )
-  );
-
-  const rows = await c.assistantNotifications
-    .find({ customer_id: customerId, status: 'open' }, { projection: { _id: 0 } })
-    .sort({ created_at: -1 })
-    .limit(10)
-    .toArray();
-
-  const merged = rows.map((r: any) => {
-    const extra = notifications.find((n) => n.id === r.id)?.actions;
-    return {
-      id: String(r.id),
-      type: String(r.type),
-      severity: r.severity as 'info' | 'warning' | 'critical',
-      title: String(r.title),
-      message: String(r.message),
-      status: String(r.status),
-      createdAt: (r.created_at ? new Date(r.created_at) : now).toISOString(),
-      actions: extra
-    };
-  });
-
-  return res.json({ customerId, lastUpdated: end.toISOString(), notifications: merged });
-});
-
 const defaultRatesFromAvg = (avg: number, tariff: TariffType) => {
   const price = Number.isFinite(avg) && avg > 0 ? avg : RATE_EUR_PER_KWH;
   if (isBiTariff(tariff) || isTriTariff(tariff)) {
@@ -1854,6 +1755,12 @@ const defaultRatesFromAvg = (avg: number, tariff: TariffType) => {
 app.get('/customers/:customerId/security/kynex-node', async (req, res) => {
   const { customerId } = req.params;
   const c = await collections();
+
+  const customer = await c.customers.findOne(
+    { id: customerId },
+    { projection: { _id: 0, id: 1, name: 1, tariff: 1, contracted_power_kva: 1, utility: 1, price_eur_per_kwh: 1, fixed_daily_fee_eur: 1 } }
+  );
+  if (!customer) return res.status(404).json({ message: 'Cliente não encontrado' });
 
   const latestTs = await getCustomerLatestTs(customerId);
   if (!latestTs) return res.status(404).json({ message: 'Sem telemetria para este cliente' });
@@ -1999,6 +1906,32 @@ app.get('/customers/:customerId/security/kynex-node', async (req, res) => {
     };
   }
 
+  if (alert) {
+    const baseContext = await buildAssistantBaseContext(c, customer as any, {
+      end,
+      includeGrid: true,
+      includeEnergyWindows: false,
+      includeTopAppliances30d: false
+    });
+
+    const improved = await llmImproveText({
+      kind: 'security_alert_message',
+      customer: baseContext.customer,
+      context: buildAssistantEnvelope({
+        base: baseContext,
+        extra: {
+          lastUpdated: end.toISOString(),
+          devices,
+          anomalyDevice,
+          globalAnomaly
+        }
+      }),
+      draft: alert.message,
+      maxTokens: 140
+    });
+    if (improved) alert.message = improved;
+  }
+
   return res.json({
     customerId,
     lastUpdated: end.toISOString(),
@@ -2140,6 +2073,31 @@ app.get('/customers/:customerId/contract/analysis', async (req, res) => {
           tariff: currentTariff,
           message: 'O contrato atual já está próximo do ótimo para o seu padrão de consumo.'
         };
+
+  const baseContext = await buildAssistantBaseContext(c, customer as any, {
+    end,
+    includeGrid: true,
+    includeEnergyWindows: false,
+    includeTopAppliances30d: false
+  });
+
+  const improvedTariffMessage = await llmImproveText({
+    kind: 'contract_tariff_suggestion_message',
+    customer: baseContext.customer,
+    context: buildAssistantEnvelope({
+      base: baseContext,
+      extra: {
+        forecastMonthKwh: Number(forecastMonthKwh.toFixed(1)),
+        offpeakPct: Number((hourly.offpeakPct * 100).toFixed(1)),
+        currentTariff,
+        suggestedTariff: recommendation.tariff,
+        deltaEurPerMonth: delta
+      }
+    }),
+    draft: recommendation.message,
+    maxTokens: 180
+  });
+  if (improvedTariffMessage) recommendation.message = improvedTariffMessage;
 
   return res.json({
     customerId,
@@ -2379,6 +2337,29 @@ app.get('/customers/:customerId/ai/insights', async (req, res) => {
   const tips: Array<{ id: string; icon: string; text: string }>
     = [];
 
+  const baseContext = await buildAssistantBaseContext(c, customer as any, {
+    end,
+    includeGrid: true,
+    includeEnergyWindows: false,
+    includeTopAppliances30d: false
+  });
+
+  // Contexto nacional (E-REDES) para tornar as dicas mais “factíveis”
+  const gridCtx = (baseContext as any).grid;
+  const renewPct = gridCtx?.injection?.renewablesSharePct;
+  const gridTs = gridCtx?.injection?.ts;
+  if (typeof renewPct === 'number' && Number.isFinite(renewPct)) {
+    const pct = Math.round(renewPct);
+    tips.push({
+      id: 'grid-context',
+      icon: '✦',
+      text:
+        pct >= 55
+          ? `Contexto da rede (E-REDES): a injeção na distribuição está “mais verde” (~${pct}% renovável na última leitura). Boa altura para tarefas flexíveis.`
+          : `Contexto da rede (E-REDES): a percentagem renovável na injeção está ~${pct}% na última leitura${gridTs ? ` (${new Date(gridTs).toLocaleString('pt-PT')})` : ''}. Se puder, evite concentrar consumos nos seus picos.`
+    });
+  }
+
   if (isBiTariff(currentTariff) || isTriTariff(currentTariff)) {
     const pct = Math.round(offPct * 100);
     tips.push({
@@ -2431,10 +2412,31 @@ app.get('/customers/:customerId/ai/insights', async (req, res) => {
 
   // Mantém só as melhores (com “pé e cabeça” e sem redundância)
   const out = tips.slice(0, limit);
+
+  const assistantText = await llmGenerateText({
+    kind: 'ai_insights_summary',
+    customer: baseContext.customer,
+    context: buildAssistantEnvelope({
+      base: baseContext,
+      extra: {
+        lastUpdated: end.toISOString(),
+        hourly,
+        nightAvgWatts: Math.round(nightAvgWatts),
+        renewablesSharePct: typeof renewPct === 'number' ? Math.round(renewPct) : null,
+        tips: out
+      }
+    }),
+    prompt:
+      'Cria um resumo curto (2–4 frases) com os 2–3 insights mais relevantes e uma próxima ação concreta. ' +
+      'Sem listas com bullets; pode usar "1)" apenas se ajudar. Não inventes números.',
+    maxTokens: 220
+  });
+
   return res.json({
     customerId,
     lastUpdated: end.toISOString(),
-    tips: out
+    tips: out,
+    assistantText: assistantText ?? null
   });
 });
 
@@ -2689,6 +2691,33 @@ app.get('/customers/:customerId/power/suggestion', async (req, res) => {
   if (status === 'ok') {
     message = `Potência sugerida ${suggestedKva.toFixed(1)}kVA (risco ~${riskExceedPct}%). Mantém bom equilíbrio entre custo e segurança.`;
   }
+
+  const baseContext = await buildAssistantBaseContext(c, customer as any, {
+    end,
+    includeGrid: true,
+    includeEnergyWindows: false,
+    includeTopAppliances30d: false
+  });
+
+  const improvedPowerMessage = await llmImproveText({
+    kind: 'power_suggestion_message',
+    customer: baseContext.customer,
+    context: buildAssistantEnvelope({
+      base: baseContext,
+      extra: {
+        status,
+        contractedKva: round1(contractedKva),
+        suggestedIdealKva: suggestedKva,
+        yearlyPeakKva,
+        usagePctOfContracted,
+        riskExceedPct,
+        savingsMonth
+      }
+    }),
+    draft: message,
+    maxTokens: 160
+  });
+  if (improvedPowerMessage) message = improvedPowerMessage;
 
   return res.json({
     customerId,
