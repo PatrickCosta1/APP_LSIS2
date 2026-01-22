@@ -1633,7 +1633,7 @@ app.get('/customers/:customerId/appliances/:applianceId/weekly', async (req, res
     mock: () => 'Evite deixar em stand-by quando não estiver a usar e, se possível, programe o uso fora do pico.'
   });
 
-  if (!tip) return res.status(503).json({ message: 'LLM indisponível' });
+  if (!tip) return res.status(503).json({ message: 'LLM indisponível ou não configurado (defina LLM_MODE=full e OPENROUTER_API_KEY)' });
 
   return res.json({
     customerId,
@@ -1852,7 +1852,7 @@ app.get('/customers/:customerId/assistant/notifications', async (req, res) => {
     }
   });
 
-  if (!generated) return res.status(503).json({ message: 'LLM indisponível' });
+  if (!generated) return res.status(503).json({ message: 'LLM indisponível ou não configurado (defina LLM_MODE=full e OPENROUTER_API_KEY)' });
 
   const byType = new Map(generated.notifications.map((n) => [n.type, n] as const));
 
@@ -2498,7 +2498,7 @@ app.get('/customers/:customerId/ai/insights', async (req, res) => {
     })
   });
 
-  if (!generated) return res.status(503).json({ message: 'LLM indisponível' });
+  if (!generated) return res.status(503).json({ message: 'LLM indisponível ou não configurado (defina LLM_MODE=full e OPENROUTER_API_KEY)' });
 
   const out = generated.tips.slice(0, limit);
 

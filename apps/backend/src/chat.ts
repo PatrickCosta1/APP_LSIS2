@@ -1053,6 +1053,9 @@ export async function handleCustomerChat(c: Collections, customerId: string, bod
     created_at: now
   });
 
+  // Histórico recente para o LLM (mais "conversacional")
+  const recentHistory = await listConversationMessages(c, customerId, conversationId, 20).catch(() => []);
+
   if (intent === 'feedback') {
     const rating = parseFeedbackAction(parsed.data.message);
     if (rating) {
@@ -1263,6 +1266,8 @@ export async function handleCustomerChat(c: Collections, customerId: string, bod
   const generated = await llmGenerateJson<z.infer<typeof LlmChatReplySchema>>({
     system:
       'És o assistente Kynex para energia residencial. Responde em português (Portugal), com foco em utilidade e clareza.\n' +
+      '- O teu nome é "Kynex". Se perguntarem como te chamas, responde "Chamo-me Kynex".\n' +
+      '- Responde naturalmente a saudações e small talk (ex.: "tudo bem?"), mas volta ao tema energia em 1 frase.\n' +
       '- Usa APENAS os dados fornecidos; se faltarem dados, faz 1 pergunta curta de clarificação.\n' +
       '- Nunca digas que és uma IA, nem menciones modelos.\n' +
       '- Podes devolver cards e actions para o UI quando fizer sentido, mas mantém tudo simples.\n' +
@@ -1273,6 +1278,7 @@ export async function handleCustomerChat(c: Collections, customerId: string, bod
       intent,
       prefs,
       state: prevState ?? null,
+      history: recentHistory,
       context: {
         now: end ? end.toISOString() : null,
         last24hKwh: last24h?.kwh ?? null,
@@ -1354,7 +1360,22 @@ export async function handleCustomerChat(c: Collections, customerId: string, bod
   });
 
   if (!generated) {
-    return { status: 503, body: { message: 'LLM indisponível' } };
+    // Não deixa o histórico "desalinhado" (user sem assistant).
+    const reply =
+      'Não consegui responder agora (serviço de IA indisponível ou não configurado). ' +
+      'Tenta novamente em 10–20s. Se és tu a configurar: define LLM_MODE=full e OPENROUTER_API_KEY.';
+    const finalReply = await persistAssistantMessage(c, customerId, conversationId, reply);
+    return {
+      status: 200,
+      body: {
+        conversationId,
+        reply: finalReply,
+        actions: [
+          { kind: 'button', id: 'retry', label: 'Tentar de novo', message: parsed.data.message },
+          { kind: 'button', id: 'plan', label: 'Plano 7 dias', message: ACTION_PLAN_7D }
+        ]
+      }
+    };
   }
 
   const reply = generated.reply;

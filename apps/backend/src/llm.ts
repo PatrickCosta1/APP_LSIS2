@@ -12,7 +12,14 @@ type LlmConfig = {
 
 function readLlmConfig(): LlmConfig {
   const modeRaw = String(process.env.LLM_MODE ?? 'off').toLowerCase();
-  const mode: LlmMode = modeRaw === 'rewrite' ? 'rewrite' : modeRaw === 'full' ? 'full' : modeRaw === 'mock' ? 'mock' : 'off';
+  let mode: LlmMode = modeRaw === 'rewrite' ? 'rewrite' : modeRaw === 'full' ? 'full' : modeRaw === 'mock' ? 'mock' : 'off';
+
+  // Proteção: em produção, `mock` é quase sempre erro de configuração.
+  // Faz override para `full` para evitar um "assistente" estático.
+  const nodeEnv = String(process.env.NODE_ENV ?? '').toLowerCase();
+  if (nodeEnv === 'production' && mode === 'mock') {
+    mode = 'full';
+  }
 
   const apiKey = (process.env.OPENROUTER_API_KEY ?? '').trim();
   const model = (process.env.OPENROUTER_MODEL ?? 'tngtech/deepseek-r1t2-chimera:free').trim();
@@ -72,6 +79,40 @@ function extractAssistantText(content: unknown): string | null {
   }
   const joined = parts.join('').trim();
   return joined ? joined : null;
+}
+
+function stripJsonCodeFences(s: string): string {
+  const t = s.trim();
+  if (!t.startsWith('```')) return t;
+  // suporta ```json ... ``` ou ``` ... ```
+  const lines = t.split(/\r?\n/);
+  if (lines.length >= 2 && lines[0].startsWith('```')) {
+    const body = lines.slice(1).join('\n');
+    const endIdx = body.lastIndexOf('```');
+    const inner = endIdx >= 0 ? body.slice(0, endIdx) : body;
+    return inner.trim();
+  }
+  return t;
+}
+
+function safeParseJsonLenient(raw: string): unknown | null {
+  const cleaned = stripJsonCodeFences(raw);
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    // tenta extrair o primeiro bloco {...}
+    const start = cleaned.indexOf('{');
+    const end = cleaned.lastIndexOf('}');
+    if (start >= 0 && end > start) {
+      const slice = cleaned.slice(start, end + 1);
+      try {
+        return JSON.parse(slice);
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
 }
 
 async function chatCompletion(messages: ChatMessage[], opts?: { expectJson?: boolean }): Promise<string | null> {
@@ -137,12 +178,8 @@ export async function llmGenerateJson<T>(args: {
   if (!raw) return null;
   if (raw.length > 60_000) return null;
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return null;
-  }
+  const parsed = safeParseJsonLenient(raw);
+  if (!parsed) return null;
 
   const validated = args.schema.safeParse(parsed);
   if (!validated.success) return null;
