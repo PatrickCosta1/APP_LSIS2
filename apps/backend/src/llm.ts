@@ -33,6 +33,23 @@ export function isLlmGenerationEnabled(): boolean {
   return cfg.mode === 'full' || cfg.mode === 'mock';
 }
 
+export function getLlmStatus(): {
+  mode: LlmMode;
+  hasApiKey: boolean;
+  model: string;
+  timeoutMs: number;
+  nodeEnv: string;
+} {
+  const cfg = readLlmConfig();
+  return {
+    mode: cfg.mode,
+    hasApiKey: Boolean(cfg.apiKey),
+    model: cfg.model,
+    timeoutMs: cfg.timeoutMs,
+    nodeEnv: String(process.env.NODE_ENV ?? '')
+  };
+}
+
 let cachedClient: OpenRouter | null = null;
 let cachedKey: string | null = null;
 

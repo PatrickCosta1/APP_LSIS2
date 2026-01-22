@@ -9,7 +9,7 @@ import { clampSuggestedPowerKva, loadPowerModel, makePowerFeatures, predictRidge
 import { getAiRetrainStatus, runAiRetrainOnce } from './aiTrainer';
 import { getCustomerChatHistory, handleCustomerChat, type ChatAction } from './chat';
 import { hashPassword, hashToken, normalizeEmail, newToken, validatePassword, verifyPassword } from './auth';
-import { llmGenerateJson, llmGenerateText } from './llm';
+import { getLlmStatus, llmGenerateJson, llmGenerateText } from './llm';
 
 const app = express();
 
@@ -148,6 +148,11 @@ function stddev(values: number[]) {
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
+});
+
+app.get('/llm/status', (_req, res) => {
+  // endpoint de debug: NÃO devolve chaves/segredos
+  res.json(getLlmStatus());
 });
 
 app.get('/auth/me', async (req, res) => {

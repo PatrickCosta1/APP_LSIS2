@@ -549,6 +549,21 @@ describe('chat', () => {
   });
 });
 
+describe('llm status', () => {
+  it('GET /llm/status devolve status sanitizado', async () => {
+    process.env.OPENROUTER_API_KEY = 'SHOULD_NOT_LEAK';
+    const res = await request(app).get('/llm/status');
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('mode');
+    expect(res.body).toHaveProperty('hasApiKey');
+    expect(res.body).toHaveProperty('model');
+    expect(res.body).toHaveProperty('timeoutMs');
+    expect(res.body).toHaveProperty('nodeEnv');
+
+    expect(JSON.stringify(res.body)).not.toContain('SHOULD_NOT_LEAK');
+  });
+});
+
 describe('assistant', () => {
   it('guarda e lê preferências do assistente', async () => {
     const c = getCollections();
