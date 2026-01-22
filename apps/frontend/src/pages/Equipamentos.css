@@ -30,7 +30,6 @@
   backdrop-filter: blur(8px);
   max-width: 370px;
   margin: 3% 0;
-  margin-bottom: 10%;
 }
 
 .eq-consumption-header {
@@ -106,6 +105,13 @@
   grid-template-columns: 24px 1fr;
   gap: 6px;
   align-items: center;
+  position: relative;
+  outline: none;
+}
+
+.eq-row:focus-visible .eq-pill {
+  box-shadow: 0 0 0 3px rgba(141, 224, 255, 0.20), 0 6px 12px rgba(0, 0, 0, 0.18);
+  border-color: rgba(141, 224, 255, 0.35);
 }
 
 .eq-row-left {
@@ -123,6 +129,110 @@
 
 .eq-row-mid {
   width: 100%;
+  position: relative;
+}
+
+.eq-hover-card {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translate(6px, -50%);
+  width: 240px;
+  background: linear-gradient(180deg, rgba(18, 24, 31, 0.92), rgba(18, 24, 31, 0.78));
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 14px;
+  padding: 10px;
+  box-shadow: 0 16px 26px rgba(0, 0, 0, 0.40);
+  backdrop-filter: blur(10px);
+  z-index: 20;
+}
+
+.eq-hover-card::before {
+  content: '';
+  position: absolute;
+  left: -8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 0;
+  height: 0;
+  border-top: 8px solid transparent;
+  border-bottom: 8px solid transparent;
+  border-right: 8px solid rgba(18, 24, 31, 0.92);
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.25));
+}
+
+.eq-hover-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.eq-hover-title {
+  font-size: 12px;
+  font-weight: 900;
+  color: rgba(255, 255, 255, 0.92);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eq-hover-total {
+  font-size: 12px;
+  font-weight: 900;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.eq-hover-sub {
+  margin-top: 6px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  color: rgba(255, 255, 255, 0.70);
+}
+
+.eq-hover-bars {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+  align-items: end;
+}
+
+.eq-hover-bar-col {
+  display: grid;
+  grid-template-rows: 44px auto;
+  gap: 4px;
+  align-items: end;
+  justify-items: center;
+}
+
+.eq-hover-bar {
+  width: 100%;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(141, 224, 255, 0.95), rgba(77, 225, 193, 0.95));
+}
+
+.eq-hover-bar-label {
+  font-size: 9px;
+  font-weight: 900;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.eq-hover-tip {
+  margin-top: 10px;
+  font-size: 11px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.88);
+  line-height: 1.2;
+}
+
+@media (max-width: 420px) {
+  .eq-hover-card {
+    right: 0;
+    width: 225px;
+  }
 }
 
 .eq-pill {
@@ -274,10 +384,10 @@
 
 .eq-help {
   position: absolute;
-  top: 10px;
-  right: 10px;
-  left: auto;
-  bottom: auto;
+  top: auto;
+  right: auto;
+  left: 10px;
+  bottom: 10px;
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.16);
   background: rgba(255, 255, 255, 0.08);
@@ -285,6 +395,76 @@
   font-weight: 900;
   cursor: pointer;
   transition: transform 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+
+.eq-mini-value {
+  margin-top: 10px;
+  font-size: 40px;
+  font-weight: 900;
+  letter-spacing: -0.6px;
+  color: rgba(255, 255, 255, 0.94);
+  line-height: 1.0;
+}
+
+.eq-mini-value.danger {
+  color: #ff6b6b;
+}
+
+.eq-mini-subtext {
+  margin-top: 6px;
+  font-size: 11px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.70);
+  text-align: center;
+  line-height: 1.15;
+}
+
+.eq-wide-card {
+  grid-column: 1 / -1;
+  position: relative;
+  background: linear-gradient(180deg, rgba(18, 24, 31, 0.80), rgba(18, 24, 31, 0.62));
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 16px;
+  padding: 12px 12px 14px;
+  min-height: 110px;
+  box-shadow: 0 14px 24px rgba(0, 0, 0, 0.30);
+  backdrop-filter: blur(10px);
+  overflow: hidden;
+}
+
+.eq-wide-title {
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.eq-wide-row {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: 70px 1fr;
+  gap: 10px;
+  align-items: center;
+}
+
+.eq-wide-icon {
+  display: grid;
+  place-items: center;
+}
+
+.eq-wide-message {
+  font-size: 13px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.92);
+  line-height: 1.2;
+}
+
+.eq-wide-sub {
+  margin-top: 6px;
+  font-size: 11px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.70);
 }
 
 .eq-help:hover {

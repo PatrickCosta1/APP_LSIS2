@@ -132,6 +132,70 @@ describe('analytics', () => {
   });
 });
 
+describe('appliances weekly', () => {
+  it('retorna consumo diário por equipamento (7 dias) e dica', async () => {
+    const c = getCollections();
+
+    const customerId = 'U_appl_week';
+    await c.customers.insertOne({
+      id: customerId,
+      name: 'Cliente Weekly',
+      segment: 'residential',
+      city: 'Porto',
+      contracted_power_kva: 6.9,
+      tariff: 'Bi-horário',
+      utility: 'EDP',
+      price_eur_per_kwh: 0.2,
+      fixed_daily_fee_eur: 0,
+      has_smart_meter: 1,
+      home_area_m2: 80,
+      household_size: 2,
+      locality_type: 'Urbana',
+      dwelling_type: 'Apartamento',
+      build_year_band: '2000-2014',
+      heating_sources: 'Elétrico',
+      has_solar: 0,
+      ev_count: 0,
+      alert_sensitivity: 'Média',
+      main_appliances: 'Frigorífico',
+      created_at: new Date('2026-01-01T00:00:00.000Z')
+    });
+
+    // telemetria para definir o "now" simulado
+    const end = new Date('2026-01-15T12:00:00.000Z');
+    await c.customerTelemetry15m.insertMany([
+      { customer_id: customerId, ts: new Date(end.getTime() - 15 * 60 * 1000), watts: 900, euros: 0.0, temp_c: 15, is_estimated: false },
+      { customer_id: customerId, ts: end, watts: 1100, euros: 0.0, temp_c: 15, is_estimated: false }
+    ]);
+
+    // sessões em 2 dias dentro da janela de 7 (uma em vazio, outra em pico)
+    const d1 = new Date('2026-01-13T23:00:00.000Z'); // vazio
+    const d2 = new Date('2026-01-14T19:00:00.000Z'); // pico
+    await c.customerApplianceUsage.insertMany([
+      { customer_id: customerId, appliance_id: 1, start_ts: d1, end_ts: new Date(d1.getTime() + 60 * 60 * 1000), energy_wh: 700, cost_eur: 0.12, confidence: 0.9, source: 'synthetic' },
+      { customer_id: customerId, appliance_id: 1, start_ts: d2, end_ts: new Date(d2.getTime() + 30 * 60 * 1000), energy_wh: 400, cost_eur: 0.08, confidence: 0.85, source: 'synthetic' }
+    ]);
+
+    const token = await seedAuth(customerId);
+    const res = await request(app)
+      .get(`/customers/${customerId}/appliances/1/weekly?days=7`)
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('customerId', customerId);
+    expect(res.body).toHaveProperty('applianceId', 1);
+    expect(res.body).toHaveProperty('days', 7);
+    expect(Array.isArray(res.body.daily)).toBe(true);
+    expect(res.body.daily.length).toBe(7);
+    expect(typeof res.body.tip).toBe('string');
+    expect(res.body.tip.length).toBeGreaterThan(5);
+    // dica deve ser curta e acionável (sem virar relatório)
+    expect(res.body.tip.length).toBeLessThanOrEqual(160);
+    expect(String(res.body.tip).toLowerCase()).toMatch(/agende|evite|reduza|desligue|use|concentre|mantenha|confirme/);
+    expect(String(res.body.tip)).not.toMatch(/kwh|€|%|\/mês/i);
+  });
+});
+
 describe('chat', () => {
   it('cria conversa e responde', async () => {
     const c = getCollections();

@@ -551,7 +551,7 @@ function Charts() {
         </header>
 
         <div className="brand-text ana-brand-text">
-          <h1 className="brand-title">Os meus <b>consumos</b></h1>
+          <h1 className="brand-title">Análise dos <b>consumos</b></h1>
         </div>
 
         <main className="content">

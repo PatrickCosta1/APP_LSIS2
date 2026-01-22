@@ -65,6 +65,19 @@ function isValidYmd(s: string | undefined | null): s is string {
   return /^\d{4}-\d{2}-\d{2}$/.test(s);
 }
 
+function isValidYm(s: string | undefined | null): s is string {
+  if (typeof s !== 'string') return false;
+  return /^\d{4}-\d{2}$/.test(s);
+}
+
+function startOfUtcMonthFromYm(ym: string) {
+  const [ys, ms] = ym.split('-');
+  const y = Number(ys);
+  const m = Number(ms);
+  if (!Number.isFinite(y) || !Number.isFinite(m) || m < 1 || m > 12) return null;
+  return new Date(Date.UTC(y, m - 1, 1, 0, 0, 0));
+}
+
 function toDayKeyUtc(d: Date) {
   return d.toISOString().slice(0, 10);
 }
@@ -937,19 +950,26 @@ app.get('/customers/:customerId/analytics/hourly-efficiency', async (req, res) =
 
   const dayKeys = new Set<string>();
   const byHourKwh = Array.from({ length: 24 }, () => 0);
+  const byDayKwh = new Map<string, number>();
   for (const r of rows) {
     const ts = new Date(r.ts);
     const hour = ts.getUTCHours();
-    dayKeys.add(toDayKeyUtc(ts));
+    const dayKey = toDayKeyUtc(ts);
+    dayKeys.add(dayKey);
     const watts = Number(r.watts ?? 0);
     // 15m -> 0.25h
-    byHourKwh[hour] += (watts * 0.25) / 1000;
+    const kwh = (watts * 0.25) / 1000;
+    byHourKwh[hour] += kwh;
+    byDayKwh.set(dayKey, (byDayKwh.get(dayKey) ?? 0) + kwh);
   }
 
   const daysSeen = Math.max(1, dayKeys.size);
   const avgByHourKwh = byHourKwh.map((v) => Number((v / daysSeen).toFixed(3)));
 
-  const isBi = String(customer.tariff ?? '').toLowerCase().includes('bi');
+  const tariffLower = String(customer.tariff ?? '').toLowerCase();
+  const isBi = tariffLower.includes('bi');
+  const isTri = tariffLower.includes('tri');
+  const isTou = isBi || isTri;
   const offpeakHours = new Set<number>([22, 23, 0, 1, 2, 3, 4, 5, 6, 7]);
   const peakHours = new Set<number>([18, 19, 20, 21]);
 
@@ -958,16 +978,70 @@ app.get('/customers/:customerId/analytics/hourly-efficiency', async (req, res) =
   const sumPeak = avgByHourKwh.reduce((acc, v, h) => acc + (peakHours.has(h) ? v : 0), 0);
 
   const offpeakPct = sumTotal > 0 ? sumOffpeak / sumTotal : 0;
+  const peakPct = sumTotal > 0 ? sumPeak / sumTotal : 0;
 
-  // Score: em bi-horário valoriza deslocar para vazio; em simples valoriza suavidade (menor variância)
+  // tendência: compara as últimas 24h com as 24h anteriores (se houver dados)
+  const startLast24h = new Date(end.getTime() - 24 * 60 * 60 * 1000);
+  const startPrev24h = new Date(end.getTime() - 48 * 60 * 60 * 1000);
+  let offpeakPctLast24h = offpeakPct;
+  let offpeakPctPrev24h = offpeakPct;
+
+  if (rows.length) {
+    let lastTotal = 0;
+    let lastOff = 0;
+    let prevTotal = 0;
+    let prevOff = 0;
+
+    for (const r of rows) {
+      const ts = new Date(r.ts);
+      const watts = Number(r.watts ?? 0);
+      const kwh = (watts * 0.25) / 1000;
+      const h = ts.getUTCHours();
+
+      if (ts >= startLast24h && ts <= end) {
+        lastTotal += kwh;
+        if (offpeakHours.has(h)) lastOff += kwh;
+      } else if (ts >= startPrev24h && ts < startLast24h) {
+        prevTotal += kwh;
+        if (offpeakHours.has(h)) prevOff += kwh;
+      }
+    }
+
+    if (lastTotal > 1e-9) offpeakPctLast24h = lastOff / lastTotal;
+    if (prevTotal > 1e-9) offpeakPctPrev24h = prevOff / prevTotal;
+  }
+
+  const offpeakTrend = offpeakPctLast24h - offpeakPctPrev24h; // -1..+1
+  const trendPoints = Math.max(-6, Math.min(6, Math.round(offpeakTrend * 30))); // aprox. -6..+6
+
+  const maxHour = Math.max(...avgByHourKwh, 0);
+  // 0..1 (1 = bem distribuído; 0 = muito concentrado numa hora)
+  const flatness = sumTotal > 0 ? clamp01(1 - maxHour / sumTotal) : 0;
+
+  const dayTotals = Array.from(byDayKwh.values());
+  const meanDay = dayTotals.length ? dayTotals.reduce((a, b) => a + b, 0) / dayTotals.length : 0;
+  const varianceDay =
+    dayTotals.length && meanDay > 1e-9
+      ? dayTotals.reduce((acc, v) => acc + Math.pow(v - meanDay, 2), 0) / dayTotals.length
+      : 0;
+  const cvDay = meanDay > 1e-9 ? Math.sqrt(varianceDay) / meanDay : 1;
+  // 0..1 (1 = regularidade boa; 0 = dias muito irregulares)
+  const regularity = clamp01(1 - Math.min(1.5, cvDay) / 1.5);
+
+  // Score: mistura de (time-of-use, penalização de pico, suavidade horária e regularidade diária)
   let scorePct = 50;
-  if (isBi) {
-    scorePct = Math.round(30 + 70 * offpeakPct);
+  const meanHour = sumTotal / 24;
+  const varianceHour = meanHour > 1e-9 ? avgByHourKwh.reduce((acc, v) => acc + Math.pow(v - meanHour, 2), 0) / 24 : 0;
+  const cvHour = meanHour > 1e-9 ? Math.sqrt(varianceHour) / meanHour : 1;
+  const smoothness = clamp01(1 - Math.min(1.5, cvHour) / 1.5);
+
+  if (isTou) {
+    // Bi/Tri-horário: valoriza vazio e evitar ponta/pico; inclui tendência (último dia)
+    const peakWeight = isTri ? 26 : 20;
+    scorePct = Math.round(14 + 58 * offpeakPct + peakWeight * (1 - peakPct) + 10 * smoothness + 6 * regularity + trendPoints);
   } else {
-    const mean = sumTotal / 24;
-    const variance = avgByHourKwh.reduce((acc, v) => acc + Math.pow(v - mean, 2), 0) / 24;
-    const cv = mean > 1e-9 ? Math.sqrt(variance) / mean : 1;
-    scorePct = Math.round(85 - 55 * Math.min(1.2, cv));
+    // Simples: valoriza suavidade e regularidade; penaliza pico e concentração
+    scorePct = Math.round(22 + 38 * smoothness + 22 * regularity + 14 * (1 - peakPct) + 10 * flatness);
   }
   scorePct = Math.max(0, Math.min(100, scorePct));
 
@@ -1042,14 +1116,18 @@ app.get('/customers/:customerId/analytics/hourly-efficiency', async (req, res) =
     }
   }
 
-  if (isBi) {
-    narrative = scorePct >= 75 ? 'Excelente uso do vazio. Continue a concentrar consumos flexíveis à noite.' :
-      scorePct >= 55 ? 'Boa base. Se deslocar alguns consumos do fim da tarde para a noite, melhora bastante.' :
-      'Há margem grande: o fim da tarde está pesado. Vale a pena mover tarefas flexíveis para horário vazio.';
+  if (isTou) {
+    narrative = scorePct >= 78
+      ? 'Ótimo: boa parte do consumo está em vazio e os picos são controlados.'
+      : scorePct >= 58
+        ? 'Bom, mas dá para melhorar: deslocar tarefas flexíveis para vazio pode reduzir custos.'
+        : 'A otimizar: há muito consumo fora do vazio (e/ou em pico). Mover tarefas flexíveis ajuda bastante.';
   } else {
-    narrative = scorePct >= 75 ? 'Consumo bem distribuído ao longo do dia.' :
-      scorePct >= 55 ? 'Há picos em certas horas. Distribuir melhor pode reduzir custos e desconforto.' :
-      'Consumo muito concentrado em poucas horas. Ajustes simples já ajudam.';
+    narrative = scorePct >= 78
+      ? 'Consumo bem distribuído ao longo do dia.'
+      : scorePct >= 58
+        ? 'Há picos em certas horas. Distribuir melhor pode reduzir custos.'
+        : 'Consumo muito concentrado em poucas horas. Ajustes simples já ajudam.';
   }
 
   const title = scorePct >= 75 ? 'Muito bom.' : scorePct >= 55 ? 'Bom, mas melhorável.' : 'A otimizar.';
@@ -1132,6 +1210,8 @@ async function getAvgByHourKwh(customerId: string, end: Date, windowDays: number
 
 app.get('/customers/:customerId/appliances/summary', async (req, res) => {
   const { customerId } = req.params;
+  const monthRaw = (req.query.month as string | undefined) ?? null;
+  const month = isValidYm(monthRaw) ? monthRaw : null;
   const days = Number((req.query.days as string | undefined) ?? '30');
   const windowDays = Number.isFinite(days) && days > 0 && days <= 120 ? Math.floor(days) : 30;
 
@@ -1144,11 +1224,17 @@ app.get('/customers/:customerId/appliances/summary', async (req, res) => {
   if (!latestTs) return res.status(404).json({ message: 'Sem telemetria para este cliente' });
 
   const end = new Date(latestTs);
-  const start = new Date(end.getTime() - windowDays * 24 * 60 * 60 * 1000);
+
+  const monthStart = month ? startOfUtcMonthFromYm(month) : null;
+  if (month && !monthStart) return res.status(400).json({ message: 'month inválido (esperado YYYY-MM)' });
+  const monthEndExclusive = monthStart ? startOfNextUtcMonth(monthStart) : null;
+
+  const start = monthStart ?? new Date(end.getTime() - windowDays * 24 * 60 * 60 * 1000);
+  const startMatch = monthStart && monthEndExclusive ? { $gte: monthStart, $lt: monthEndExclusive } : { $gte: start, $lte: end };
 
   const usageAgg = await c.customerApplianceUsage
     .aggregate([
-      { $match: { customer_id: customerId, start_ts: { $gte: start, $lte: end } } },
+      { $match: { customer_id: customerId, start_ts: startMatch } },
       {
         $group: {
           _id: '$appliance_id',
@@ -1223,14 +1309,247 @@ app.get('/customers/:customerId/appliances/summary', async (req, res) => {
     else if (n.includes('lavar')) estimatedSavingsMonthEur = 0.4;
   }
 
+  const daysOut = month ? daysInUtcMonthFromIso(`${month}-01T00:00:00.000Z`) : windowDays;
+
   return res.json({
     customerId,
     lastUpdated: end.toISOString(),
-    days: windowDays,
+    days: daysOut,
+    month,
     totalCostEur: Number(totalCost.toFixed(2)),
     items,
     suggestion,
     estimatedSavingsMonthEur
+  });
+});
+
+app.get('/customers/:customerId/appliances/:applianceId/weekly', async (req, res) => {
+  const { customerId, applianceId: applianceIdRaw } = req.params;
+  const days = Number((req.query.days as string | undefined) ?? '7');
+  const windowDays = Number.isFinite(days) && days > 0 && days <= 31 ? Math.floor(days) : 7;
+
+  const applianceId = Number.parseInt(applianceIdRaw, 10);
+  if (!Number.isFinite(applianceId)) return res.status(400).json({ message: 'applianceId inválido' });
+
+  const c = await collections();
+
+  const customer = await c.customers.findOne(
+    { id: customerId },
+    { projection: { _id: 0, id: 1, tariff: 1, price_eur_per_kwh: 1, contracted_power_kva: 1 } }
+  );
+  if (!customer) return res.status(404).json({ message: 'Cliente não encontrado' });
+
+  const appliance = await c.appliances.findOne(
+    { id: applianceId },
+    { projection: { _id: 0, id: 1, name: 1, category: 1, efficiency_score: 1, standby_watts: 1 } }
+  );
+  if (!appliance) return res.status(404).json({ message: 'Equipamento não encontrado' });
+
+  const latestTs = await getCustomerLatestTs(customerId);
+  if (!latestTs) return res.status(404).json({ message: 'Sem telemetria para este cliente' });
+
+  const end = new Date(latestTs);
+  const endDayStart = new Date(`${toDayKeyUtc(end)}T00:00:00.000Z`);
+  const startDayStart = addUtcDays(endDayStart, -(windowDays - 1));
+  const start = startDayStart;
+  const toExclusive = addUtcDays(endDayStart, 1);
+
+  const totalsAgg = await c.customerApplianceUsage
+    .aggregate([
+      { $match: { customer_id: customerId, start_ts: { $gte: start, $lt: toExclusive } } },
+      { $group: { _id: null, cost_eur: { $sum: '$cost_eur' }, energy_wh: { $sum: '$energy_wh' } } }
+    ])
+    .toArray();
+  const totalCostEur = Number(totalsAgg?.[0]?.cost_eur ?? 0);
+
+  const agg = await c.customerApplianceUsage
+    .aggregate([
+      { $match: { customer_id: customerId, appliance_id: applianceId, start_ts: { $gte: start, $lt: toExclusive } } },
+      {
+        $group: {
+          _id: { $dateToString: { format: '%Y-%m-%d', date: '$start_ts' } },
+          cost_eur: { $sum: '$cost_eur' },
+          energy_wh: { $sum: '$energy_wh' }
+        }
+      }
+    ])
+    .toArray();
+
+  const byDay = new Map<string, { kwh: number; costEur: number }>();
+  for (const row of agg as any[]) {
+    const day = String(row?._id ?? '');
+    if (!isValidYmd(day)) continue;
+    const kwh = Number(row?.energy_wh ?? 0) / 1000;
+    const costEur = Number(row?.cost_eur ?? 0);
+    byDay.set(day, { kwh, costEur });
+  }
+
+  const daily = Array.from({ length: windowDays }, (_, i) => {
+    const d = addUtcDays(startDayStart, i);
+    const dayKey = toDayKeyUtc(d);
+    const v = byDay.get(dayKey) ?? { kwh: 0, costEur: 0 };
+    return {
+      day: dayKey,
+      kwh: Number(v.kwh.toFixed(3)),
+      costEur: Number(v.costEur.toFixed(2))
+    };
+  });
+
+  const thisTotalKwh = daily.reduce((acc, x) => acc + x.kwh, 0);
+  const thisTotalCostEur = daily.reduce((acc, x) => acc + x.costEur, 0);
+  const sharePct = totalCostEur > 0 ? (thisTotalCostEur / totalCostEur) * 100 : 0;
+
+  // --- personalização: distribuição horária + ação concreta (dica curta) ---
+  const sessions = await c.customerApplianceUsage
+    .find(
+      { customer_id: customerId, appliance_id: applianceId, start_ts: { $gte: start, $lt: toExclusive } },
+      { projection: { _id: 0, start_ts: 1, end_ts: 1, energy_wh: 1, cost_eur: 1 } }
+    )
+    .toArray();
+
+  const kwhByHour = Array.from({ length: 24 }, () => 0);
+
+  const distributeSession = (startTs: Date, endTs: Date, energyWh: number) => {
+    const startTime = startTs.getTime();
+    const endTime = endTs.getTime();
+    if (!Number.isFinite(startTime) || !Number.isFinite(endTime) || endTime <= startTime || !Number.isFinite(energyWh) || energyWh <= 0) {
+      const h = startTs.getUTCHours();
+      kwhByHour[h] += Math.max(0, energyWh) / 1000;
+      return;
+    }
+
+    const totalMs = endTime - startTime;
+    let cursor = startTime;
+    const guardEnd = endTime + 1;
+    while (cursor < guardEnd) {
+      const d = new Date(cursor);
+      const hour = d.getUTCHours();
+      const nextHour = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), d.getUTCHours() + 1, 0, 0, 0);
+      const sliceEnd = Math.min(endTime, nextHour);
+      const sliceMs = Math.max(0, sliceEnd - cursor);
+      const frac = totalMs > 0 ? sliceMs / totalMs : 0;
+      kwhByHour[hour] += (energyWh / 1000) * frac;
+      if (sliceEnd === cursor) break;
+      cursor = sliceEnd;
+    }
+  };
+
+  for (const s of sessions as any[]) {
+    const st = new Date(s.start_ts);
+    const et = s.end_ts ? new Date(s.end_ts) : new Date(new Date(s.start_ts).getTime() + 15 * 60 * 1000);
+    distributeSession(st, et, Number(s.energy_wh ?? 0));
+  }
+
+  const totalKwhByHour = kwhByHour.reduce((a, b) => a + b, 0);
+  const tariffLower = String((customer as any).tariff ?? '').toLowerCase();
+  const isTri = tariffLower.includes('tri');
+  const isTou = tariffLower.includes('bi') || isTri;
+
+  const offKwh = kwhByHour.reduce((acc, v, h) => acc + (offpeakHoursUtc.has(h) ? v : 0), 0);
+  const peakKwh = kwhByHour.reduce((acc, v, h) => acc + (peakHoursUtc.has(h) ? v : 0), 0);
+  const offPct = totalKwhByHour > 0 ? offKwh / totalKwhByHour : 0;
+  const peakPct = totalKwhByHour > 0 ? peakKwh / totalKwhByHour : 0;
+
+  const dominantHour = (() => {
+    let bestH = 0;
+    let bestV = -1;
+    for (let h = 0; h < 24; h += 1) {
+      const v = kwhByHour[h];
+      if (v > bestV) {
+        bestV = v;
+        bestH = h;
+      }
+    }
+    return bestH;
+  })();
+
+  const maxDay = daily.reduce((best, cur) => (cur.kwh > (best?.kwh ?? -1) ? cur : best), null as null | (typeof daily)[number]);
+  const minDay = daily.reduce((best, cur) => (cur.kwh < (best?.kwh ?? 1e9) ? cur : best), null as null | (typeof daily)[number]);
+
+  const nameLower = String(appliance.name ?? '').toLowerCase();
+  const categoryLower = String((appliance as any).category ?? '').toLowerCase();
+  const isFlexible =
+    nameLower.includes('lavar') ||
+    nameLower.includes('máquina') ||
+    nameLower.includes('sec') ||
+    nameLower.includes('loiça') ||
+    nameLower.includes('carreg') ||
+    categoryLower.includes('laundry');
+
+  const standbyWatts = typeof (appliance as any).standby_watts === 'number' ? Number((appliance as any).standby_watts) : null;
+
+  // sinal de clima: usa média diária de temperatura no período (se existir)
+  const temps = await c.customerTelemetry15m
+    .aggregate([
+      { $match: { customer_id: customerId, ts: { $gte: start, $lt: toExclusive }, temp_c: { $ne: null } } },
+      {
+        $group: {
+          _id: { $dateToString: { format: '%Y-%m-%d', date: '$ts' } },
+          avgTemp: { $avg: '$temp_c' }
+        }
+      }
+    ])
+    .toArray();
+
+  const tempByDay = new Map<string, number>();
+  for (const t of temps as any[]) {
+    const k = String(t?._id ?? '');
+    if (!isValidYmd(k)) continue;
+    const v = Number(t?.avgTemp);
+    if (!Number.isFinite(v)) continue;
+    tempByDay.set(k, v);
+  }
+
+  const corrHotCold = (() => {
+    // correlação simples (sinal): compara dias quentes vs frios
+    const pairs = daily
+      .map((d) => ({ kwh: d.kwh, temp: tempByDay.get(d.day) }))
+      .filter((p) => typeof p.temp === 'number' && Number.isFinite(p.kwh)) as Array<{ kwh: number; temp: number }>;
+    if (pairs.length < 4) return 0;
+    const meanT = pairs.reduce((a, b) => a + b.temp, 0) / pairs.length;
+    const hot = pairs.filter((p) => p.temp >= meanT);
+    const cold = pairs.filter((p) => p.temp < meanT);
+    const meanHot = hot.length ? hot.reduce((a, b) => a + b.kwh, 0) / hot.length : 0;
+    const meanCold = cold.length ? cold.reduce((a, b) => a + b.kwh, 0) / cold.length : 0;
+    return meanHot - meanCold; // >0: mais consumo em dias quentes
+  })();
+
+  // dica curta e concreta (sem “relatório”)
+  const dominantInOffpeak = offpeakHoursUtc.has(dominantHour);
+  const dominantInPeak = peakHoursUtc.has(dominantHour);
+
+  let tip = 'Use o modo eco e evite deixar ligado sem necessidade.';
+
+  // stand-by personalizado
+  if (standbyWatts != null && standbyWatts >= 6 && thisTotalKwh / Math.max(1, windowDays) < 0.35) {
+    tip = 'Desligue da tomada quando não estiver a usar (o stand-by está a pesar no seu caso).';
+  } else if (isTou && isFlexible && !dominantInOffpeak) {
+    tip = 'Agende este equipamento para o vazio (à noite) e evite o fim da tarde para pagar menos.';
+  } else if (isTou && dominantInPeak) {
+    tip = 'Evite usar no pico do fim da tarde; se der, adie para vazio ou reduza a intensidade.';
+  } else if (nameLower.includes('ar condicionado')) {
+    tip = corrHotCold > 0.05 ? 'Em dias mais quentes, feche janelas/portas e use 24–25°C para manter conforto gastando menos.' : 'Use 24–25°C e mantenha filtros limpos; evita picos sem perder conforto.';
+  } else if (nameLower.includes('água quente') || nameLower.includes('termo')) {
+    tip = isTou ? 'Concentre o aquecimento de água no vazio e evite reforços no fim da tarde.' : 'Concentre o aquecimento de água num período curto e evite deixar a resistência a ligar várias vezes ao dia.';
+  } else if (nameLower.includes('frigor')) {
+    tip = 'Evite abrir portas muitas vezes e confirme a vedação; isso reduz o consumo sem mudar hábitos.';
+  } else if (nameLower.includes('luz')) {
+    tip = 'Desligue divisões vazias e use LEDs; é a ação mais rápida para reduzir o seu consumo.';
+  } else if (isTou && dominantInOffpeak && offPct >= 0.55) {
+    tip = 'Boa prática: você já usa mais no vazio; mantenha tarefas flexíveis nesse período.';
+  }
+
+  return res.json({
+    customerId,
+    applianceId,
+    name: appliance.name,
+    lastUpdated: end.toISOString(),
+    days: windowDays,
+    totalKwh: Number(thisTotalKwh.toFixed(3)),
+    totalCostEur: Number(thisTotalCostEur.toFixed(2)),
+    sharePct: Number(sharePct.toFixed(1)),
+    daily,
+    tip
   });
 });
 
