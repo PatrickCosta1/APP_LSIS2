@@ -1,5 +1,5 @@
-import type { OpenRouter } from '@openrouter/sdk';
 import { z } from 'zod';
+import { openrouterChat } from './llm/openrouter';
 
 export type LlmMode = 'off' | 'rewrite' | 'full' | 'mock';
 
@@ -22,10 +22,10 @@ function readLlmConfig(): LlmConfig {
   }
 
   const apiKey = (process.env.OPENROUTER_API_KEY ?? '').trim();
-  const model = (process.env.OPENROUTER_MODEL ?? 'tngtech/deepseek-r1t2-chimera:free').trim();
+  const model = (process.env.OPENROUTER_MODEL ?? 'arcee-ai/trinity-mini:free').trim();
   const timeoutMs = Math.max(1500, Math.min(20000, Number(process.env.OPENROUTER_TIMEOUT_MS ?? 7000) || 7000));
 
-  return { mode, apiKey: apiKey ? apiKey : null, model: model || 'tngtech/deepseek-r1t2-chimera:free', timeoutMs };
+  return { mode, apiKey: apiKey ? apiKey : null, model: model || 'arcee-ai/trinity-mini:free', timeoutMs };
 }
 
 export function isLlmGenerationEnabled(): boolean {
@@ -48,28 +48,6 @@ export function getLlmStatus(): {
     timeoutMs: cfg.timeoutMs,
     nodeEnv: String(process.env.NODE_ENV ?? '')
   };
-}
-
-let cachedClient: OpenRouter | null = null;
-let cachedKey: string | null = null;
-
-let cachedCtor: (new (args: { apiKey: string }) => OpenRouter) | null = null;
-
-async function getOpenRouterCtor(): Promise<new (args: { apiKey: string }) => OpenRouter> {
-  if (cachedCtor) return cachedCtor;
-  // Import dinâmico para não rebentar o Jest (ESM em node_modules)
-  const mod: any = await import('@openrouter/sdk');
-  cachedCtor = mod?.OpenRouter;
-  if (!cachedCtor) throw new Error('OPENROUTER_SDK_NOT_AVAILABLE');
-  return cachedCtor;
-}
-
-async function getClient(apiKey: string): Promise<OpenRouter> {
-  if (cachedClient && cachedKey === apiKey) return cachedClient;
-  cachedKey = apiKey;
-  const Ctor = await getOpenRouterCtor();
-  cachedClient = new Ctor({ apiKey });
-  return cachedClient;
 }
 
 async function withTimeout<T>(p: Promise<T>, timeoutMs: number): Promise<T> {
@@ -139,19 +117,19 @@ async function chatCompletion(messages: ChatMessage[], opts?: { expectJson?: boo
   if (!cfg.apiKey) return null;
 
   try {
-    const client = await getClient(cfg.apiKey);
+    const temperature = 0.2;
+    const maxTokens = opts?.expectJson ? 700 : 900;
     const res = await withTimeout(
-      client.chat.send({
+      openrouterChat({
         model: cfg.model,
         messages: messages as any,
-        temperature: 0.2,
-        responseFormat: opts?.expectJson ? { type: 'json_object' } : undefined
-      } as any),
+        temperature,
+        maxTokens
+      }),
       cfg.timeoutMs
     );
 
-    const content = (res as any)?.choices?.[0]?.message?.content;
-    const text = extractAssistantText(content)?.trim();
+    const text = extractAssistantText((res as any)?.content)?.trim();
     if (!text) return null;
     return text ? text : null;
   } catch {
