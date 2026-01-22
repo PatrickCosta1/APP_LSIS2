@@ -1,7 +1,6 @@
 import crypto from 'node:crypto';
 import { z } from 'zod';
 import type { Collections, CustomerDoc } from './db';
-import { getDefaultModel, isLlmEnabled, openrouterChatJson, type LlmMessage } from './llm/openrouter';
 
 export const chatRequestSchema = z.object({
   message: z.string().min(1).max(2000),
@@ -39,13 +38,6 @@ export type ChatReplyResponse = {
 };
 
 const SAFE_MAX_HISTORY = 50;
-
-function markLlmText(s: string) {
-  const t = String(s ?? '').trim();
-  if (!t) return t;
-  if (t.toUpperCase().startsWith('LLM:')) return t;
-  return `LLM: ${t}`;
-}
 
 type ChatIntent =
   | 'help'
@@ -1023,9 +1015,6 @@ export async function handleCustomerChat(c: Collections, customerId: string, bod
     created_at: now
   });
 
-  // LLM-first (quando configurado): usa o histórico + contexto e devolve resposta estruturada.
-  // Mantém fluxos determinísticos (feedback/prefs/sensitive) abaixo.
-
   if (intent === 'feedback') {
     const rating = parseFeedbackAction(parsed.data.message);
     if (rating) {
@@ -1065,153 +1054,15 @@ export async function handleCustomerChat(c: Collections, customerId: string, bod
       await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
       return { status: 200, body: { conversationId, reply } };
     }
-
-    // Se não foi possível inferir prefs, continua para o fluxo normal.
-  }
-
-  if (intent === 'sensitive') {
-    const safe = buildFallbackReply(parsed.data.message, intent, customer, prevState, prefs, {});
-    const assistantMsgId = crypto.randomUUID();
-    await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: safe.reply, created_at: new Date() });
-    return { status: 200, body: { conversationId, reply: safe.reply, cards: safe.cards, actions: safe.actions } };
-  }
-
-  if (isLlmEnabled()) {
-    const latestTs = await getLatestTelemetryTs(c, customerId);
-    const end = latestTs ? new Date(latestTs) : null;
-
-      // Contexto “factual” (compacto) para o LLM não inventar números.
-      let last24: any = null;
-      let efficiency: any = null;
-      let power: any = null;
-      let topAppliances: any = null;
-
-      try {
-        if (end) {
-          last24 = await getLast24hStats(c, customerId, end);
-          efficiency = await getHourlyEfficiencyStats(c, customerId, end, 7);
-          power = await getPowerSuggestionQuick(c, customerId, end, 30);
-          topAppliances = await getTopAppliancesByCost(c, customerId, end, 30, 5);
-        }
-      } catch {
-        // se falhar, o LLM ainda pode responder sem números
-      }
-
-      const history = await listConversationMessages(c, customerId, conversationId, 24);
-      const llmHistory: LlmMessage[] = history
-        .filter((m) => m.role === 'user' || m.role === 'assistant')
-        .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }));
-
-      const responseSchema = z.object({
-        reply: z.string().min(1).max(2000),
-        cards: z
-          .array(
-            z.union([
-              z.object({ kind: z.literal('metric'), title: z.string().min(1).max(60), value: z.string().min(1).max(60), subtitle: z.string().max(120).optional() }),
-              z.object({ kind: z.literal('tip'), title: z.string().min(1).max(60), detail: z.string().min(1).max(240) }),
-              z.object({ kind: z.literal('list'), title: z.string().min(1).max(60), items: z.array(z.string().min(1).max(120)).min(1).max(12), subtitle: z.string().max(120).optional() })
-            ])
-          )
-          .max(6)
-          .optional(),
-        actions: z
-          .array(
-            z.union([
-              z.object({ kind: z.literal('button'), id: z.string().min(1).max(40), label: z.string().min(1).max(24), message: z.string().min(1).max(200) }),
-              z.object({
-                kind: z.literal('plan'),
-                id: z.string().min(1).max(40),
-                title: z.string().min(1).max(60),
-                items: z
-                  .array(z.object({ id: z.string().min(1).max(40), label: z.string().min(1).max(60), detail: z.string().max(160).optional() }))
-                  .min(1)
-                  .max(12)
-              })
-            ])
-          )
-          .max(8)
-          .optional()
-      });
-
-      const llmContext = {
-        customer: {
-          id: customerId,
-          name: customer.name ?? null,
-          tariff: customer.tariff ?? null,
-          contractedPowerKva: customer.contracted_power_kva ?? null
-        },
-        prefs,
-        nowUtc: new Date().toISOString(),
-        telemetry: end ? { lastSampleUtc: end.toISOString() } : { lastSampleUtc: null },
-        stats: {
-          last24h: last24,
-          efficiency7d: efficiency,
-          power30d: power,
-          topAppliances30d: topAppliances
-        },
-        userMessage: parsed.data.message
-      };
-
-      try {
-        const systemPrompt = [
-          'Você é o assistente IA do Kynex (Portugal). Seu objetivo é ajudar o utilizador com análise, dicas, alertas e explicações sobre consumo elétrico.',
-          '',
-          'Regras:',
-          '1) NÃO invente números. Use apenas os dados fornecidos no contexto.',
-          '2) Seja prático e específico; evite generalidades.',
-          '3) Se faltarem dados, diga o que falta e peça uma ação simples.',
-          '4) Responda APENAS com JSON válido no formato: {"reply":"...","cards":[],"actions":[]}.',
-          '5) Responda em PT-PT/PT-BR (português).'
-        ].join('\n');
-
-        const { parsed: structured, content } = await openrouterChatJson({
-          model: getDefaultModel(),
-          temperature: 0.35,
-          maxTokens: 900,
-          schema: responseSchema,
-          messages: [
-            {
-              role: 'system',
-              content: systemPrompt
-            },
-            { role: 'user', content: `Contexto Kynex (JSON): ${JSON.stringify(llmContext)}` },
-            ...llmHistory.slice(-18)
-          ]
-        });
-
-        const reply = markLlmText(structured?.reply?.trim() || content.trim() || 'Ok.');
-        const cards = structured?.cards;
-        const actions = structured?.actions;
-
-        const assistantMsgId = crypto.randomUUID();
-        await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
-        await setConversationState(c, customerId, conversationId, {
-          lastIntent: intent,
-          lastWindowDays: 7,
-          lastTopLimit: 5
-        });
-
-        return { status: 200, body: { conversationId, reply, cards, actions } };
-    } catch {
-      // fallback para heurísticas atuais abaixo
-    }
   }
 
   const latestTs = await getLatestTelemetryTs(c, customerId);
   const end = latestTs ? new Date(latestTs) : null;
 
   const requestedWindowDays = parseWindowDays(parsed.data.message);
-  const prevWindowDays = typeof prevState?.lastWindowDays === 'number' ? prevState.lastWindowDays : 7;
-  const baseWindowDays = Math.max(1, Math.min(60, requestedWindowDays ?? prevWindowDays));
-
-  const prevAppliancesWindowDays = typeof prevState?.lastExplain?.windowDays === 'number' ? prevState.lastExplain.windowDays : 30;
-  const appliancesWindowDays = Math.max(3, Math.min(60, requestedWindowDays ?? prevAppliancesWindowDays));
-
-  const followUpKind = isShortMore(parsed.data.message)
-    ? 'more'
-    : isShortAffirmative(parsed.data.message)
-      ? 'confirm'
-      : undefined;
+  const baseWindowDays = requestedWindowDays ?? prevState?.lastWindowDays ?? 7;
+  const appliancesWindowDays = requestedWindowDays ?? prevState?.pending?.windowDays ?? ((intent === 'appliances_top' || intent === 'appliance_actions') ? 30 : baseWindowDays);
+  const followUpKind: 'confirm' | 'more' | undefined = isShortMore(parsed.data.message) ? 'more' : isShortAffirmative(parsed.data.message) ? 'confirm' : undefined;
 
   const requestedTop = parseTopLimit(parsed.data.message);
   const prevTop = typeof prevState?.lastTopLimit === 'number' ? prevState.lastTopLimit : 5;
