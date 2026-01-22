@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 export type LlmRole = 'system' | 'user' | 'assistant';
 export type LlmMessage = { role: LlmRole; content: string };
-
+console.log('OPENROUTER_API_KEY:', process.env.OPENROUTER_API_KEY, 'LLM_MODE:', process.env.LLM_MODE);
 const OpenRouterChatResponseSchema = z.object({
   choices: z
     .array(
@@ -71,27 +71,32 @@ export async function openrouterChat(opts: {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), getTimeoutMs());
 
-  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      // headers opcionais recomendados pelo OpenRouter
-      'X-Title': 'Kynex',
-      'HTTP-Referer': 'http://localhost'
-    },
-    signal: controller.signal,
-    body: JSON.stringify({
-      model,
-      messages: opts.messages,
-      temperature,
-      max_tokens: maxTokens
-    })
-  });
+  let res, text;
+  try {
+    res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        // headers opcionais recomendados pelo OpenRouter
+        'X-Title': 'Kynex',
+        'HTTP-Referer': 'http://localhost'
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model,
+        messages: opts.messages,
+        temperature,
+        max_tokens: maxTokens
+      })
+    });
+    clearTimeout(timeout);
+    text = await res.text();
+  } catch (err) {
+    console.error('[LLM] Erro de fetch para OpenRouter:', err);
+    throw new Error('LLM_FETCH_ERROR');
+  }
 
-  clearTimeout(timeout);
-
-  const text = await res.text();
   let json: unknown = null;
   try {
     json = JSON.parse(text);
@@ -100,6 +105,7 @@ export async function openrouterChat(opts: {
   }
 
   if (!res.ok) {
+    console.error('[LLM] Erro HTTP OpenRouter:', res.status, text.slice(0, 400));
     throw new Error(`OpenRouter erro ${res.status}: ${text.slice(0, 400)}`);
   }
 
