@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { z } from 'zod';
 import type { Collections, CustomerDoc } from './db';
-import { llmGenerateJson, maybeRewriteAssistantReply } from './llm';
+import { getDefaultModel, isLlmEnabled, openrouterChatJson, type LlmMessage } from './llm/openrouter';
 
 export const chatRequestSchema = z.object({
   message: z.string().min(1).max(2000),
@@ -38,29 +38,14 @@ export type ChatReplyResponse = {
   actions?: ChatAction[];
 };
 
-const LlmChatCardSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('metric'), title: z.string().min(1).max(80), value: z.string().min(1).max(40), subtitle: z.string().min(1).max(80).optional() }),
-  z.object({ kind: z.literal('tip'), title: z.string().min(1).max(80), detail: z.string().min(1).max(240) }),
-  z.object({ kind: z.literal('list'), title: z.string().min(1).max(80), items: z.array(z.string().min(1).max(80)).min(1).max(8), subtitle: z.string().min(1).max(80).optional() })
-]);
-
-const LlmChatActionSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('button'), id: z.string().min(1).max(32), label: z.string().min(1).max(28), message: z.string().min(1).max(200) }),
-  z.object({
-    kind: z.literal('plan'),
-    id: z.string().min(1).max(32),
-    title: z.string().min(1).max(60),
-    items: z.array(z.object({ id: z.string().min(1).max(32), label: z.string().min(1).max(60), detail: z.string().min(1).max(120).optional() })).min(1).max(10)
-  })
-]);
-
-const LlmChatReplySchema = z.object({
-  reply: z.string().min(1).max(2500),
-  cards: z.array(LlmChatCardSchema).max(8).optional(),
-  actions: z.array(LlmChatActionSchema).max(8).optional()
-});
-
 const SAFE_MAX_HISTORY = 50;
+
+function markLlmText(s: string) {
+  const t = String(s ?? '').trim();
+  if (!t) return t;
+  if (t.toUpperCase().startsWith('LLM:')) return t;
+  return `LLM: ${t}`;
+}
 
 type ChatIntent =
   | 'help'
@@ -216,21 +201,6 @@ function fmtEur(v: number) {
 function fmtHour(h: number) {
   const hh = ((h % 24) + 24) % 24;
   return `${String(hh).padStart(2, '0')}:00`;
-}
-
-async function persistAssistantMessage(c: Collections, customerId: string, conversationId: string, reply: string): Promise<string> {
-  const maybeRewritten = await maybeRewriteAssistantReply(reply);
-  const content = maybeRewritten ?? reply;
-  const assistantMsgId = crypto.randomUUID();
-  await c.chatMessages.insertOne({
-    id: assistantMsgId,
-    customer_id: customerId,
-    conversation_id: conversationId,
-    role: 'assistant',
-    content,
-    created_at: new Date()
-  });
-  return content;
 }
 
 function parseWindowDays(message: string): number | null {
@@ -1053,8 +1023,8 @@ export async function handleCustomerChat(c: Collections, customerId: string, bod
     created_at: now
   });
 
-  // Histórico recente para o LLM (mais "conversacional")
-  const recentHistory = await listConversationMessages(c, customerId, conversationId, 20).catch(() => []);
+  // LLM-first (quando configurado): usa o histórico + contexto e devolve resposta estruturada.
+  // Mantém fluxos determinísticos (feedback/prefs/sensitive) abaixo.
 
   if (intent === 'feedback') {
     const rating = parseFeedbackAction(parsed.data.message);
@@ -1075,9 +1045,10 @@ export async function handleCustomerChat(c: Collections, customerId: string, bod
       });
 
       const reply = rating === 'up' ? 'Boa — obrigado! Vou manter este estilo.' : 'Percebido — obrigado. Vou ajustar as próximas sugestões.';
-      const finalReply = await persistAssistantMessage(c, customerId, conversationId, reply);
+      const assistantMsgId = crypto.randomUUID();
+      await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
 
-      return { status: 200, body: { conversationId, reply: finalReply, actions: [{ kind: 'button', id: 'plan', label: 'Plano 7 dias', message: ACTION_PLAN_7D }] } };
+      return { status: 200, body: { conversationId, reply, actions: [{ kind: 'button', id: 'plan', label: 'Plano 7 dias', message: ACTION_PLAN_7D }] } };
     }
   }
 
@@ -1090,8 +1061,139 @@ export async function handleCustomerChat(c: Collections, customerId: string, bod
         { upsert: true }
       );
       const reply = `Ok — atualizado. A partir de agora respondo ${update.style === 'short' ? 'mais curto e direto' : update.style === 'detailed' ? 'com mais detalhe' : 'no estilo atual'}${update.focus ? ` (foco: ${update.focus})` : ''}.`;
-      const finalReply = await persistAssistantMessage(c, customerId, conversationId, reply);
-      return { status: 200, body: { conversationId, reply: finalReply } };
+      const assistantMsgId = crypto.randomUUID();
+      await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
+      return { status: 200, body: { conversationId, reply } };
+    }
+
+    // Se não foi possível inferir prefs, continua para o fluxo normal.
+  }
+
+  if (intent === 'sensitive') {
+    const safe = buildFallbackReply(parsed.data.message, intent, customer, prevState, prefs, {});
+    const assistantMsgId = crypto.randomUUID();
+    await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: safe.reply, created_at: new Date() });
+    return { status: 200, body: { conversationId, reply: safe.reply, cards: safe.cards, actions: safe.actions } };
+  }
+
+  if (isLlmEnabled()) {
+    const latestTs = await getLatestTelemetryTs(c, customerId);
+    const end = latestTs ? new Date(latestTs) : null;
+
+      // Contexto “factual” (compacto) para o LLM não inventar números.
+      let last24: any = null;
+      let efficiency: any = null;
+      let power: any = null;
+      let topAppliances: any = null;
+
+      try {
+        if (end) {
+          last24 = await getLast24hStats(c, customerId, end);
+          efficiency = await getHourlyEfficiencyStats(c, customerId, end, 7);
+          power = await getPowerSuggestionQuick(c, customerId, end, 30);
+          topAppliances = await getTopAppliancesByCost(c, customerId, end, 30, 5);
+        }
+      } catch {
+        // se falhar, o LLM ainda pode responder sem números
+      }
+
+      const history = await listConversationMessages(c, customerId, conversationId, 24);
+      const llmHistory: LlmMessage[] = history
+        .filter((m) => m.role === 'user' || m.role === 'assistant')
+        .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }));
+
+      const responseSchema = z.object({
+        reply: z.string().min(1).max(2000),
+        cards: z
+          .array(
+            z.union([
+              z.object({ kind: z.literal('metric'), title: z.string().min(1).max(60), value: z.string().min(1).max(60), subtitle: z.string().max(120).optional() }),
+              z.object({ kind: z.literal('tip'), title: z.string().min(1).max(60), detail: z.string().min(1).max(240) }),
+              z.object({ kind: z.literal('list'), title: z.string().min(1).max(60), items: z.array(z.string().min(1).max(120)).min(1).max(12), subtitle: z.string().max(120).optional() })
+            ])
+          )
+          .max(6)
+          .optional(),
+        actions: z
+          .array(
+            z.union([
+              z.object({ kind: z.literal('button'), id: z.string().min(1).max(40), label: z.string().min(1).max(24), message: z.string().min(1).max(200) }),
+              z.object({
+                kind: z.literal('plan'),
+                id: z.string().min(1).max(40),
+                title: z.string().min(1).max(60),
+                items: z
+                  .array(z.object({ id: z.string().min(1).max(40), label: z.string().min(1).max(60), detail: z.string().max(160).optional() }))
+                  .min(1)
+                  .max(12)
+              })
+            ])
+          )
+          .max(8)
+          .optional()
+      });
+
+      const llmContext = {
+        customer: {
+          id: customerId,
+          name: customer.name ?? null,
+          tariff: customer.tariff ?? null,
+          contractedPowerKva: customer.contracted_power_kva ?? null
+        },
+        prefs,
+        nowUtc: new Date().toISOString(),
+        telemetry: end ? { lastSampleUtc: end.toISOString() } : { lastSampleUtc: null },
+        stats: {
+          last24h: last24,
+          efficiency7d: efficiency,
+          power30d: power,
+          topAppliances30d: topAppliances
+        },
+        userMessage: parsed.data.message
+      };
+
+      try {
+        const systemPrompt = [
+          'Você é o assistente IA do Kynex (Portugal). Seu objetivo é ajudar o utilizador com análise, dicas, alertas e explicações sobre consumo elétrico.',
+          '',
+          'Regras:',
+          '1) NÃO invente números. Use apenas os dados fornecidos no contexto.',
+          '2) Seja prático e específico; evite generalidades.',
+          '3) Se faltarem dados, diga o que falta e peça uma ação simples.',
+          '4) Responda APENAS com JSON válido no formato: {"reply":"...","cards":[],"actions":[]}.',
+          '5) Responda em PT-PT/PT-BR (português).'
+        ].join('\n');
+
+        const { parsed: structured, content } = await openrouterChatJson({
+          model: getDefaultModel(),
+          temperature: 0.35,
+          maxTokens: 900,
+          schema: responseSchema,
+          messages: [
+            {
+              role: 'system',
+              content: systemPrompt
+            },
+            { role: 'user', content: `Contexto Kynex (JSON): ${JSON.stringify(llmContext)}` },
+            ...llmHistory.slice(-18)
+          ]
+        });
+
+        const reply = markLlmText(structured?.reply?.trim() || content.trim() || 'Ok.');
+        const cards = structured?.cards;
+        const actions = structured?.actions;
+
+        const assistantMsgId = crypto.randomUUID();
+        await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
+        await setConversationState(c, customerId, conversationId, {
+          lastIntent: intent,
+          lastWindowDays: 7,
+          lastTopLimit: 5
+        });
+
+        return { status: 200, body: { conversationId, reply, cards, actions } };
+    } catch {
+      // fallback para heurísticas atuais abaixo
     }
   }
 
@@ -1099,9 +1201,17 @@ export async function handleCustomerChat(c: Collections, customerId: string, bod
   const end = latestTs ? new Date(latestTs) : null;
 
   const requestedWindowDays = parseWindowDays(parsed.data.message);
-  const baseWindowDays = requestedWindowDays ?? prevState?.lastWindowDays ?? 7;
-  const appliancesWindowDays = requestedWindowDays ?? prevState?.pending?.windowDays ?? ((intent === 'appliances_top' || intent === 'appliance_actions') ? 30 : baseWindowDays);
-  const followUpKind: 'confirm' | 'more' | undefined = isShortMore(parsed.data.message) ? 'more' : isShortAffirmative(parsed.data.message) ? 'confirm' : undefined;
+  const prevWindowDays = typeof prevState?.lastWindowDays === 'number' ? prevState.lastWindowDays : 7;
+  const baseWindowDays = Math.max(1, Math.min(60, requestedWindowDays ?? prevWindowDays));
+
+  const prevAppliancesWindowDays = typeof prevState?.lastExplain?.windowDays === 'number' ? prevState.lastExplain.windowDays : 30;
+  const appliancesWindowDays = Math.max(3, Math.min(60, requestedWindowDays ?? prevAppliancesWindowDays));
+
+  const followUpKind = isShortMore(parsed.data.message)
+    ? 'more'
+    : isShortAffirmative(parsed.data.message)
+      ? 'confirm'
+      : undefined;
 
   const requestedTop = parseTopLimit(parsed.data.message);
   const prevTop = typeof prevState?.lastTopLimit === 'number' ? prevState.lastTopLimit : 5;
@@ -1128,12 +1238,13 @@ export async function handleCustomerChat(c: Collections, customerId: string, bod
             ? `Ok — vou alertar se o stand-by noturno ficar acima de ~${cmd.value} W (02:00–06:00).`
             : `Ok — vou alertar quando o pico chegar a ~${cmd.value}% da potência contratada.`;
 
-      const finalReply = await persistAssistantMessage(c, customerId, conversationId, reply);
+      const assistantMsgId = crypto.randomUUID();
+      await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
       return {
         status: 200,
         body: {
           conversationId,
-          reply: finalReply,
+          reply,
           actions: [
             { kind: 'button', id: 'see_notifs', label: 'Ver notificações', message: 'Mostra notificações' },
             { kind: 'button', id: 'plan', label: 'Plano 7 dias', message: ACTION_PLAN_7D }
@@ -1144,15 +1255,17 @@ export async function handleCustomerChat(c: Collections, customerId: string, bod
 
     const reply =
       'Consigo configurar alertas. Exemplos: "alerta 20%" (subida 24h), "alerta standby 180w", "alerta potência 90%".';
-    const finalReply = await persistAssistantMessage(c, customerId, conversationId, reply);
-    return { status: 200, body: { conversationId, reply: finalReply } };
+    const assistantMsgId = crypto.randomUUID();
+    await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
+    return { status: 200, body: { conversationId, reply } };
   }
 
   if (intent === 'tariff_sim') {
     if (!end) {
       const reply = 'Consigo simular, mas preciso de telemetria deste cliente.';
-      const finalReply = await persistAssistantMessage(c, customerId, conversationId, reply);
-      return { status: 200, body: { conversationId, reply: finalReply } };
+      const assistantMsgId = crypto.randomUUID();
+      await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
+      return { status: 200, body: { conversationId, reply } };
     }
 
     const eff = await getHourlyEfficiencyStats(c, customerId, end, Math.max(7, Math.min(30, baseWindowDays))).catch(() => null);
@@ -1180,13 +1293,14 @@ export async function handleCustomerChat(c: Collections, customerId: string, bod
     }
 
     const reply = replyParts.join(' ');
-    const finalReply = await persistAssistantMessage(c, customerId, conversationId, reply);
+    const assistantMsgId = crypto.randomUUID();
+    await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
 
     return {
       status: 200,
       body: {
         conversationId,
-        reply: finalReply,
+        reply,
         actions: [
           { kind: 'button', id: 'eff', label: 'Ver melhores horas', message: 'Eficiência horária' },
           { kind: 'button', id: 'plan', label: 'Plano 7 dias', message: ACTION_PLAN_7D }
@@ -1198,26 +1312,29 @@ export async function handleCustomerChat(c: Collections, customerId: string, bod
   if (intent === 'compare_peers') {
     if (!end) {
       const reply = 'Consigo comparar, mas preciso de telemetria deste cliente.';
-      const finalReply = await persistAssistantMessage(c, customerId, conversationId, reply);
-      return { status: 200, body: { conversationId, reply: finalReply } };
+      const assistantMsgId = crypto.randomUUID();
+      await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
+      return { status: 200, body: { conversationId, reply } };
     }
 
     const cmp = await getPeerComparison(c, customerId, end, 7).catch(() => null);
     if (!cmp || cmp.peers <= 0 || cmp.yourAvgKwhDay == null || cmp.peersAvgKwhDay == null) {
       const reply = 'Ainda não tenho clientes suficientes “semelhantes” com telemetria para comparar (mesma cidade/segmento/tamanho de agregado).';
-      const finalReply = await persistAssistantMessage(c, customerId, conversationId, reply);
-      return { status: 200, body: { conversationId, reply: finalReply } };
+      const assistantMsgId = crypto.randomUUID();
+      await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
+      return { status: 200, body: { conversationId, reply } };
     }
 
     const delta = cmp.peersAvgKwhDay > 0 ? (cmp.yourAvgKwhDay - cmp.peersAvgKwhDay) / cmp.peersAvgKwhDay : 0;
     const side = delta > 0 ? 'acima' : 'abaixo';
     const reply = `Comparação (7d) com ${cmp.peers} clientes semelhantes: tu ~${cmp.yourAvgKwhDay.toFixed(2)} kWh/dia vs semelhantes ~${cmp.peersAvgKwhDay.toFixed(2)} kWh/dia (≈ ${(Math.abs(delta) * 100).toFixed(0)}% ${side}).`;
-    const finalReply = await persistAssistantMessage(c, customerId, conversationId, reply);
+    const assistantMsgId = crypto.randomUUID();
+    await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
     return {
       status: 200,
       body: {
         conversationId,
-        reply: finalReply,
+        reply,
         actions: [
           { kind: 'button', id: 'top', label: 'Ver top equipamentos', message: 'Qual o equipamento que mais consome?' },
           { kind: 'button', id: 'plan', label: 'Plano 7 dias', message: ACTION_PLAN_7D }
@@ -1231,8 +1348,9 @@ export async function handleCustomerChat(c: Collections, customerId: string, bod
     if (requestedKva != null) {
       if (!end) {
         const reply = 'Consigo estimar risco/picos, mas preciso de telemetria deste cliente.';
-        const finalReply = await persistAssistantMessage(c, customerId, conversationId, reply);
-        return { status: 200, body: { conversationId, reply: finalReply } };
+        const assistantMsgId = crypto.randomUUID();
+        await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
+        return { status: 200, body: { conversationId, reply } };
       }
 
       const power = await getPowerSuggestionQuick(c, customerId, end, 30).catch(() => null);
@@ -1243,15 +1361,17 @@ export async function handleCustomerChat(c: Collections, customerId: string, bod
           (risky
             ? 'Há risco de disparos/limitações em picos. Eu recomendaria manter uma margem de segurança.'
             : 'Parece viável com margem de segurança, mas confirma em 2–4 semanas de uso real.');
-        const finalReply = await persistAssistantMessage(c, customerId, conversationId, reply);
-        return { status: 200, body: { conversationId, reply: finalReply, actions: [{ kind: 'button', id: 'power', label: 'Analisar potência', message: 'Potência contratada' }] } };
+        const assistantMsgId = crypto.randomUUID();
+        await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
+        return { status: 200, body: { conversationId, reply, actions: [{ kind: 'button', id: 'power', label: 'Analisar potência', message: 'Potência contratada' }] } };
       }
     }
 
     const reply =
       'Diz-me o cenário: por exemplo "E se eu mudar para bi-horário?", "E se eu baixar para 4.6 kVA?" ou "E se eu deslocar lavagens para a noite?".';
-    const finalReply = await persistAssistantMessage(c, customerId, conversationId, reply);
-    return { status: 200, body: { conversationId, reply: finalReply } };
+    const assistantMsgId = crypto.randomUUID();
+    await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });
+    return { status: 200, body: { conversationId, reply } };
   }
 
   const [last24h, last7d, monthToDate, topAppliances, efficiency, power] = await Promise.all([
@@ -1263,126 +1383,28 @@ export async function handleCustomerChat(c: Collections, customerId: string, bod
     end ? getPowerSuggestionQuick(c, customerId, end, 30).catch(() => null) : Promise.resolve(null)
   ]);
 
-  const generated = await llmGenerateJson<z.infer<typeof LlmChatReplySchema>>({
-    system:
-      'És o assistente Kynex para energia residencial. Responde em português (Portugal), com foco em utilidade e clareza.\n' +
-      '- O teu nome é "Kynex". Se perguntarem como te chamas, responde "Chamo-me Kynex".\n' +
-      '- Responde naturalmente a saudações e small talk (ex.: "tudo bem?"), mas volta ao tema energia em 1 frase.\n' +
-      '- Usa APENAS os dados fornecidos; se faltarem dados, faz 1 pergunta curta de clarificação.\n' +
-      '- Nunca digas que és uma IA, nem menciones modelos.\n' +
-      '- Podes devolver cards e actions para o UI quando fizer sentido, mas mantém tudo simples.\n' +
-      '- Se sugerires um plano, usa um botão com message "__ACTION:PLAN_7D__".\n' +
-      'Formato: {"reply":"...","cards":[...],"actions":[...]} (cards/actions opcionais).',
-    user: {
-      message: parsed.data.message,
-      intent,
-      prefs,
-      state: prevState ?? null,
-      history: recentHistory,
-      context: {
-        now: end ? end.toISOString() : null,
-        last24hKwh: last24h?.kwh ?? null,
-        last7dKwh: last7d?.kwh ?? null,
-        monthToDateKwh: monthToDate?.kwh ?? null,
-        appliancesWindowDays,
-        topLimit,
-        followUpKind,
-        topAppliances,
-        efficiency: efficiency ?? null,
-        power: power ?? null
-      }
-    },
-    schema: LlmChatReplySchema,
-    mock: (u) => {
-      const intentRaw = (u as any)?.intent;
-      const followUpKind = (u as any)?.context?.followUpKind as 'confirm' | 'more' | undefined;
-      const pendingType = (u as any)?.state?.pending?.type as string | undefined;
-
-      if (intentRaw === 'plan_7d') {
-        return {
-          reply: 'Plano 7 dias pronto. Comece hoje com 2 ações simples e vá ajustando ao longo da semana.',
-          actions: [
-            {
-              kind: 'plan',
-              id: 'plan_7d',
-              title: 'Plano 7 dias',
-              items: [
-                { id: 'd1', label: 'Cortar stand-by', detail: 'Desligue tomadas com box/TV/consolas quando não usa.' },
-                { id: 'd2', label: 'Mover consumos flexíveis', detail: 'Programe lavagens fora do pico (fim da tarde).' },
-                { id: 'd3', label: 'Água quente eficiente', detail: 'Evite aquecer várias vezes ao dia; concentre num período.' },
-                { id: 'd4', label: 'Cozinha sem desperdício', detail: 'Use tampa e aproveite calor residual no forno/placa.' },
-                { id: 'd5', label: 'Rever hábitos noturnos', detail: 'Garanta que carregadores não ficam sempre ligados.' },
-                { id: 'd6', label: 'Monitorizar picos', detail: 'Evite ligar vários equipamentos de alta potência ao mesmo tempo.' },
-                { id: 'd7', label: 'Revisão', detail: 'Compare 24h vs dia anterior e ajuste 1 hábito.' }
-              ]
-            }
-          ]
-        };
-      }
-
-      if (intentRaw === 'explain') {
-        return {
-          reply: 'Eu baseio o ranking no custo estimado e energia dos últimos dias, e comparo com padrões de utilização para destacar o que mais pesa.',
-          actions: [{ kind: 'button', id: 'top', label: 'Ver top', message: 'Qual o equipamento que mais consome?' }]
-        };
-      }
-
-      if (intentRaw === 'appliances_top') {
-        return {
-          reply: 'Aqui vai o top. Quer que eu sugira 2 ações rápidas para o equipamento #1?',
-          actions: [{ kind: 'button', id: 'yes', label: 'Sim', message: 'sim' }]
-        };
-      }
-
-      if (followUpKind === 'confirm' && pendingType === 'suggest_appliance_actions') {
-        return {
-          reply: 'Perfeito.\n1) Reduza o stand-by (tomadas/temporizador).\n2) Mova um consumo flexível para fora do pico quando possível.',
-          actions: [{ kind: 'button', id: 'plan', label: 'Plano 7 dias', message: ACTION_PLAN_7D }]
-        };
-      }
-
-      if (intentRaw === 'last_7d') {
-        return {
-          reply: 'Resumo da última semana pronto. Quer ver as melhores horas para concentrar consumos e poupar?',
-          actions: [{ kind: 'button', id: 'yes', label: 'Sim', message: 'sim' }]
-        };
-      }
-
-      if (followUpKind === 'confirm' && pendingType === 'show_efficiency') {
-        return {
-          reply: 'Eficiência horária: nas próximas mensagens posso indicar as horas mais favoráveis para agendar tarefas e evitar picos.',
-          actions: []
-        };
-      }
-
-      return { reply: 'Posso ajudar — diz-me se queres ver consumo, top equipamentos ou dicas de poupança.', cards: [], actions: [] };
-    }
+  const { reply, cards, actions } = buildFallbackReply(parsed.data.message, intent, customer, prevState, prefs, {
+    last24hKwh: last24h?.kwh,
+    last7dKwh: last7d?.kwh,
+    monthToDateKwh: monthToDate?.kwh,
+    appliancesWindowDays,
+    topLimit,
+    followUpKind,
+    topAppliances
+    ,
+    efficiency: efficiency ?? undefined,
+    power: power ?? undefined
   });
 
-  if (!generated) {
-    // Não deixa o histórico "desalinhado" (user sem assistant).
-    const reply =
-      'Não consegui responder agora (serviço de IA indisponível ou não configurado). ' +
-      'Tenta novamente em 10–20s. Se és tu a configurar: define LLM_MODE=full e OPENROUTER_API_KEY.';
-    const finalReply = await persistAssistantMessage(c, customerId, conversationId, reply);
-    return {
-      status: 200,
-      body: {
-        conversationId,
-        reply: finalReply,
-        actions: [
-          { kind: 'button', id: 'retry', label: 'Tentar de novo', message: parsed.data.message },
-          { kind: 'button', id: 'plan', label: 'Plano 7 dias', message: ACTION_PLAN_7D }
-        ]
-      }
-    };
-  }
-
-  const reply = generated.reply;
-  const cards = generated.cards as ChatCard[] | undefined;
-  const actions = generated.actions as ChatAction[] | undefined;
-
-  const finalReply = await persistAssistantMessage(c, customerId, conversationId, reply);
+  const assistantMsgId = crypto.randomUUID();
+  await c.chatMessages.insertOne({
+    id: assistantMsgId,
+    customer_id: customerId,
+    conversation_id: conversationId,
+    role: 'assistant',
+    content: reply,
+    created_at: new Date()
+  });
 
   const nextState: ConversationState = {
     lastIntent: intent,
@@ -1421,7 +1443,7 @@ export async function handleCustomerChat(c: Collections, customerId: string, bod
     status: 200,
     body: {
       conversationId,
-      reply: finalReply,
+      reply,
       cards,
       actions: actions
         ? [

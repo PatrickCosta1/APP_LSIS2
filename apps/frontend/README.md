@@ -12,3 +12,7 @@ SPA em React + TypeScript usando Vite.
 ## Notas
 - Configuração de testes usa ambiente jsdom e `src/setupTests.ts`.
 - Estilos base em `src/index.css` e `src/App.css`.
+
+## Backend / API Base
+- Em produção, define `VITE_API_BASE` (ex.: `https://app-lsis2.onrender.com`) no host do frontend.
+- Em dev, as tasks do VS Code já definem `VITE_API_BASE=http://localhost:4100`.

@@ -9,7 +9,16 @@ import { clampSuggestedPowerKva, loadPowerModel, makePowerFeatures, predictRidge
 import { getAiRetrainStatus, runAiRetrainOnce } from './aiTrainer';
 import { getCustomerChatHistory, handleCustomerChat, type ChatAction } from './chat';
 import { hashPassword, hashToken, normalizeEmail, newToken, validatePassword, verifyPassword } from './auth';
-import { getLlmStatus, llmGenerateJson, llmGenerateText } from './llm';
+import { getDefaultModel, isLlmEnabled, openrouterChatJson } from './llm/openrouter';
+import {
+  llmApplianceTip,
+  llmAppliancesSummarySuggestion,
+  llmContractAnalysisMessage,
+  llmPowerSuggestionCopy,
+  llmRewriteMarketOffers,
+  llmSecurityKynexNodeAlertCopy,
+  llmRewriteNotifications
+} from './llm/orchestrator';
 
 const app = express();
 
@@ -54,6 +63,14 @@ async function collections() {
     collectionsPromise = initDb().then(() => getCollections());
   }
   return collectionsPromise;
+}
+
+async function getAssistantPrefsOrDefault(c: Collections, customerId: string) {
+  const row = await c.assistantPrefs.findOne({ customer_id: customerId }, { projection: { _id: 0, style: 1, focus: 1 } });
+  return {
+    style: (row as any)?.style === 'short' ? ('short' as const) : ('detailed' as const),
+    focus: (['poupanca', 'equipamentos', 'potencia', 'geral'] as const).includes((row as any)?.focus) ? ((row as any)?.focus as any) : ('geral' as const)
+  };
 }
 
 const RATE_EUR_PER_KWH = 0.2;
@@ -131,6 +148,13 @@ function clamp01(v: number) {
   return Math.max(0, Math.min(1, v));
 }
 
+function markLlmText(s: string) {
+  const t = String(s ?? '').trim();
+  if (!t) return t;
+  if (t.toUpperCase().startsWith('LLM:')) return t;
+  return `LLM: ${t}`;
+}
+
 function median(values: number[]) {
   const v = values.filter((x) => Number.isFinite(x)).slice().sort((a, b) => a - b);
   if (!v.length) return 0;
@@ -148,11 +172,6 @@ function stddev(values: number[]) {
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
-});
-
-app.get('/llm/status', (_req, res) => {
-  // endpoint de debug: NÃO devolve chaves/segredos
-  res.json(getLlmStatus());
 });
 
 app.get('/auth/me', async (req, res) => {
@@ -1397,6 +1416,32 @@ app.get('/customers/:customerId/appliances/summary', async (req, res) => {
 
   const daysOut = month ? daysInUtcMonthFromIso(`${month}-01T00:00:00.000Z`) : windowDays;
 
+  if (isLlmEnabled()) {
+    const prefs = await getAssistantPrefsOrDefault(c, customerId);
+    const llm = await llmAppliancesSummarySuggestion({
+      customer: { id: customerId },
+      prefs,
+      nowUtc: end.toISOString(),
+      days: daysOut,
+      month,
+      totalCostEur: Number(totalCost.toFixed(2)),
+      top: top
+        ? {
+            name: String((top as any).name ?? ''),
+            category: (top as any).category ?? null,
+            costEur: Number((top as any).costEur ?? 0),
+            energyKwh: Number((top as any).energyKwh ?? 0),
+            sharePct: Number((top as any).sharePct ?? 0),
+            sessions: Number((top as any).sessions ?? 0)
+          }
+        : null,
+      itemsTop3: items.slice(0, 3).map((x) => ({ name: String((x as any).name ?? ''), costEur: Number((x as any).costEur ?? 0), sharePct: Number((x as any).sharePct ?? 0) })),
+      heuristicSuggestion: suggestion,
+      estimatedSavingsMonthEur
+    });
+    if (llm?.suggestion) suggestion = markLlmText(llm.suggestion);
+  }
+
   return res.json({
     customerId,
     lastUpdated: end.toISOString(),
@@ -1604,41 +1649,59 @@ app.get('/customers/:customerId/appliances/:applianceId/weekly', async (req, res
   const dominantInOffpeak = offpeakHoursUtc.has(dominantHour);
   const dominantInPeak = peakHoursUtc.has(dominantHour);
 
-  const tip = await llmGenerateText({
-    system:
-      'És um assistente de poupança de energia. Cria UMA dica curta (máx. 160 caracteres), concreta e acionável, sobre como reduzir consumo deste equipamento.\n' +
-      '- Não uses números, percentagens, kWh, €, nem linguagem de relatório.\n' +
-      '- Baseia-te apenas nos sinais fornecidos (tarifa, flexibilidade, padrão por horas, stand-by e clima).\n' +
-      '- Português (Portugal).',
-    user: {
+  let tip = 'Use o modo eco e evite deixar ligado sem necessidade.';
+
+  // stand-by personalizado
+  if (standbyWatts != null && standbyWatts >= 6 && thisTotalKwh / Math.max(1, windowDays) < 0.35) {
+    tip = 'Desligue da tomada quando não estiver a usar (o stand-by está a pesar no seu caso).';
+  } else if (isTou && isFlexible && !dominantInOffpeak) {
+    tip = 'Agende este equipamento para o vazio (à noite) e evite o fim da tarde para pagar menos.';
+  } else if (isTou && dominantInPeak) {
+    tip = 'Evite usar no pico do fim da tarde; se der, adie para vazio ou reduza a intensidade.';
+  } else if (nameLower.includes('ar condicionado')) {
+    tip = corrHotCold > 0.05 ? 'Em dias mais quentes, feche janelas/portas e use 24–25°C para manter conforto gastando menos.' : 'Use 24–25°C e mantenha filtros limpos; evita picos sem perder conforto.';
+  } else if (nameLower.includes('água quente') || nameLower.includes('termo')) {
+    tip = isTou ? 'Concentre o aquecimento de água no vazio e evite reforços no fim da tarde.' : 'Concentre o aquecimento de água num período curto e evite deixar a resistência a ligar várias vezes ao dia.';
+  } else if (nameLower.includes('frigor')) {
+    tip = 'Evite abrir portas muitas vezes e confirme a vedação; isso reduz o consumo sem mudar hábitos.';
+  } else if (nameLower.includes('luz')) {
+    tip = 'Desligue divisões vazias e use LEDs; é a ação mais rápida para reduzir o seu consumo.';
+  } else if (isTou && dominantInOffpeak && offPct >= 0.55) {
+    tip = 'Boa prática: você já usa mais no vazio; mantenha tarefas flexíveis nesse período.';
+  }
+
+  if (isLlmEnabled()) {
+    const prefs = await getAssistantPrefsOrDefault(c, customerId);
+    const llm = await llmApplianceTip({
+      customer: { id: customerId, tariff: (customer as any).tariff ?? null },
+      prefs,
+      nowUtc: end.toISOString(),
       appliance: {
+        id: applianceId,
         name: String(appliance.name ?? ''),
-        category: String((appliance as any).category ?? ''),
-        standbyWatts,
-        isFlexible,
-        nameHints: {
-          hasAc: nameLower.includes('ar condicionado'),
-          hasWaterHeat: nameLower.includes('água quente') || nameLower.includes('termo'),
-          hasFridge: nameLower.includes('frigor'),
-          hasLights: nameLower.includes('luz')
-        }
+        category: (appliance as any).category ?? null,
+        standbyWatts
       },
-      tariff: String((customer as any).tariff ?? ''),
-      isTou,
-      usage: {
+      windowDays,
+      totals: {
+        totalKwh: Number(thisTotalKwh.toFixed(3)),
+        totalCostEur: Number(thisTotalCostEur.toFixed(2)),
+        sharePct: Number(sharePct.toFixed(1))
+      },
+      usageShape: {
         dominantHourUtc: dominantHour,
+        offpeakPct: Number(offPct.toFixed(4)),
+        peakPct: Number(peakPct.toFixed(4)),
         dominantInOffpeak,
         dominantInPeak,
-        offPct,
-        peakPct,
-        corrHotCold
-      }
-    },
-    maxChars: 160,
-    mock: () => 'Evite deixar em stand-by quando não estiver a usar e, se possível, programe o uso fora do pico.'
-  });
-
-  if (!tip) return res.status(503).json({ message: 'LLM indisponível ou não configurado (defina LLM_MODE=full e OPENROUTER_API_KEY)' });
+        isTou,
+        isFlexible,
+        corrHotCold: Number(corrHotCold.toFixed(4))
+      },
+      heuristicTip: tip
+    });
+    if (llm?.tip) tip = markLlmText(llm.tip);
+  }
 
   return res.json({
     customerId,
@@ -1774,105 +1837,84 @@ app.get('/customers/:customerId/assistant/notifications', async (req, res) => {
   const hh = Number((customer as any).household_size ?? 2);
   const standbyThreshold = 140 + Math.max(0, Math.min(5, hh)) * 35;
 
-  const candidates: Array<{ type: string; severity: 'info' | 'warning' | 'critical'; actions?: ChatAction[]; data: any }> = [];
+  const notifications: Array<{ id: string; type: string; severity: 'info' | 'warning' | 'critical'; title: string; message: string; actions?: ChatAction[] }> = [];
 
   if (deltaPct > 0.18) {
-    candidates.push({
+    notifications.push({
+      id: `${customerId}:spike_24h`,
       type: 'spike_24h',
       severity: 'warning',
+      title: 'Aumento nas últimas 24h',
+      message: `Consumo 24h: ~${kwh24.toFixed(2)} kWh (≈ ${(deltaPct * 100).toFixed(0)}% acima do dia anterior).`,
       actions: [
         { kind: 'button', id: 'n_top', label: 'Ver top equipamentos', message: 'Qual o equipamento que mais consome?' },
         { kind: 'button', id: 'n_plan', label: 'Plano 7 dias', message: '__ACTION:PLAN_7D__' }
-      ],
-      data: { kwh24, kwhPrev24, deltaPct }
+      ]
     });
   }
 
   if (contracted > 0 && peakKva > contracted * 0.9) {
-    candidates.push({
+    notifications.push({
+      id: `${customerId}:near_power_limit`,
       type: 'near_power_limit',
       severity: 'warning',
+      title: 'Pico perto do limite',
+      message: `Pico (7d): ~${peakKva.toFixed(2)} kVA vs contratada ${contracted.toFixed(2)} kVA.`,
       actions: [
         { kind: 'button', id: 'n_power', label: 'Analisar potência', message: 'Potência contratada' },
         { kind: 'button', id: 'n_plan', label: 'Plano 7 dias', message: '__ACTION:PLAN_7D__' }
-      ],
-      data: { peakKva, contracted }
+      ]
     });
   }
 
   if (nightAvgWatts > standbyThreshold) {
-    candidates.push({
+    notifications.push({
+      id: `${customerId}:high_standby`,
       type: 'high_standby',
       severity: 'info',
+      title: 'Stand-by noturno elevado',
+      message: `Média 02:00–06:00: ~${nightAvgWatts.toFixed(0)} W (acima do esperado).`,
       actions: [
         { kind: 'button', id: 'n_tips', label: 'Dicas para stand-by', message: 'Dá-me 3 dicas para poupar (stand-by).' },
         { kind: 'button', id: 'n_plan', label: 'Plano 7 dias', message: '__ACTION:PLAN_7D__' }
-      ],
-      data: { nightAvgWatts, standbyThreshold, householdSize: hh }
+      ]
     });
   }
 
-  if (!candidates.length) {
-    return res.json({ customerId, lastUpdated: end.toISOString(), notifications: [] });
-  }
-
-  const NotifSchema = z.object({
-    notifications: z
-      .array(
-        z.object({
-          type: z.string().min(1),
-          severity: z.enum(['info', 'warning', 'critical']),
-          title: z.string().min(1).max(60),
-          message: z.string().min(1).max(240)
-        })
-      )
-      .min(1)
-  });
-
-  const generated = await llmGenerateJson<z.infer<typeof NotifSchema>>({
-    system:
-      'És um assistente de energia residencial. Vais gerar notificações curtas e úteis em português (Portugal).\n' +
-      '- Usa APENAS os dados fornecidos. Não inventes números.\n' +
-      '- Mantém o campo severity exatamente como fornecido por tipo.\n' +
-      'Formato: {"notifications":[{"type":"...","severity":"info|warning|critical","title":"...","message":"..."}]}',
-    user: {
+  // LLM: melhora copy e prioriza (detecção permanece determinística)
+  if (isLlmEnabled() && notifications.length) {
+    const prefs = await getAssistantPrefsOrDefault(c, customerId);
+    const llm = await llmRewriteNotifications({
       customer: {
         id: customerId,
         tariff: (customer as any).tariff ?? null,
-        contractedPowerKva: contracted || null
+        contractedPowerKva: Number((customer as any).contracted_power_kva ?? 0),
+        householdSize: Number((customer as any).household_size ?? 0)
       },
-      candidates
-    },
-    schema: NotifSchema,
-    mock: (u) => {
-      const cand = (u as any)?.candidates ?? [];
-      return {
-        notifications: cand.map((c: any) => ({
-          type: String(c.type),
-          severity: c.severity,
-          title: c.type === 'spike_24h' ? 'Consumo acima do normal' : c.type === 'near_power_limit' ? 'Pico perto do limite' : 'Stand-by noturno elevado',
-          message: 'Sugestão: reveja os consumos e escolha uma ação para investigar.'
-        }))
-      };
-    }
-  });
-
-  if (!generated) return res.status(503).json({ message: 'LLM indisponível ou não configurado (defina LLM_MODE=full e OPENROUTER_API_KEY)' });
-
-  const byType = new Map(generated.notifications.map((n) => [n.type, n] as const));
-
-  const notifications: Array<{ id: string; type: string; severity: 'info' | 'warning' | 'critical'; title: string; message: string; actions?: ChatAction[] }> = [];
-  for (const cnd of candidates) {
-    const n = byType.get(cnd.type);
-    if (!n) continue;
-    notifications.push({
-      id: `${customerId}:${cnd.type}`,
-      type: cnd.type,
-      severity: cnd.severity,
-      title: n.title,
-      message: n.message,
-      actions: cnd.actions
+      prefs,
+      nowUtc: end.toISOString(),
+      signals: {
+        kwh24: Number(kwh24.toFixed(3)),
+        kwhPrev24: Number(kwhPrev24.toFixed(3)),
+        deltaPct: Number(deltaPct.toFixed(4)),
+        nightAvgWatts: Math.round(nightAvgWatts),
+        standbyThreshold: Math.round(standbyThreshold),
+        peakWatts7d: Math.round(peakWatts),
+        peakKva7d: Number(peakKva.toFixed(3)),
+        contractedKva: Number(contracted.toFixed(2))
+      },
+      candidates: notifications
     });
+
+    if (llm?.notifications?.length) {
+      const allowed = new Set(notifications.map((n) => n.id));
+      const rewritten = llm.notifications
+        .filter((n) => allowed.has(n.id))
+        .map((n) => ({ ...n, message: markLlmText(n.message) }));
+      if (rewritten.length) {
+        notifications.splice(0, notifications.length, ...rewritten);
+      }
+    }
   }
 
   const now = new Date();
@@ -2077,6 +2119,25 @@ app.get('/customers/:customerId/security/kynex-node', async (req, res) => {
     };
   }
 
+  // LLM: melhora copy do alerta (detecção permanece determinística)
+  if (isLlmEnabled() && alert) {
+    const prefs = await getAssistantPrefsOrDefault(c, customerId);
+    const llm = await llmSecurityKynexNodeAlertCopy({
+      customer: { id: customerId },
+      prefs,
+      nowUtc: end.toISOString(),
+      signals: {
+        anomalyDeviceName: anomalyDevice?.name ?? null,
+        globalAnomaly,
+        last2hAvgWatts: Math.round(last2hAvg),
+        hourMedianWatts: Math.round(hourMedian)
+      },
+      heuristic: alert
+    });
+    if (llm?.title) alert.title = llm.title;
+    if (llm?.message) alert.message = markLlmText(llm.message);
+  }
+
   return res.json({
     customerId,
     lastUpdated: end.toISOString(),
@@ -2218,6 +2279,24 @@ app.get('/customers/:customerId/contract/analysis', async (req, res) => {
           tariff: currentTariff,
           message: 'O contrato atual já está próximo do ótimo para o seu padrão de consumo.'
         };
+
+  if (isLlmEnabled()) {
+    const prefs = await getAssistantPrefsOrDefault(c, customerId);
+    const llm = await llmContractAnalysisMessage({
+      customer: { id: customerId, tariff: String(currentTariff ?? 'Simples'), utility: (customer as any).utility ?? null },
+      prefs,
+      nowUtc: endIso,
+      fields: {
+        forecastMonthKwh: Number(forecastMonthKwh.toFixed(1)),
+        offpeakPct: Number((hourly.offpeakPct * 100).toFixed(1)),
+        currentTariff: String(currentTariff ?? 'Simples'),
+        bestTariff: String(recommendation.tariff),
+        deltaMonthEur: delta
+      },
+      heuristicMessage: recommendation.message
+    });
+    if (llm?.message) (recommendation as any).message = markLlmText(llm.message);
+  }
 
   return res.json({
     customerId,
@@ -2415,6 +2494,40 @@ app.get('/customers/:customerId/market/offers', async (req, res) => {
     .slice(0, 6);
 
   const best = offers[0] ?? null;
+
+  // LLM: melhora o "why" das ofertas (cálculos permanecem determinísticos)
+  if (isLlmEnabled() && offers.length) {
+    const c = await collections();
+    const prefs = await getAssistantPrefsOrDefault(c, customerId);
+    const llm = await llmRewriteMarketOffers({
+      customer: { id: customerId, utility: null, tariff: baseRes.currentTariff },
+      prefs,
+      nowUtc: baseRes.lastUpdated,
+      context: {
+        forecastMonthKwh: Number(baseRes.forecastMonthKwh.toFixed(1)),
+        offpeakPct: Number((baseRes.offpeakPct * 100).toFixed(1)),
+        currentTariff: String(baseRes.currentTariff),
+        currentMonthEur: Number(baseRes.currentMonthEur.toFixed(2))
+      },
+      offers: offers.map((o) => ({
+        provider: o.provider,
+        name: o.name,
+        tariff: String(o.tariff),
+        savingsMonthEur: Number(o.savingsMonthEur ?? 0),
+        savingsYearEur: Number(o.savingsYearEur ?? 0),
+        why: o.why
+      }))
+    });
+
+    if (llm?.offers?.length) {
+      const byKey = new Map(llm.offers.map((x) => [`${x.provider}::${x.name}`, x.why] as const));
+      for (const o of offers) {
+        const nextWhy = byKey.get(`${o.provider}::${o.name}`);
+        if (nextWhy) o.why = markLlmText(nextWhy);
+      }
+    }
+  }
+
   return res.json({
     customerId,
     lastUpdated: baseRes.lastUpdated,
@@ -2458,55 +2571,124 @@ app.get('/customers/:customerId/ai/insights', async (req, res) => {
     .map((v, h) => ({ h, v }))
     .sort((a, b) => b.v - a.v)[0]?.h;
 
-  const InsightsSchema = z.object({
-    tips: z
-      .array(
-        z.object({
-          id: z.string().min(1),
-          icon: z.string().min(1).max(2),
-          text: z.string().min(1).max(260)
-        })
-      )
-      .min(1)
-  });
+  const tips: Array<{ id: string; icon: string; text: string }>
+    = [];
 
-  const generated = await llmGenerateJson({
-    system:
-      'És um assistente de eficiência energética. Gera dicas curtas e úteis, em português (Portugal), com base em telemetria agregada.\n' +
-      '- Usa APENAS os números fornecidos; não inventes dados.\n' +
-      '- Evita redundância e frases muito longas.\n' +
-      `- Devolve até ${limit} dicas (idealmente ${limit}).\n` +
-      'Formato: {"tips":[{"id":"...","icon":"✦","text":"..."}] }',
-    user: {
+  // Se LLM estiver configurado, gera dicas com base no contexto calculado
+  if (isLlmEnabled()) {
+    const TipsSchema = z.object({
+      tips: z
+        .array(
+          z.object({
+            id: z.string().min(1).max(80),
+            icon: z.string().min(1).max(4).default('✦'),
+            text: z.string().min(10).max(240)
+          })
+        )
+        .min(1)
+        .max(8)
+    });
+
+    const ctx = {
       customer: {
-        id: customerId,
-        name: (customer as any).name ?? null,
-        tariff: currentTariff,
-        avgPriceEurPerKwh: avgPrice
+        id: customer.id,
+        name: customer.name ?? null,
+        tariff: customer.tariff ?? null,
+        contractedPowerKva: customer.contracted_power_kva ?? null
       },
-      windowDays: 7,
-      limit,
-      signals: {
-        offpeakPct: offPct,
-        nightAvgWatts,
-        peakHourUtc: typeof peakHour === 'number' ? peakHour : null,
-        shouldBi
+      window: { endUtc: end.toISOString(), daysForHourly: 7 },
+      metrics: {
+        offpeakPct: Number(offPct.toFixed(4)),
+        nightAvgWatts: Math.round(nightAvgWatts),
+        peakHourUtc: typeof peakHour === 'number' ? peakHour : null
+      },
+      heuristicSignals: {
+        shouldBi: shouldBi,
+        currentTariff: currentTariff
+      },
+      limit
+    };
+
+    try {
+      const { parsed } = await openrouterChatJson({
+        model: getDefaultModel(),
+        temperature: 0.35,
+        maxTokens: 650,
+        schema: TipsSchema,
+        messages: [
+          {
+            role: 'system',
+            content:
+              'Você é o assistente IA do Kynex (Portugal). Gere dicas altamente específicas e acionáveis sobre consumo elétrico doméstico. ' +
+              'Responda APENAS com JSON válido no formato {"tips":[{"id":"...","icon":"✦","text":"..."}]}. ' +
+              'Sem markdown, sem texto extra. ' +
+              'As dicas devem: (1) referenciar os números do contexto quando possível, (2) não ser genéricas, (3) ter no máximo 2 frases cada, (4) não inventar dados.'
+          },
+          { role: 'user', content: JSON.stringify(ctx) }
+        ]
+      });
+
+      if (parsed?.tips?.length) {
+        return res.json({
+          customerId,
+          lastUpdated: end.toISOString(),
+          tips: parsed.tips.slice(0, limit).map((t) => ({ ...t, text: markLlmText(t.text) }))
+        });
       }
-    },
-    schema: InsightsSchema,
-    mock: () => ({
-      tips: Array.from({ length: limit }, (_, i) => ({
-        id: `tip_${i + 1}`,
+    } catch {
+      // fallback para heurísticas
+    }
+  }
+
+  if (isBiTariff(currentTariff) || isTriTariff(currentTariff)) {
+    const pct = Math.round(offPct * 100);
+    tips.push({
+      id: 'tariff-usage',
+      icon: '✦',
+      text: pct >= 50
+        ? `Muito bom: ~${pct}% do seu consumo está em vazio. Continue a agendar tarefas flexíveis para a noite.`
+        : `Tem bi-horário mas só ~${pct}% do consumo está em vazio. Se mover alguns consumos 18h–21h para depois das 22h, ganha mais.`
+    });
+  } else {
+    if (shouldBi) {
+      tips.push({
+        id: 'tariff-switch',
         icon: '✦',
-        text: 'Sugestão: programe consumos flexíveis fora do pico e reduza o stand-by à noite.'
-      }))
-    })
-  });
+        text: `O seu consumo tem ~${Math.round(offPct * 100)}% em vazio. Um bi-horário pode fazer sentido para reduzir custo sem mexer muito nos hábitos.`
+      });
+    } else {
+      tips.push({
+        id: 'tariff-stable',
+        icon: '✦',
+        text: 'O seu consumo não está muito concentrado em vazio. Tarifa simples tende a ser mais previsível para si.'
+      });
+    }
+  }
 
-  if (!generated) return res.status(503).json({ message: 'LLM indisponível ou não configurado (defina LLM_MODE=full e OPENROUTER_API_KEY)' });
+  if (nightAvgWatts >= 180) {
+    tips.push({
+      id: 'standby',
+      icon: '✦',
+      text: `Detetámos consumo noturno médio ~${Math.round(nightAvgWatts)}W (2h–5h). Verifique stand-by (TV/Box/PC) e carregadores sempre ligados.`
+    });
+  } else {
+    tips.push({
+      id: 'night-ok',
+      icon: '✦',
+      text: 'Boa notícia: o consumo noturno (2h–5h) está baixo — sinal de pouco stand-by.'
+    });
+  }
 
-  const out = generated.tips.slice(0, limit);
+  if (typeof peakHour === 'number') {
+    tips.push({
+      id: 'peak-hour',
+      icon: '✦',
+      text: `A sua hora mais intensa costuma ser às ${String(peakHour).padStart(2, '0')}h. Se conseguir espalhar alguns consumos por 1–2 horas, reduz picos e stress no contador.`
+    });
+  }
 
+  // Mantém só as melhores (com “pé e cabeça” e sem redundância)
+  const out = tips.slice(0, limit);
   return res.json({
     customerId,
     lastUpdated: end.toISOString(),
@@ -2764,6 +2946,28 @@ app.get('/customers/:customerId/power/suggestion', async (req, res) => {
   }
   if (status === 'ok') {
     message = `Potência sugerida ${suggestedKva.toFixed(1)}kVA (risco ~${riskExceedPct}%). Mantém bom equilíbrio entre custo e segurança.`;
+  }
+
+  if (isLlmEnabled()) {
+    const prefs = await getAssistantPrefsOrDefault(c, customerId);
+    const llm = await llmPowerSuggestionCopy({
+      customer: { id: customerId, segment: (customer as any).segment ?? null, tariff: (customer as any).tariff ?? null },
+      prefs,
+      nowUtc: endIso,
+      fields: {
+        status,
+        contractedKva: round1(contractedKva),
+        suggestedIdealKva: suggestedKva,
+        yearlyPeakKva,
+        usagePctOfContracted,
+        riskExceedPct,
+        savingsMonth,
+        modelUsed
+      },
+      heuristic: { title, message }
+    });
+    if (llm?.title) title = llm.title;
+    if (llm?.message) message = markLlmText(llm.message);
   }
 
   return res.json({

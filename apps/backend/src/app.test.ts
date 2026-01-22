@@ -5,7 +5,6 @@ import { closeDb, getCollections, initDb } from './db';
 import { hashToken } from './auth';
 
 let mongod: MongoMemoryServer;
-const prevLlmMode = process.env.LLM_MODE;
 
 async function seedAuth(customerId: string) {
   const c = getCollections();
@@ -40,15 +39,12 @@ beforeAll(async () => {
   mongod = await MongoMemoryServer.create();
   process.env.MONGODB_URI = mongod.getUri();
   process.env.MONGODB_DB = 'kynex_test';
-  process.env.LLM_MODE = 'mock';
   await initDb();
 });
 
 afterAll(async () => {
   await closeDb();
   await mongod.stop();
-  if (typeof prevLlmMode === 'string') process.env.LLM_MODE = prevLlmMode;
-  else delete process.env.LLM_MODE;
 });
 
 describe('health', () => {
@@ -546,21 +542,6 @@ describe('chat', () => {
       .send({ message: 'sim', conversationId: convId });
     expect(follow.status).toBe(200);
     expect(String(follow.body.reply)).toContain('Eficiência horária');
-  });
-});
-
-describe('llm status', () => {
-  it('GET /llm/status devolve status sanitizado', async () => {
-    process.env.OPENROUTER_API_KEY = 'SHOULD_NOT_LEAK';
-    const res = await request(app).get('/llm/status');
-    expect(res.status).toBe(200);
-    expect(res.body).toHaveProperty('mode');
-    expect(res.body).toHaveProperty('hasApiKey');
-    expect(res.body).toHaveProperty('model');
-    expect(res.body).toHaveProperty('timeoutMs');
-    expect(res.body).toHaveProperty('nodeEnv');
-
-    expect(JSON.stringify(res.body)).not.toContain('SHOULD_NOT_LEAK');
   });
 });
 
