@@ -14,11 +14,15 @@ Monorepo académico com frontend React + TypeScript (Vite) e backend Express + T
 	- (Produção) garantir que a variável está definida no serviço (ex.: Render)
 - Configurar LLM/OpenRouter (opcional):
 	- Por defeito, o LLM está **desligado** (`LLM_MODE=off`).
-	- Para usar o modelo do OpenRouter para reescrita de texto (chat + insights):
-		- `LLM_MODE=rewrite`
-		- `OPENROUTER_API_KEY` (obrigatória)
+	- Modos:
+		- `LLM_MODE=rewrite` (reescrita best-effort)
+		- `LLM_MODE=full` (o LLM gera outputs “IA”, ex.: chat/insights/notificações/dicas)
+		- `LLM_MODE=mock` (sem rede; útil para testes)
+	- Variáveis:
+		- `OPENROUTER_API_KEY` (obrigatória para `full`/`rewrite`)
 		- `OPENROUTER_MODEL` (default: `tngtech/deepseek-r1t2-chimera:free`)
 		- `OPENROUTER_TIMEOUT_MS` (default: `7000`)
+	- Em `full`, se o LLM estiver indisponível, alguns endpoints podem devolver `503`.
 - Configurar Frontend (produção):
 	- `VITE_API_BASE` (URL do backend; ex.: Render). Sem isto, o frontend pode tentar `localhost`.
 - (Opcional) Treinar IA:

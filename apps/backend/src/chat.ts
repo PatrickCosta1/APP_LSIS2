@@ -1287,7 +1287,70 @@ export async function handleCustomerChat(c: Collections, customerId: string, bod
       }
     },
     schema: LlmChatReplySchema,
-    mock: () => ({ reply: 'Posso ajudar — diz-me se queres ver consumo, top equipamentos ou dicas de poupança.', cards: [], actions: [] })
+    mock: (u) => {
+      const intentRaw = (u as any)?.intent;
+      const followUpKind = (u as any)?.context?.followUpKind as 'confirm' | 'more' | undefined;
+      const pendingType = (u as any)?.state?.pending?.type as string | undefined;
+
+      if (intentRaw === 'plan_7d') {
+        return {
+          reply: 'Plano 7 dias pronto. Comece hoje com 2 ações simples e vá ajustando ao longo da semana.',
+          actions: [
+            {
+              kind: 'plan',
+              id: 'plan_7d',
+              title: 'Plano 7 dias',
+              items: [
+                { id: 'd1', label: 'Cortar stand-by', detail: 'Desligue tomadas com box/TV/consolas quando não usa.' },
+                { id: 'd2', label: 'Mover consumos flexíveis', detail: 'Programe lavagens fora do pico (fim da tarde).' },
+                { id: 'd3', label: 'Água quente eficiente', detail: 'Evite aquecer várias vezes ao dia; concentre num período.' },
+                { id: 'd4', label: 'Cozinha sem desperdício', detail: 'Use tampa e aproveite calor residual no forno/placa.' },
+                { id: 'd5', label: 'Rever hábitos noturnos', detail: 'Garanta que carregadores não ficam sempre ligados.' },
+                { id: 'd6', label: 'Monitorizar picos', detail: 'Evite ligar vários equipamentos de alta potência ao mesmo tempo.' },
+                { id: 'd7', label: 'Revisão', detail: 'Compare 24h vs dia anterior e ajuste 1 hábito.' }
+              ]
+            }
+          ]
+        };
+      }
+
+      if (intentRaw === 'explain') {
+        return {
+          reply: 'Eu baseio o ranking no custo estimado e energia dos últimos dias, e comparo com padrões de utilização para destacar o que mais pesa.',
+          actions: [{ kind: 'button', id: 'top', label: 'Ver top', message: 'Qual o equipamento que mais consome?' }]
+        };
+      }
+
+      if (intentRaw === 'appliances_top') {
+        return {
+          reply: 'Aqui vai o top. Quer que eu sugira 2 ações rápidas para o equipamento #1?',
+          actions: [{ kind: 'button', id: 'yes', label: 'Sim', message: 'sim' }]
+        };
+      }
+
+      if (followUpKind === 'confirm' && pendingType === 'suggest_appliance_actions') {
+        return {
+          reply: 'Perfeito.\n1) Reduza o stand-by (tomadas/temporizador).\n2) Mova um consumo flexível para fora do pico quando possível.',
+          actions: [{ kind: 'button', id: 'plan', label: 'Plano 7 dias', message: ACTION_PLAN_7D }]
+        };
+      }
+
+      if (intentRaw === 'last_7d') {
+        return {
+          reply: 'Resumo da última semana pronto. Quer ver as melhores horas para concentrar consumos e poupar?',
+          actions: [{ kind: 'button', id: 'yes', label: 'Sim', message: 'sim' }]
+        };
+      }
+
+      if (followUpKind === 'confirm' && pendingType === 'show_efficiency') {
+        return {
+          reply: 'Eficiência horária: nas próximas mensagens posso indicar as horas mais favoráveis para agendar tarefas e evitar picos.',
+          actions: []
+        };
+      }
+
+      return { reply: 'Posso ajudar — diz-me se queres ver consumo, top equipamentos ou dicas de poupança.', cards: [], actions: [] };
+    }
   });
 
   if (!generated) {

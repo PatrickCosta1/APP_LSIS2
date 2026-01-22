@@ -40,18 +40,25 @@ O backend cria índices e faz seed automático de dados globais (telemetria demo
 ## IA (dados sintéticos + treino + previsão)
 Para termos “IA a funcionar” sem depender de dados reais, o backend suporta um modelo linear treinado em Python e previsão via API.
 
-## LLM (OpenRouter) — opcional
-O backend pode usar um LLM (OpenRouter) **apenas para reescrever texto** (sem quebrar contratos do frontend):
-- Chat: reescreve a resposta final do assistente antes de persistir.
-- Insights: reescreve as dicas mantendo os mesmos IDs.
+## LLM (OpenRouter)
+O backend pode usar um LLM (via OpenRouter) para **gerar** e/ou **reescrever** conteúdo “IA” sem quebrar os contratos do frontend.
+
+Modos:
+- `LLM_MODE=off` — não usa LLM.
+- `LLM_MODE=rewrite` — reescreve texto (best-effort) onde aplicável.
+- `LLM_MODE=full` — o LLM gera os outputs “IA” (ex.: chat, insights, notificações, dicas curtas).
+- `LLM_MODE=mock` — não chama a rede; devolve respostas determinísticas (útil para testes).
 
 Variáveis:
-- `LLM_MODE=off|rewrite` (default: `off`)
+- `LLM_MODE=off|rewrite|full|mock` (default: `off`)
 - `OPENROUTER_API_KEY` (obrigatória para `rewrite`)
+- `OPENROUTER_API_KEY` (obrigatória para `full`)
 - `OPENROUTER_MODEL` (default: `tngtech/deepseek-r1t2-chimera:free`)
 - `OPENROUTER_TIMEOUT_MS` (default: `7000`)
 
-Se não houver key, se estiver `off`, ou se houver erro/timeout, o backend usa o fallback heurístico.
+Notas:
+- Em `full`, se não houver key (ou houver erro/timeout), endpoints “IA” podem responder `503` (para não cair em heurísticas).
+- Em testes (`jest`), o suite configura `LLM_MODE=mock` automaticamente.
 
 ### Telemetria contínua no servidor
 Ao correr `npm run dev` / `npm start`, o backend também adiciona novas leituras sintéticas automaticamente para cada cliente existente.
