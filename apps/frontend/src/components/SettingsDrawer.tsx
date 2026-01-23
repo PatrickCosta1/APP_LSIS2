@@ -251,7 +251,7 @@ export default function SettingsDrawer({ open, user, onClose, onUserUpdate }: Se
                     className="sd-input"
                     value={editName}
                     onChange={(e) => setEditName(e.target.value)}
-                    placeholder="Ex.: Susana Nicola"
+                    placeholder=""
                   />
                 </label>
 
@@ -261,7 +261,7 @@ export default function SettingsDrawer({ open, user, onClose, onUserUpdate }: Se
                     className="sd-input"
                     value={editEmail}
                     onChange={(e) => setEditEmail(e.target.value)}
-                    placeholder="Ex.: sca@gmail.com"
+                    placeholder=""
                   />
                 </label>
 

@@ -36,23 +36,27 @@
   pointer-events: auto;
 }
 
+/* Drawer menor, flutuante, arredondado e com sombra, inspirado no mockup */
 .sd-drawer {
-  position: absolute;
-  top: 0;
-  right: 0;
-  height: 100vh;
-  width: 50vw;
-  max-width: 520px;
-  min-width: 320px;
+  position: fixed;
+  top: 32px;
+  right: 16px;
+  bottom: 32px;
+  height: auto;
+  width: 90vw;
+  max-width: 360px;
+  min-width: 280px;
   background: var(--sd-bg);
   color: var(--sd-text);
-  transform: translateX(100%);
-  transition: transform 260ms ease;
-  box-shadow: -14px 0 30px rgba(0, 0, 0, 0.35);
+  border-radius: 20px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+  transform: translateX(120%);
+  transition: transform 260ms cubic-bezier(.4,0,.2,1);
   display: flex;
   flex-direction: column;
   padding: 18px 16px;
   overflow-y: auto;
+  z-index: 1201;
 }
 
 /* Responsivo: em ecrãs muito pequenos, ocupa 100% para legibilidade */
@@ -60,6 +64,13 @@
   .sd-drawer {
     width: 100vw;
     min-width: 0;
+    right: 0;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    border-radius: 0;
+    max-width: 100vw;
+    height: 100vh;
   }
 }
 
