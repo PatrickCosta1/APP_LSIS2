@@ -33,6 +33,7 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [userInfo, setUserInfo] = useState(getUserInfo());
   const path = window.location.pathname;
+  const openSettings = () => setSettingsOpen(true);
 
   const hasAuth = (() => {
     try {
@@ -70,19 +71,19 @@ function App() {
   }
   if (path.startsWith('/equipamentos')) {
     return <>
-      <Equipamentos onOpenSettings={setSettingsOpen} />
+      <Equipamentos onOpenSettings={openSettings} />
       {drawer}
     </>;
   }
   if (path.startsWith('/graficos')) {
     return <>
-      <Charts onOpenSettings={setSettingsOpen} />
+      <Charts onOpenSettings={openSettings} />
       {drawer}
     </>;
   }
   if (path.startsWith('/seguranca')) {
     return <>
-      <Security onOpenSettings={setSettingsOpen} />
+      <Security onOpenSettings={openSettings} />
       {drawer}
     </>;
   }
@@ -105,13 +106,13 @@ function App() {
   // Suporta links diretos como /dashboard (Netlify/SPA)
   if (path.startsWith('/dashboard')) {
     return <>
-      <Dashboard onOpenSettings={setSettingsOpen} />
+      <Dashboard onOpenSettings={openSettings} />
       {drawer}
     </>;
   }
 
   return <>
-    <Dashboard onOpenSettings={setSettingsOpen} />
+    <Dashboard onOpenSettings={openSettings} />
     {drawer}
   </>;
 }

@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import logoImg from '../assets/images/logo.png';
 import casaImg from '../assets/images/casa_dia.png';
 import AssistantChatModal from '../components/AssistantChatModal';
-import SettingsDrawer from '../components/SettingsDrawer';
 import './Dashboard.css';
 
 type ChartItem = { label: string; value: number; kind: 'consumido' | 'previsto'; date?: string };
@@ -113,17 +112,16 @@ const navItems = [
   ) },
 ];
 
-function Dashboard() {
+type DashboardProps = { onOpenSettings?: () => void };
+
+function Dashboard({ onOpenSettings }: DashboardProps) {
   const [activeTab, setActiveTab] = useState('home');
   const [assistantOpen, setAssistantOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [topSection, setTopSection] = useState<'current' | 'chart'>('current');
   const [chartRange, setChartRange] = useState<'dia' | 'semana' | 'mes'>('dia');
   const [apiBase, setApiBase] = useState<string | null>(null);
   const [customerId, setCustomerId] = useState<string | null>(null);
   const [customerName, setCustomerName] = useState<string>('Cliente');
-  const [userEmail, setUserEmail] = useState<string>('');
-  const [userPhotoUrl, setUserPhotoUrl] = useState<string | null>(null);
   const [nowStats, setNowStats] = useState<CustomerNowResponse | null>(null);
   const [contractedPowerKvaLocal, setContractedPowerKvaLocal] = useState<number | null>(null);
   const [selectedDayKey, setSelectedDayKey] = useState<string | null>(null);
@@ -184,40 +182,24 @@ function Dashboard() {
     return { icon, tempLabel, dateLabel, ariaLabel, title };
   }, [dayStats?.weather, activeDayKey]);
 
-  // Atualiza info do utilizador sempre que o drawer for aberto
+  // Carrega info básica do utilizador (nome/potência) do localStorage
   useEffect(() => {
-    // Atualiza dados do utilizador sempre que muda o pathname ou o drawer abre
-    const pathname = window.location.pathname;
-    if (!settingsOpen && !pathname.startsWith('/dashboard')) return;
     try {
       const id = localStorage.getItem('kynex:customerId');
       setCustomerId(id);
 
-      const photo = localStorage.getItem('kynex:profilePhotoUrl');
-      if (photo) setUserPhotoUrl(photo);
-
-      let email: string | undefined = undefined;
-      let name: string | undefined = undefined;
       const onboardRaw = localStorage.getItem('kynex:onboarding');
       if (onboardRaw) {
-        const parsed = JSON.parse(onboardRaw) as { name?: string; email?: string; contracted_power_kva?: number };
-        if (parsed?.name) name = parsed.name;
-        if (parsed?.email) email = parsed.email;
+        const parsed = JSON.parse(onboardRaw) as { name?: string; contracted_power_kva?: number };
+        if (parsed?.name) setCustomerName(parsed.name);
         if (typeof parsed?.contracted_power_kva === 'number' && Number.isFinite(parsed.contracted_power_kva)) {
           setContractedPowerKvaLocal(parsed.contracted_power_kva);
         }
       }
-
-      if (!email) {
-        const registeredEmail = localStorage.getItem('kynex:registeredEmail');
-        if (registeredEmail) email = registeredEmail;
-      }
-      setUserEmail(email || '');
-      if (name) setCustomerName(name);
     } catch {
       // ignore
     }
-  }, [settingsOpen, window.location.pathname]);
+  }, []);
 
   useEffect(() => {
     const apiBases = [
@@ -367,12 +349,7 @@ function Dashboard() {
               </svg>
               <span className="notif-badge">2</span>
             </button>
-            <button
-              className="avatar-btn"
-              aria-label="Perfil"
-              type="button"
-              onClick={() => setSettingsOpen(true)}
-            >
+            <button className="avatar-btn" aria-label="Perfil" type="button" onClick={onOpenSettings}>
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <circle cx="12" cy="8" r="4" />
                 <path d="M4 20c0-3.314 3.134-6 7-6h2c3.866 0 7 2.686 7 6" />
@@ -380,17 +357,6 @@ function Dashboard() {
             </button>
           </div>
         </header>
-
-        <SettingsDrawer
-          open={settingsOpen}
-          onClose={() => setSettingsOpen(false)}
-          user={{ name: customerName, email: userEmail, photoUrl: userPhotoUrl }}
-          onUserUpdate={(patch) => {
-            if (typeof patch.name === 'string') setCustomerName(patch.name);
-            if (typeof patch.email === 'string') setUserEmail(patch.email);
-            if (typeof patch.photoUrl === 'string' || patch.photoUrl === null) setUserPhotoUrl(patch.photoUrl ?? null);
-          }}
-        />
         <div className="brand-text">
           <h1 className="brand-title">Olá, <b>{customerName}!</b></h1>
         </div>
