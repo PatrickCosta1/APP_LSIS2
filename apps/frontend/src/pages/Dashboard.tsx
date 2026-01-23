@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import logoImg from '../assets/images/logo.png';
 import casaImg from '../assets/images/casa_dia.png';
 import AssistantChatModal from '../components/AssistantChatModal';
+import SettingsDrawer from '../components/SettingsDrawer';
 import './Dashboard.css';
 
 type ChartItem = { label: string; value: number; kind: 'consumido' | 'previsto'; date?: string };
@@ -115,11 +116,14 @@ const navItems = [
 function Dashboard() {
   const [activeTab, setActiveTab] = useState('home');
   const [assistantOpen, setAssistantOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [topSection, setTopSection] = useState<'current' | 'chart'>('current');
   const [chartRange, setChartRange] = useState<'dia' | 'semana' | 'mes'>('dia');
   const [apiBase, setApiBase] = useState<string | null>(null);
   const [customerId, setCustomerId] = useState<string | null>(null);
   const [customerName, setCustomerName] = useState<string>('Cliente');
+  const [userEmail, setUserEmail] = useState<string>('');
+  const [userPhotoUrl, setUserPhotoUrl] = useState<string | null>(null);
   const [nowStats, setNowStats] = useState<CustomerNowResponse | null>(null);
   const [contractedPowerKvaLocal, setContractedPowerKvaLocal] = useState<number | null>(null);
   const [selectedDayKey, setSelectedDayKey] = useState<string | null>(null);
@@ -185,14 +189,21 @@ function Dashboard() {
       const id = localStorage.getItem('kynex:customerId');
       setCustomerId(id);
 
+      const photo = localStorage.getItem('kynex:profilePhotoUrl');
+      if (photo) setUserPhotoUrl(photo);
+
       const onboardRaw = localStorage.getItem('kynex:onboarding');
       if (onboardRaw) {
-        const parsed = JSON.parse(onboardRaw) as { name?: string; contracted_power_kva?: number };
+        const parsed = JSON.parse(onboardRaw) as { name?: string; email?: string; contracted_power_kva?: number };
         if (parsed?.name) setCustomerName(parsed.name);
+        if (parsed?.email) setUserEmail(parsed.email);
         if (typeof parsed?.contracted_power_kva === 'number' && Number.isFinite(parsed.contracted_power_kva)) {
           setContractedPowerKvaLocal(parsed.contracted_power_kva);
         }
       }
+
+      const registeredEmail = localStorage.getItem('kynex:registeredEmail');
+      if (registeredEmail) setUserEmail(registeredEmail);
     } catch {
       // ignore
     }
@@ -346,7 +357,12 @@ function Dashboard() {
               </svg>
               <span className="notif-badge">2</span>
             </button>
-            <button className="avatar-btn" aria-label="Perfil">
+            <button
+              className="avatar-btn"
+              aria-label="Perfil"
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+            >
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <circle cx="12" cy="8" r="4" />
                 <path d="M4 20c0-3.314 3.134-6 7-6h2c3.866 0 7 2.686 7 6" />
@@ -354,6 +370,12 @@ function Dashboard() {
             </button>
           </div>
         </header>
+
+        <SettingsDrawer
+          open={settingsOpen}
+          onClose={() => setSettingsOpen(false)}
+          user={{ name: customerName, email: userEmail, photoUrl: userPhotoUrl }}
+        />
         <div className="brand-text">
           <h1 className="brand-title">Olá, <b>{customerName}!</b></h1>
         </div>

@@ -1,0 +1,239 @@
+/*
+  Side Drawer — Configurações
+  Requisitos:
+  - overlay sobre a página
+  - desliza da direita para a esquerda
+  - ocupa metade da largura (responsivo em ecrãs pequenos)
+  - fundo do menu: #3b4a57
+*/
+
+:root {
+  --sd-bg: #3b4a57;
+  --sd-card: #33404b;
+  --sd-text: #ffffff;
+  --sd-muted: rgba(255, 255, 255, 0.75);
+  --sd-overlay: rgba(0, 0, 0, 0.45);
+
+  /* 5mm ≈ 18.9px; aproximamos para 19px */
+  --sd-gap-5mm: 19px;
+  /* 1mm ≈ 3.78px; aproximamos para 4px */
+  --sd-pad-1mm: 4px;
+}
+
+.sd-overlay {
+  position: fixed;
+  inset: 0;
+  background: transparent;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 220ms ease, background 220ms ease;
+  z-index: 9999;
+}
+
+.sd-overlay.open {
+  background: var(--sd-overlay);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.sd-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  height: 100vh;
+  width: 50vw;
+  max-width: 520px;
+  min-width: 320px;
+  background: var(--sd-bg);
+  color: var(--sd-text);
+  transform: translateX(100%);
+  transition: transform 260ms ease;
+  box-shadow: -14px 0 30px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  padding: 18px 16px;
+  overflow-y: auto;
+}
+
+/* Responsivo: em ecrãs muito pequenos, ocupa 100% para legibilidade */
+@media (max-width: 560px) {
+  .sd-drawer {
+    width: 100vw;
+    min-width: 0;
+  }
+}
+
+.sd-drawer.open {
+  transform: translateX(0);
+}
+
+.sd-top {
+  display: grid;
+  grid-template-columns: 40px 1fr 40px;
+  align-items: center;
+}
+
+.sd-back {
+  width: 40px;
+  height: 40px;
+  border: none;
+  background: transparent;
+  color: var(--sd-text);
+  border-radius: 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 160ms ease;
+}
+
+.sd-back:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.sd-title {
+  text-align: center;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.sd-top-spacer {
+  width: 40px;
+  height: 40px;
+}
+
+.sd-gap {
+  height: var(--sd-gap-5mm);
+}
+
+.sd-section {
+  margin-bottom: var(--sd-gap-5mm);
+}
+
+.sd-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--sd-text);
+  margin: 0 0 8px;
+}
+
+.sd-card {
+  width: 100%;
+  background: var(--sd-card);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: var(--sd-pad-1mm);
+  color: inherit;
+}
+
+button.sd-card {
+  cursor: pointer;
+  transition: transform 140ms ease, background 140ms ease;
+}
+
+button.sd-card:hover {
+  background: rgba(51, 64, 75, 0.92);
+  transform: translateY(-1px);
+}
+
+.sd-user-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+}
+
+.sd-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.18);
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sd-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.sd-avatar-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  color: #ffffff;
+  background: linear-gradient(135deg, rgba(77, 225, 193, 0.28), rgba(141, 224, 255, 0.22));
+}
+
+.sd-user-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.sd-user-name {
+  font-weight: 700;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sd-user-email {
+  font-size: 12.5px;
+  color: var(--sd-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sd-right {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  width: 28px;
+}
+
+.sd-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 10px;
+  border: none;
+  background: transparent;
+  color: var(--sd-text);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background 160ms ease;
+}
+
+.sd-row:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.sd-row + .sd-row {
+  margin-top: 10px;
+}
+
+.sd-row-text {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.sd-danger {
+  color: #ff4d4d;
+}
+
+.sd-icon {
+  color: rgba(255, 255, 255, 0.92);
+  flex: 0 0 auto;
+}

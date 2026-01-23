@@ -5,6 +5,7 @@ import Onboarding from './pages/Onboarding';
 import Equipamentos from './pages/Equipamentos';
 import Login from './pages/Login';
 import Security from './pages/Security';
+import SettingsGeneric from './pages/SettingsGeneric';
 
 function App() {
   const path = window.location.pathname;
@@ -36,6 +37,21 @@ function App() {
   }
   if (path.startsWith('/seguranca')) {
     return <Security />;
+  }
+
+  // Páginas simples para navegação do menu lateral de Configurações
+  if (
+    path.startsWith('/perfil') ||
+    path.startsWith('/loja') ||
+    path.startsWith('/plano') ||
+    path.startsWith('/faturas') ||
+    path.startsWith('/contrato') ||
+    path.startsWith('/relatorios') ||
+    path.startsWith('/tema') ||
+    path.startsWith('/sobre-nos') ||
+    path.startsWith('/definicoes')
+  ) {
+    return <SettingsGeneric />;
   }
 
   // Suporta links diretos como /dashboard (Netlify/SPA)
