@@ -237,3 +237,82 @@ button.sd-card:hover {
   color: rgba(255, 255, 255, 0.92);
   flex: 0 0 auto;
 }
+
+/* ---------- Perfil (sub-vista dentro do drawer) ---------- */
+
+.sd-form {
+  padding: 10px;
+}
+
+.sd-label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.sd-input {
+  width: 100%;
+  border-radius: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.18);
+  color: #ffffff;
+  outline: none;
+}
+
+.sd-input::placeholder {
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.sd-input:focus {
+  border-color: rgba(141, 224, 255, 0.45);
+  box-shadow: 0 0 0 3px rgba(141, 224, 255, 0.14);
+}
+
+.sd-form-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  margin-top: 10px;
+}
+
+.sd-btn {
+  border: none;
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: transform 140ms ease, filter 140ms ease, background 140ms ease;
+}
+
+.sd-btn:active {
+  transform: translateY(1px);
+}
+
+.sd-btn-secondary {
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+}
+
+.sd-btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.sd-btn-primary {
+  background: linear-gradient(135deg, rgba(77, 225, 193, 0.9), rgba(141, 224, 255, 0.86));
+  color: #0f1319;
+}
+
+.sd-btn-primary:hover {
+  filter: brightness(1.05);
+}
+
+.sd-save-msg {
+  margin-top: 10px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.85);
+}

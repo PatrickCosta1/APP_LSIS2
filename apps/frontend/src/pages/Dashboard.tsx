@@ -184,7 +184,9 @@ function Dashboard() {
     return { icon, tempLabel, dateLabel, ariaLabel, title };
   }, [dayStats?.weather, activeDayKey]);
 
+  // Atualiza info do utilizador sempre que o drawer for aberto
   useEffect(() => {
+    if (!settingsOpen) return;
     try {
       const id = localStorage.getItem('kynex:customerId');
       setCustomerId(id);
@@ -192,22 +194,28 @@ function Dashboard() {
       const photo = localStorage.getItem('kynex:profilePhotoUrl');
       if (photo) setUserPhotoUrl(photo);
 
+      let email: string | undefined = undefined;
+      let name: string | undefined = undefined;
       const onboardRaw = localStorage.getItem('kynex:onboarding');
       if (onboardRaw) {
         const parsed = JSON.parse(onboardRaw) as { name?: string; email?: string; contracted_power_kva?: number };
-        if (parsed?.name) setCustomerName(parsed.name);
-        if (parsed?.email) setUserEmail(parsed.email);
+        if (parsed?.name) name = parsed.name;
+        if (parsed?.email) email = parsed.email;
         if (typeof parsed?.contracted_power_kva === 'number' && Number.isFinite(parsed.contracted_power_kva)) {
           setContractedPowerKvaLocal(parsed.contracted_power_kva);
         }
       }
 
-      const registeredEmail = localStorage.getItem('kynex:registeredEmail');
-      if (registeredEmail) setUserEmail(registeredEmail);
+      if (!email) {
+        const registeredEmail = localStorage.getItem('kynex:registeredEmail');
+        if (registeredEmail) email = registeredEmail;
+      }
+      setUserEmail(email || '');
+      if (name) setCustomerName(name);
     } catch {
       // ignore
     }
-  }, []);
+  }, [settingsOpen]);
 
   useEffect(() => {
     const apiBases = [
@@ -375,6 +383,11 @@ function Dashboard() {
           open={settingsOpen}
           onClose={() => setSettingsOpen(false)}
           user={{ name: customerName, email: userEmail, photoUrl: userPhotoUrl }}
+          onUserUpdate={(patch) => {
+            if (typeof patch.name === 'string') setCustomerName(patch.name);
+            if (typeof patch.email === 'string') setUserEmail(patch.email);
+            if (typeof patch.photoUrl === 'string' || patch.photoUrl === null) setUserPhotoUrl(patch.photoUrl ?? null);
+          }}
         />
         <div className="brand-text">
           <h1 className="brand-title">Olá, <b>{customerName}!</b></h1>
