@@ -186,7 +186,9 @@ function Dashboard() {
 
   // Atualiza info do utilizador sempre que o drawer for aberto
   useEffect(() => {
-    if (!settingsOpen) return;
+    // Atualiza dados do utilizador sempre que muda o pathname ou o drawer abre
+    const pathname = window.location.pathname;
+    if (!settingsOpen && !pathname.startsWith('/dashboard')) return;
     try {
       const id = localStorage.getItem('kynex:customerId');
       setCustomerId(id);
@@ -215,7 +217,7 @@ function Dashboard() {
     } catch {
       // ignore
     }
-  }, [settingsOpen]);
+  }, [settingsOpen, window.location.pathname]);
 
   useEffect(() => {
     const apiBases = [

@@ -212,7 +212,8 @@ function formatPtDateTime(iso: string) {
   }).format(d);
 }
 
-function Charts() {
+type ChartsProps = { onOpenSettings?: () => void };
+function Charts({ onOpenSettings }: ChartsProps) {
   const [range, setRange] = useState<RangeKey>('semana');
   const [exportOpen, setExportOpen] = useState(false);
   const exportRef = useRef<HTMLDivElement | null>(null);
@@ -575,7 +576,7 @@ function Charts() {
               </svg>
               <span className="notif-badge">2</span>
             </button>
-            <button className="avatar-btn" aria-label="Perfil" type="button">
+            <button className="avatar-btn" aria-label="Perfil" type="button" onClick={onOpenSettings}>
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <circle cx="12" cy="8" r="4" />
                 <path d="M4 20c0-3.314 3.134-6 7-6h2c3.866 0 7 2.686 7 6" />

@@ -93,7 +93,8 @@ const navItems: readonly NavItem[] = [
   }
 ] as const;
 
-function Security() {
+type SecurityProps = { onOpenSettings?: () => void };
+function Security({ onOpenSettings }: SecurityProps) {
   const [activeTab, setActiveTab] = useState<TabKey>('node');
   const [assistantOpen, setAssistantOpen] = useState(false);
 
@@ -238,7 +239,7 @@ function Security() {
               </svg>
               <span className="notif-badge">2</span>
             </button>
-            <button className="avatar-btn" aria-label="Perfil" type="button">
+            <button className="avatar-btn" aria-label="Perfil" type="button" onClick={onOpenSettings}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <circle cx="12" cy="7" r="4" />
                 <path d="M5 21v-2a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v2" />
