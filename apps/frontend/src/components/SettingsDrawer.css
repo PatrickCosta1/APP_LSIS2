@@ -39,9 +39,9 @@
 /* Drawer menor, flutuante, arredondado e com sombra, inspirado no mockup */
 .sd-drawer {
   position: fixed;
-  top: 32px;
-  right: 16px;
-  bottom: 32px;
+  top: max(24px, env(safe-area-inset-top, 0px));
+  right: max(12px, env(safe-area-inset-right, 0px));
+  bottom: max(24px, env(safe-area-inset-bottom, 0px));
   height: auto;
   width: 90vw;
   max-width: 360px;

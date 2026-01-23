@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import logoImg from '../assets/images/logo.png';
 import casaImg from '../assets/images/casa_dia.png';
+import setinha1Img from '../assets/images/setinha1.png';
+import seta1Img from '../assets/images/seta1.png';
 import AssistantChatModal from '../components/AssistantChatModal';
 import './Dashboard.css';
 
@@ -513,6 +515,8 @@ function Dashboard({ onOpenSettings }: DashboardProps) {
                 <div className="annotation top">Potência Atual Utilizada <strong>{usedPowerPct !== null ? `${Math.round(usedPowerPct)}%` : '—'}</strong></div>
                 <div className="annotation right">Consumo Atual <strong>{nowStats ? `${(nowStats.wattsNow / 1000).toFixed(2)}kW` : '—'}</strong></div>
               </div>
+              <img className="hero-arrow" src={setinha1Img} alt="Seta" />
+              <img className="hero-arrow-left" src={seta1Img} alt="Seta esquerda" />
               <img className="hero-house" src={casaImg} alt="Visual da casa" />
             </section>
           )}
@@ -538,7 +542,7 @@ function Dashboard({ onOpenSettings }: DashboardProps) {
                 <path d="M12 2L15.5 8.5L22 12L15.5 15.5L12 22L8.5 15.5L2 12L8.5 8.5L12 2Z" fill="currentColor" />
               </svg>
             </button>
-
+          
             <nav className="bottom-nav">
               {navItems.map((item) => (
                 <button

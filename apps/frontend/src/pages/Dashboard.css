@@ -8,6 +8,18 @@
   --accent-2: #8de0ff;
   --danger: #ff6b6b;
   --success: #8fe38f;
+
+  /* Safe areas (iOS notch / foldables) */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+
+  /* Layout responsivo */
+  --app-frame-max: 440px;
+  --app-pad-x: clamp(12px, 3.2vw, 18px);
+  --app-pad-top: 12px;
+  --app-pad-bottom: 74px;
 }
 
 * {
@@ -17,28 +29,56 @@
 html, body, #root {
   margin: 0;
   padding: 0;
-  min-height: 100vh;
+  min-height: 100dvh;
   font-family: 'Inter', 'Manrope', system-ui, -apple-system, sans-serif;
   color: var(--text);
   overflow-x: hidden;
 }
-
 .app-shell {
-  min-height: 100vh;
+  min-height: 100dvh;
   width: 100vw;
   display: flex;
   justify-content: center;
 }
 
 .phone-frame {
-  width: min(440px, 100vw);
-  min-height: 100vh;
+  width: min(var(--app-frame-max), 100vw);
+  min-height: 100dvh;
   background: url('../assets/images/dia.png') center/cover no-repeat;
   display: flex;
   flex-direction: column;
   position: relative;
   overflow: hidden;
-  padding: 12px 14px 74px;
+  padding:
+    calc(var(--app-pad-top) + var(--safe-top))
+    calc(var(--app-pad-x) + var(--safe-left))
+    calc(var(--app-pad-bottom) + var(--safe-bottom))
+    calc(var(--app-pad-x) + var(--safe-right));
+}
+
+@media (min-width: 768px) {
+  :root {
+    --app-frame-max: 520px;
+    --app-pad-top: 14px;
+    --app-pad-bottom: 78px;
+  }
+}
+
+@media (min-width: 1024px) {
+  :root {
+    --app-frame-max: 560px;
+  }
+}
+
+/* Landscape/low-height devices (Nest Hub, alguns foldables em landscape) */
+@media (max-height: 560px) and (orientation: landscape) {
+  :root {
+    --app-pad-top: 8px;
+    --app-pad-bottom: 64px;
+  }
+  .top-bar {
+    padding: 10px 0 4px;
+  }
 }
 
 .top-bar {
@@ -315,6 +355,36 @@ html, body, #root {
   color: #ffffff;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
   border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.annotation.top {
+  transform: translate(0.9cm, 0.3cm);
+}
+
+.annotation.right {
+  transform: translateY(0.6cm);
+}
+
+.hero-arrow {
+  position: absolute;
+  top: 60px;
+  left: calc(50% + 2.3cm);
+  transform: translateX(-50%);
+  width: 40px;
+  height: auto;
+  filter: drop-shadow(0 2px 8px rgba(77, 225, 193, 0.5));
+  z-index: 10;
+}
+
+.hero-arrow-left {
+  position: absolute;
+  top: calc(50% - 1.3cm);
+  left: calc(10px + 1.0cm);
+  transform: translateY(-50%);
+  width: 70px;
+  height: auto;
+  filter: drop-shadow(0 2px 8px rgba(77, 225, 193, 0.5));
+  z-index: 10;
 }
 
 .hero-card {
