@@ -1,5 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import logoImg from '../assets/images/logo.png';
+import logoImg from '../assets/images/logo2.png';
+import logoEdp from '../assets/images/edp.png';
+import logoEndesa from '../assets/images/endesa.png';
+import logoGoldEnergy from '../assets/images/goldenergy.png';
+import logoIberdrola from '../assets/images/iberdrola.png';
+
 import SettingsDrawer from '../components/SettingsDrawer';
 import './Contrato.css';
 
@@ -156,10 +161,45 @@ export default function Contrato() {
 
   const utility = contract?.current?.utility ?? 'EDP Comercial';
   const tariff = contract?.current?.tariff ?? 'Bi-horário';
-  const vazio = contract?.current?.price_vazio_eur_per_kwh ?? 0;
-  const cheia = contract?.current?.price_cheia_eur_per_kwh ?? 0;
-  const fixed = contract?.current?.fixed_daily_fee_eur ?? 0;
+  const vazio = contract?.current?.price_vazio_eur_per_kwh ?? 0.14;
+  const cheia = contract?.current?.price_cheia_eur_per_kwh ?? 0.19;
   const lastUpdated = contract?.lastUpdated ?? '';
+  
+  // Preço médio ponderado (assumindo 40% vazio, 60% cheia)
+  const avgPrice = (vazio * 0.4 + cheia * 0.6).toFixed(2);
+
+  const recommendations = [
+    {
+      id: 1,
+      provider: 'Goldenergy',
+      logo: logoGoldEnergy,
+      savings: 145,
+      reason: 'Ideal para o seu alto consumo de fim-de-semana',
+      priceKwh: 0.14,
+      badge: null,
+      color: 'cyan'
+    },
+    {
+      id: 2,
+      provider: 'Iberdrola',
+      logo: logoIberdrola,
+      savings: 90,
+      reason: 'Tarifa verde adaptada ao seu perfil',
+      priceKwh: 0.16,
+      badge: 'Energia 100% Verde',
+      color: 'green'
+    },
+    {
+      id: 3,
+      provider: 'Endesa',
+      logo: logoEndesa,
+      savings: 65,
+      reason: 'Desconto para consumo noturno',
+      priceKwh: 0.17,
+      badge: null,
+      color: 'cyan'
+    }
+  ];
 
   return (
     <div className="app-shell">
@@ -174,22 +214,13 @@ export default function Contrato() {
             <button
               className="contrato-back"
               type="button"
-              onClick={() => window.location.assign('/dashboard')}
+              onClick={() => {
+                localStorage.setItem('openSettingsOnReturn', 'true');
+                window.history.back();
+              }}
               aria-label="Voltar"
             >
               <IconBack />
-            </button>
-            <button
-              className="avatar-btn"
-              aria-label="Perfil"
-              type="button"
-              onClick={() => setSettingsOpen(true)}
-              style={{ marginLeft: 'auto' }}
-            >
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="8" r="4" />
-                <path d="M4 20c0-3.314 3.134-6 7-6h2c3.866 0 7 2.686 7 6" />
-              </svg>
             </button>
           </div>
         </header>
@@ -205,59 +236,105 @@ export default function Contrato() {
           }}
         />
 
-        <div className="contrato-title">Contrato</div>
+        <main className="content contrato-content">
+          <div className="contrato-page-title">O Meu Contrato</div>
+          <div className="contrato-subtitle">
+            Última atualização: {loading ? '...' : formatPtDateTime(lastUpdated) || 'Hoje, 09:41'}
+          </div>
 
-        <main className="content">
           {loading ? (
-            <div className="contrato-loading">A carregar informações do contrato...</div>
+            <div className="contrato-loading">
+              <div className="spinner"></div>
+              <p>A analisar o seu contrato...</p>
+            </div>
           ) : (
-            <div className="contrato-card">
-              <div className="contrato-header">
-                <div className="contrato-provider">
-                  <div className="contrato-provider-label">Comercializador</div>
-                  <div className="contrato-provider-name">{utility}</div>
-                </div>
-                <div className="contrato-date">
-                  <div className="contrato-date-label">Última atualização</div>
-                  <div className="contrato-date-value">{formatPtDateTime(lastUpdated)}</div>
-                </div>
-              </div>
-
-              <div className="contrato-divider" />
-
-              <div className="contrato-details">
-                <div className="contrato-detail-section">
-                  <div className="contrato-section-title">Tarifário</div>
-                  <div className="contrato-section-value">{tariff}</div>
+            <>
+              {/* Cartão do Contrato Atual */}
+              <div className="contrato-current-card">
+                <div className="current-card-header">
+                  <div className="provider-logo">
+                    <img src={logoEdp} alt={utility} />
+                  </div>
+                  <div className="provider-info">
+                    <div className="provider-name">{utility}</div>
+                    <div className="provider-badge">Contrato Atual</div>
+                  </div>
                 </div>
 
-                <div className="contrato-detail-section">
-                  <div className="contrato-section-title">Preços por kWh</div>
-                  <div className="contrato-prices">
-                    <div className="contrato-price-item">
-                      <span className="contrato-price-label">Vazio:</span>
-                      <span className="contrato-price-value">{fmtEur(vazio)}</span>
+                <div className="current-card-grid">
+                  <div className="info-item">
+                    <div className="info-icon">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M13 2L3 14h8l-1 8 10-12h-8l1-8z" />
+                      </svg>
                     </div>
-                    <div className="contrato-price-item">
-                      <span className="contrato-price-label">Cheia:</span>
-                      <span className="contrato-price-value">{fmtEur(cheia)}</span>
+                    <div className="info-content">
+                      <div className="info-label">Potência</div>
+                      <div className="info-value">6.9 kVA</div>
+                    </div>
+                  </div>
+
+                  <div className="info-item">
+                    <div className="info-icon">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <circle cx="12" cy="12" r="10" />
+                        <path d="M12 6v6l4 2" />
+                      </svg>
+                    </div>
+                    <div className="info-content">
+                      <div className="info-label">Ciclo</div>
+                      <div className="info-value">{tariff}</div>
                     </div>
                   </div>
                 </div>
 
-                <div className="contrato-detail-section">
-                  <div className="contrato-section-title">Termo Fixo (Potência/dia)</div>
-                  <div className="contrato-section-value">{fmtEur(fixed)}</div>
+                <div className="current-price-highlight">
+                  <div className="price-label">Preço Médio</div>
+                  <div className="price-value">{avgPrice}€/kWh</div>
                 </div>
               </div>
 
-              <div className="contrato-footer">
-                <div className="contrato-info-icon">ℹ️</div>
-                <div className="contrato-info-text">
-                  Estes valores refletem o seu contrato atual. Para ver ofertas e simulações, visite a página de Estatísticas.
+              {/* Separador com Insights AI */}
+              <div className="ai-insights-header">
+                <div className="ai-icon">✨</div>
+                <div className="ai-text">
+                  <div className="ai-title">Insights AI</div>
+                  <div className="ai-subtitle">
+                    Analisámos o seu padrão de consumo das últimas 4 semanas e encontrámos poupanças:
+                  </div>
                 </div>
               </div>
-            </div>
+
+              {/* Carrossel de Recomendações */}
+              <div className="recommendations-carousel">
+                {recommendations.map((rec) => (
+                  <div key={rec.id} className={`recommendation-card ${rec.color}`}>
+                    <div className="rec-header">
+                      <div className="rec-logo">
+                        <img src={rec.logo} alt={rec.provider} />
+                      </div>
+                      <div className="rec-provider">{rec.provider}</div>
+                      {rec.badge && <div className="rec-badge">{rec.badge}</div>}
+                    </div>
+
+                    <div className="rec-savings">
+                      <div className="savings-label">Poupe por ano</div>
+                      <div className="savings-value">-{rec.savings}€</div>
+                    </div>
+
+                    <div className="rec-reason">{rec.reason}</div>
+
+                    <div className="rec-comparison">
+                      <span className="new-price">{rec.priceKwh.toFixed(2)}€</span>
+                      <span className="vs">vs</span>
+                      <span className="old-price">{avgPrice}€</span>
+                    </div>
+
+                    <button className="rec-button">Ver Oferta</button>
+                  </div>
+                ))}
+              </div>
+            </>
           )}
         </main>
       </div>

@@ -116,6 +116,13 @@ function Security() {
     try {
       const id = localStorage.getItem('kynex:customerId');
       setCustomerId(id);
+
+      // Verifica se deve abrir o menu ao retornar de uma página de configurações
+      const shouldOpenSettings = localStorage.getItem('openSettingsOnReturn');
+      if (shouldOpenSettings === 'true') {
+        localStorage.removeItem('openSettingsOnReturn');
+        setSettingsOpen(true);
+      }
     } catch {
       // ignore
     }

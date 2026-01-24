@@ -57,22 +57,13 @@ export default function SobreNos() {
             <button
               className="sobre-nos-back"
               type="button"
-              onClick={() => window.location.assign('/dashboard')}
+              onClick={() => {
+                localStorage.setItem('openSettingsOnReturn', 'true');
+                window.history.back();
+              }}
               aria-label="Voltar"
             >
               <IconBack />
-            </button>
-            <button
-              className="avatar-btn"
-              aria-label="Perfil"
-              type="button"
-              onClick={() => setSettingsOpen(true)}
-              style={{ marginLeft: 'auto' }}
-            >
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="8" r="4" />
-                <path d="M4 20c0-3.314 3.134-6 7-6h2c3.866 0 7 2.686 7 6" />
-              </svg>
             </button>
           </div>
         </header>

@@ -1,5 +1,6 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import logoImg from '../assets/images/logo.png';
+import SettingsDrawer from '../components/SettingsDrawer';
 import './SettingsGeneric.css';
 
 type PageDef = { prefix: string; title: string };
@@ -26,11 +27,26 @@ function IconBack() {
 
 export default function SettingsGeneric() {
   const path = window.location.pathname;
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [customerName, setCustomerName] = useState('');
+  const [userEmail, setUserEmail] = useState('');
+  const [userPhotoUrl, setUserPhotoUrl] = useState<string | null>(null);
 
   const title = useMemo(() => {
     const match = pages.find((p) => path.startsWith(p.prefix));
     return match?.title ?? 'Configurações';
   }, [path]);
+
+  useEffect(() => {
+    if (settingsOpen) {
+      const name = localStorage.getItem('customer_name') ?? '';
+      const email = localStorage.getItem('user_email') ?? '';
+      const photo = localStorage.getItem('user_photo_url');
+      setCustomerName(name);
+      setUserEmail(email);
+      setUserPhotoUrl(photo);
+    }
+  }, [settingsOpen]);
 
   return (
     <div className="app-shell">
@@ -42,11 +58,25 @@ export default function SettingsGeneric() {
             </div>
           </div>
           <div className="sg-actions">
-            <button className="sg-back" type="button" onClick={() => window.location.assign('/dashboard')} aria-label="Voltar">
+            <button className="sg-back" type="button" onClick={() => {
+              localStorage.setItem('openSettingsOnReturn', 'true');
+              window.history.back();
+            }} aria-label="Voltar">
               <IconBack />
             </button>
           </div>
         </header>
+
+        <SettingsDrawer
+          open={settingsOpen}
+          onClose={() => setSettingsOpen(false)}
+          user={{ name: customerName, email: userEmail, photoUrl: userPhotoUrl }}
+          onUserUpdate={(patch) => {
+            if (typeof patch.name === 'string') setCustomerName(patch.name);
+            if (typeof patch.email === 'string') setUserEmail(patch.email);
+            if (typeof patch.photoUrl === 'string' || patch.photoUrl === null) setUserPhotoUrl(patch.photoUrl ?? null);
+          }}
+        />
 
         <div className="sg-title">{title}</div>
         <div className="sg-card">

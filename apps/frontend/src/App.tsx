@@ -8,6 +8,8 @@ import Security from './pages/Security';
 import SettingsGeneric from './pages/SettingsGeneric';
 import Contrato from './pages/Contrato';
 import SobreNos from './pages/SobreNos';
+import Faturas from './pages/Faturas';
+import Definicoes from './pages/Definicoes';
 
 function App() {
   const path = window.location.pathname;
@@ -51,15 +53,23 @@ function App() {
     return <SobreNos />;
   }
 
+  // Página Faturas
+  if (path.startsWith('/faturas')) {
+    return <Faturas />;
+  }
+
+  // Página Definições
+  if (path.startsWith('/definicoes')) {
+    return <Definicoes />;
+  }
+
   // Páginas simples para navegação do menu lateral de Configurações
   if (
     path.startsWith('/perfil') ||
     path.startsWith('/loja') ||
     path.startsWith('/plano') ||
-    path.startsWith('/faturas') ||
     path.startsWith('/relatorios') ||
-    path.startsWith('/tema') ||
-    path.startsWith('/definicoes')
+    path.startsWith('/tema')
   ) {
     return <SettingsGeneric />;
   }
