@@ -58,6 +58,8 @@
   flex-direction: column;
   padding: 0 16px;
   overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
   z-index: 1201;
 }
 
