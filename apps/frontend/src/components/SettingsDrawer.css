@@ -28,12 +28,14 @@
   pointer-events: none;
   transition: opacity 220ms ease, background 220ms ease;
   z-index: 9999;
+  overflow: hidden;
 }
 
 .sd-overlay.open {
   background: var(--sd-overlay);
   opacity: 1;
   pointer-events: auto;
+  overflow: hidden;
 }
 
 /* Drawer menor, flutuante, arredondado e com sombra, inspirado no mockup */

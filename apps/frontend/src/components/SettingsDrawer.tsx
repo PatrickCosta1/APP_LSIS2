@@ -44,12 +44,11 @@ export default function SettingsDrawer({ open, user, onClose, onUserUpdate }: Se
 
   // UX: quando o drawer está aberto, evita scroll no body.
   useEffect(() => {
-    if (!open) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = prev;
-    };
+    if (open) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
   }, [open]);
 
   // Quando fecha, volta ao menu principal.
