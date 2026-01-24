@@ -1,0 +1,194 @@
+.contrato-frame {
+  /* reaproveita a base do layout do app */
+}
+
+.contrato-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.contrato-back {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  border: none;
+  background: rgba(31, 31, 35, 0.8);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.contrato-back:hover {
+  background: rgba(31, 31, 35, 1);
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: translateY(-1px);
+}
+
+.contrato-title {
+  margin: 8px 0 16px;
+  font-size: 24px;
+  font-weight: 800;
+  color: #22292f;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+
+.contrato-loading {
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 16px;
+  padding: 24px;
+  color: #1c2630;
+  text-align: center;
+  font-weight: 600;
+}
+
+.contrato-card {
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 20px;
+  padding: 0;
+  overflow: hidden;
+  color: #1c2630;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+  backdrop-filter: blur(10px);
+}
+
+.contrato-header {
+  padding: 24px 20px;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.2) 0%, rgba(255, 255, 255, 0.08) 100%);
+}
+
+.contrato-provider {
+  margin-bottom: 16px;
+}
+
+.contrato-provider-label {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: rgba(28, 38, 48, 0.6);
+  margin-bottom: 6px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+
+.contrato-provider-name {
+  font-size: 26px;
+  font-weight: 800;
+  color: #1c2630;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  letter-spacing: -0.5px;
+}
+
+.contrato-date {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.contrato-date-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(28, 38, 48, 0.6);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+
+.contrato-date-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1c2630;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+
+.contrato-divider {
+  height: 1px;
+  background: rgba(28, 38, 48, 0.1);
+}
+
+.contrato-details {
+  padding: 20px;
+}
+
+.contrato-detail-section {
+  margin-bottom: 20px;
+}
+
+.contrato-detail-section:last-child {
+  margin-bottom: 0;
+}
+
+.contrato-section-title {
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: rgba(28, 38, 48, 0.65);
+  margin-bottom: 8px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+
+.contrato-section-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: #1c2630;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+
+.contrato-prices {
+  display: flex;
+  gap: 16px;
+}
+
+.contrato-price-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+}
+
+.contrato-price-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(28, 38, 48, 0.65);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+
+.contrato-price-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: #1c2630;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+
+.contrato-footer {
+  padding: 16px 20px;
+  background: rgba(255, 255, 255, 0.1);
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.contrato-info-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.contrato-info-text {
+  font-size: 13px;
+  line-height: 1.5;
+  color: rgba(28, 38, 48, 0.75);
+  font-weight: 500;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
