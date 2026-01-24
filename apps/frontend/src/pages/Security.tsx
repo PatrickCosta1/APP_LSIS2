@@ -259,7 +259,7 @@ function Security() {
       <div className="phone-frame">
         <header className="top-bar">
           <div className="brand">
-            <button className="brand-logo" type="button" aria-label="Kynex">
+            <button className="brand-logo" type="button" onClick={() => window.location.assign('/dashboard')} aria-label="Ir para Dashboard">
               <img src={logoImg} alt="Kynex" />
             </button>
             <div className="brand-text">

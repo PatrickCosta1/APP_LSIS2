@@ -206,9 +206,9 @@ export default function Contrato() {
       <div className="phone-frame contrato-frame">
         <header className="top-bar">
           <div className="brand">
-            <div className="brand-logo">
+            <button className="brand-logo" type="button" onClick={() => window.location.assign('/dashboard')} aria-label="Ir para Dashboard">
               <img src={logoImg} alt="Kynex" />
-            </div>
+            </button>
           </div>
           <div className="contrato-actions">
             <button

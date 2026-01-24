@@ -182,9 +182,9 @@ function Chat() {
             <button className="chat-back" type="button" onClick={() => window.location.assign('/dashboard')} aria-label="Voltar">
               ←
             </button>
-            <div className="brand-logo">
+            <button className="brand-logo" type="button" onClick={() => window.location.assign('/dashboard')} aria-label="Ir para Dashboard">
               <img src={logoImg} alt="Kynex" />
-            </div>
+            </button>
             <div className="chat-title">
               <div className="chat-title-small">Assistente</div>
               <div className="chat-title-big">Chat pessoal</div>

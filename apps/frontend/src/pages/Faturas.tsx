@@ -200,9 +200,9 @@ export default function Faturas() {
       <div className="phone-frame faturas-frame">
         <header className="top-bar">
           <div className="brand">
-            <div className="brand-logo">
+            <button className="brand-logo" type="button" onClick={() => window.location.assign('/dashboard')} aria-label="Ir para Dashboard">
               <img src={logoImg} alt="Kynex" />
-            </div>
+            </button>
           </div>
           <div className="faturas-actions">
             <button
