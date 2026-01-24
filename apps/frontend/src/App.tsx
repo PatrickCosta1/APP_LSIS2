@@ -6,6 +6,8 @@ import Equipamentos from './pages/Equipamentos';
 import Login from './pages/Login';
 import Security from './pages/Security';
 import SettingsGeneric from './pages/SettingsGeneric';
+import Contrato from './pages/Contrato';
+import SobreNos from './pages/SobreNos';
 
 function App() {
   const path = window.location.pathname;
@@ -39,16 +41,24 @@ function App() {
     return <Security />;
   }
 
+  // Página de Contrato
+  if (path.startsWith('/contrato')) {
+    return <Contrato />;
+  }
+
+  // Página Sobre Nós
+  if (path.startsWith('/sobre-nos')) {
+    return <SobreNos />;
+  }
+
   // Páginas simples para navegação do menu lateral de Configurações
   if (
     path.startsWith('/perfil') ||
     path.startsWith('/loja') ||
     path.startsWith('/plano') ||
     path.startsWith('/faturas') ||
-    path.startsWith('/contrato') ||
     path.startsWith('/relatorios') ||
     path.startsWith('/tema') ||
-    path.startsWith('/sobre-nos') ||
     path.startsWith('/definicoes')
   ) {
     return <SettingsGeneric />;

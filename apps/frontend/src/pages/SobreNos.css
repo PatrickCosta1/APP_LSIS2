@@ -1,0 +1,276 @@
+.sobre-nos-shell {
+  background: linear-gradient(180deg, #1f1f23 0%, #2a2a32 100%);
+  min-height: 100vh;
+}
+
+.sobre-nos-frame {
+  background: transparent !important;
+}
+
+.sobre-nos-header {
+  background: rgba(31, 31, 35, 0.95) !important;
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.sobre-nos-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.sobre-nos-back {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  border: none;
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.sobre-nos-back:hover {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.25);
+  transform: translateY(-1px);
+}
+
+.sobre-nos-hero {
+  padding: 50px 20px 40px;
+  text-align: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.sobre-nos-hero-logo {
+  width: 100px;
+  height: 100px;
+  margin: 0 auto 24px;
+  background: transparent;
+  border-radius: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+}
+
+.sobre-nos-hero-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.sobre-nos-slogan {
+  font-size: 24px;
+  font-weight: 300;
+  color: rgba(255, 255, 255, 0.9);
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  letter-spacing: 1px;
+  font-style: italic;
+}
+
+.sobre-nos-content {
+  padding: 0 20px 40px;
+}
+
+/* 2. O Manifesto */
+.sobre-nos-manifesto {
+  padding: 32px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.sobre-nos-manifesto-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: #ffffff;
+  margin: 0 0 20px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  line-height: 1.4;
+}
+
+.sobre-nos-manifesto-text {
+  font-size: 15px;
+  line-height: 1.7;
+  color: #E0E0E0;
+  margin: 0 0 16px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+
+.sobre-nos-manifesto-text:last-child {
+  margin-bottom: 0;
+}
+
+.sobre-nos-manifesto-text .highlight {
+  color: #00CED1;
+  font-weight: 600;
+}
+
+.sobre-nos-manifesto-text strong {
+  color: #ffffff;
+  font-weight: 700;
+}
+
+/* 3. A Origem */
+.sobre-nos-origem {
+  padding: 32px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.sobre-nos-origem-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: #ffffff;
+  margin: 0 0 16px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+
+.sobre-nos-origem-text {
+  font-size: 15px;
+  line-height: 1.7;
+  color: #E0E0E0;
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+
+.sobre-nos-origem-text .highlight {
+  color: #00CED1;
+  font-weight: 700;
+}
+
+/* 4. Links Externos */
+.sobre-nos-links {
+  padding: 32px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.sobre-nos-links-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: #ffffff;
+  margin: 0 0 20px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+
+.sobre-nos-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sobre-nos-button {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 20px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  text-decoration: none;
+  color: #ffffff;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  transition: all 0.3s ease;
+  cursor: pointer;
+}
+
+.sobre-nos-button:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(0, 206, 209, 0.5);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(0, 206, 209, 0.15);
+}
+
+.sobre-nos-button-icon {
+  font-size: 24px;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sobre-nos-button-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.sobre-nos-button-text {
+  font-size: 15px;
+  font-weight: 600;
+  flex: 1;
+}
+
+/* 5. Rodapé */
+.sobre-nos-footer {
+  padding: 32px 0 16px;
+  text-align: center;
+}
+
+.sobre-nos-footer-version {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.5);
+  margin: 0 0 8px;
+  font-family: 'Courier New', monospace;
+}
+
+.sobre-nos-footer-legal {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.6);
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+
+/* Remove estilos antigos não utilizados */
+.sobre-nos-section,
+.sobre-nos-section-title,
+.sobre-nos-text,
+.sobre-nos-mission-box,
+.sobre-nos-vision-box,
+.sobre-nos-mission-text,
+.sobre-nos-vision-text,
+.sobre-nos-features,
+.sobre-nos-feature-card,
+.sobre-nos-feature-icon,
+.sobre-nos-feature-title,
+.sobre-nos-feature-text,
+.sobre-nos-values,
+.sobre-nos-value-item,
+.sobre-nos-value-icon,
+.sobre-nos-value-content,
+.sobre-nos-value-title,
+.sobre-nos-value-text,
+.sobre-nos-final,
+.sobre-nos-cta-box,
+.sobre-nos-cta-title,
+.sobre-nos-cta-text {
+  display: none;
+}
+
+/* Ajuste para o botão avatar na página */
+.sobre-nos-frame .avatar-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.sobre-nos-frame .avatar-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.25);
+  transform: translateY(-1px);
+}
