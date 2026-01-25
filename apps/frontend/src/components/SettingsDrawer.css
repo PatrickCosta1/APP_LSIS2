@@ -28,49 +28,46 @@
   pointer-events: none;
   transition: opacity 220ms ease, background 220ms ease;
   z-index: 9999;
+  overflow: hidden;
 }
 
 .sd-overlay.open {
   background: var(--sd-overlay);
   opacity: 1;
   pointer-events: auto;
+  overflow: hidden;
 }
 
 /* Drawer menor, flutuante, arredondado e com sombra, inspirado no mockup */
 .sd-drawer {
   position: fixed;
-  top: max(24px, env(safe-area-inset-top, 0px));
-  right: max(12px, env(safe-area-inset-right, 0px));
-  bottom: max(24px, env(safe-area-inset-bottom, 0px));
-  height: auto;
-  width: 90vw;
-  max-width: 360px;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  height: 100vh;
+  width: calc(100vw - 60px);
+  max-width: 420px;
   min-width: 280px;
   background: var(--sd-bg);
   color: var(--sd-text);
-  border-radius: 20px;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.18);
-  transform: translateX(120%);
+  border-radius: 0;
+  box-shadow: -4px 0 24px rgba(0,0,0,0.3);
+  transform: translateX(100%);
   transition: transform 260ms cubic-bezier(.4,0,.2,1);
   display: flex;
   flex-direction: column;
-  padding: 18px 16px;
+  padding: 0 16px 200px 16px;
   overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
   z-index: 1201;
 }
 
 /* Responsivo: em ecrãs muito pequenos, ocupa 100% para legibilidade */
 @media (max-width: 560px) {
   .sd-drawer {
-    width: 100vw;
-    min-width: 0;
-    right: 0;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    border-radius: 0;
-    max-width: 100vw;
-    height: 100vh;
+    width: calc(100vw - 40px);
+    max-width: none;
   }
 }
 
@@ -82,6 +79,8 @@
   display: grid;
   grid-template-columns: 40px 1fr 40px;
   align-items: center;
+  padding: 18px 16px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .sd-back {
@@ -115,6 +114,8 @@
 }
 
 .sd-gap {
+  height: var(--sd-gap-5mm);
+}
   height: var(--sd-gap-5mm);
 }
 

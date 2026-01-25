@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import logoImg from '../assets/images/logo.png';
 import AssistantChatModal from '../components/AssistantChatModal';
+import SettingsDrawer from '../components/SettingsDrawer';
 import './Dashboard.css';
 import './Equipamentos.css';
 
@@ -204,8 +205,7 @@ function iconForApplianceName(name: string) {
   return iconStandby();
 }
 
-type EquipamentosProps = { onOpenSettings?: () => void };
-function Equipamentos({ onOpenSettings }: EquipamentosProps) {
+function Equipamentos() {
   const [month, setMonth] = useState<string>(() => {
     const d = new Date();
     return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`;
@@ -214,6 +214,10 @@ function Equipamentos({ onOpenSettings }: EquipamentosProps) {
   const monthOptions = useMemo(() => buildRecentMonthOptions(12), []);
 
   const [assistantOpen, setAssistantOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [customerName, setCustomerName] = useState<string>('Cliente');
+  const [userEmail, setUserEmail] = useState<string>('');
+  const [userPhotoUrl, setUserPhotoUrl] = useState<string | null>(null);
 
   const [apiBase, setApiBase] = useState<string | null>(null);
   const [customerId, setCustomerId] = useState<string | null>(null);
@@ -228,10 +232,43 @@ function Equipamentos({ onOpenSettings }: EquipamentosProps) {
     try {
       const id = localStorage.getItem('kynex:customerId');
       setCustomerId(id);
+
+      // Verifica se deve abrir o menu ao retornar de uma página de configurações
+      const shouldOpenSettings = localStorage.getItem('openSettingsOnReturn');
+      if (shouldOpenSettings === 'true') {
+        localStorage.removeItem('openSettingsOnReturn');
+        setSettingsOpen(true);
+      }
     } catch {
       // ignore
     }
   }, []);
+
+  useEffect(() => {
+    if (!settingsOpen) return;
+    try {
+      const photo = localStorage.getItem('kynex:profilePhotoUrl');
+      if (photo) setUserPhotoUrl(photo);
+
+      let email: string | undefined = undefined;
+      let name: string | undefined = undefined;
+      const onboardRaw = localStorage.getItem('kynex:onboarding');
+      if (onboardRaw) {
+        const parsed = JSON.parse(onboardRaw) as { name?: string; email?: string };
+        if (parsed?.name) name = parsed.name;
+        if (parsed?.email) email = parsed.email;
+      }
+
+      if (!email) {
+        const registeredEmail = localStorage.getItem('kynex:registeredEmail');
+        if (registeredEmail) email = registeredEmail;
+      }
+      setUserEmail(email || '');
+      if (name) setCustomerName(name);
+    } catch {
+      // ignore
+    }
+  }, [settingsOpen]);
 
   useEffect(() => {
     const apiBases = [
@@ -445,9 +482,9 @@ function Equipamentos({ onOpenSettings }: EquipamentosProps) {
       <div className="phone-frame">
         <header className="top-bar">
           <div className="brand">
-            <div className="brand-logo">
+            <button className="brand-logo" type="button" onClick={() => window.location.assign('/dashboard')} aria-label="Ir para Dashboard">
               <img src={logoImg} alt="Kynex" />
-            </div>
+            </button>
           </div>
           <div className="top-actions">
             <button className="notif-btn" aria-label="Notificações" type="button">
@@ -461,7 +498,12 @@ function Equipamentos({ onOpenSettings }: EquipamentosProps) {
               </svg>
               <span className="notif-badge">2</span>
             </button>
-            <button className="avatar-btn" aria-label="Perfil" type="button" onClick={onOpenSettings}>
+            <button
+              className="avatar-btn"
+              aria-label="Perfil"
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+            >
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <circle cx="12" cy="8" r="4" />
                 <path d="M4 20c0-3.314 3.134-6 7-6h2c3.866 0 7 2.686 7 6" />
@@ -469,6 +511,17 @@ function Equipamentos({ onOpenSettings }: EquipamentosProps) {
             </button>
           </div>
         </header>
+
+        <SettingsDrawer
+          open={settingsOpen}
+          onClose={() => setSettingsOpen(false)}
+          user={{ name: customerName, email: userEmail, photoUrl: userPhotoUrl }}
+          onUserUpdate={(patch) => {
+            if (typeof patch.name === 'string') setCustomerName(patch.name);
+            if (typeof patch.email === 'string') setUserEmail(patch.email);
+            if (typeof patch.photoUrl === 'string' || patch.photoUrl === null) setUserPhotoUrl(patch.photoUrl ?? null);
+          }}
+        />
 
         <div className="eq-title">
           <div className="eq-title-small">Os meus</div>

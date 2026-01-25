@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import logoImg from '../assets/images/logo.png';
 import AssistantChatModal from '../components/AssistantChatModal';
+import SettingsDrawer from '../components/SettingsDrawer';
 import './Dashboard.css';
 import './Security.css';
 
@@ -93,10 +94,13 @@ const navItems: readonly NavItem[] = [
   }
 ] as const;
 
-type SecurityProps = { onOpenSettings?: () => void };
-function Security({ onOpenSettings }: SecurityProps) {
+function Security() {
   const [activeTab, setActiveTab] = useState<TabKey>('node');
   const [assistantOpen, setAssistantOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [customerName, setCustomerName] = useState<string>('Cliente');
+  const [userEmail, setUserEmail] = useState<string>('');
+  const [userPhotoUrl, setUserPhotoUrl] = useState<string | null>(null);
 
   const [apiBase, setApiBase] = useState<string | null>(null);
   const [customerId, setCustomerId] = useState<string | null>(null);
@@ -112,10 +116,43 @@ function Security({ onOpenSettings }: SecurityProps) {
     try {
       const id = localStorage.getItem('kynex:customerId');
       setCustomerId(id);
+
+      // Verifica se deve abrir o menu ao retornar de uma página de configurações
+      const shouldOpenSettings = localStorage.getItem('openSettingsOnReturn');
+      if (shouldOpenSettings === 'true') {
+        localStorage.removeItem('openSettingsOnReturn');
+        setSettingsOpen(true);
+      }
     } catch {
       // ignore
     }
   }, []);
+
+  useEffect(() => {
+    if (!settingsOpen) return;
+    try {
+      const photo = localStorage.getItem('kynex:profilePhotoUrl');
+      if (photo) setUserPhotoUrl(photo);
+
+      let email: string | undefined = undefined;
+      let name: string | undefined = undefined;
+      const onboardRaw = localStorage.getItem('kynex:onboarding');
+      if (onboardRaw) {
+        const parsed = JSON.parse(onboardRaw) as { name?: string; email?: string };
+        if (parsed?.name) name = parsed.name;
+        if (parsed?.email) email = parsed.email;
+      }
+
+      if (!email) {
+        const registeredEmail = localStorage.getItem('kynex:registeredEmail');
+        if (registeredEmail) email = registeredEmail;
+      }
+      setUserEmail(email || '');
+      if (name) setCustomerName(name);
+    } catch {
+      // ignore
+    }
+  }, [settingsOpen]);
 
   useEffect(() => {
     const apiBases = [
@@ -222,7 +259,7 @@ function Security({ onOpenSettings }: SecurityProps) {
       <div className="phone-frame">
         <header className="top-bar">
           <div className="brand">
-            <button className="brand-logo" type="button" aria-label="Kynex">
+            <button className="brand-logo" type="button" onClick={() => window.location.assign('/dashboard')} aria-label="Ir para Dashboard">
               <img src={logoImg} alt="Kynex" />
             </button>
             <div className="brand-text">
@@ -239,7 +276,12 @@ function Security({ onOpenSettings }: SecurityProps) {
               </svg>
               <span className="notif-badge">2</span>
             </button>
-            <button className="avatar-btn" aria-label="Perfil" type="button" onClick={onOpenSettings}>
+            <button
+              className="avatar-btn"
+              aria-label="Perfil"
+              type="button"
+              onClick={() => setSettingsOpen(true)}
+            >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <circle cx="12" cy="7" r="4" />
                 <path d="M5 21v-2a5 5 0 0 1 5-5h4a5 5 0 0 1 5 5v2" />
@@ -247,6 +289,17 @@ function Security({ onOpenSettings }: SecurityProps) {
             </button>
           </div>
         </header>
+
+        <SettingsDrawer
+          open={settingsOpen}
+          onClose={() => setSettingsOpen(false)}
+          user={{ name: customerName, email: userEmail, photoUrl: userPhotoUrl }}
+          onUserUpdate={(patch) => {
+            if (typeof patch.name === 'string') setCustomerName(patch.name);
+            if (typeof patch.email === 'string') setUserEmail(patch.email);
+            if (typeof patch.photoUrl === 'string' || patch.photoUrl === null) setUserPhotoUrl(patch.photoUrl ?? null);
+          }}
+        />
 
         <main className="content">
           <div className="tab-row" role="tablist" aria-label="Modo de segurança">
