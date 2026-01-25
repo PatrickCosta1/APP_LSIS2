@@ -1,0 +1,357 @@
+/* ===== Base Frame ===== */
+.faturas-frame {
+  background: #0B0F19 !important;
+}
+
+.faturas-content {
+  padding: 16px 20px 40px;
+}
+
+/* ===== Header Actions ===== */
+.faturas-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.faturas-back {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(31, 31, 35, 0.8);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  backdrop-filter: blur(10px);
+}
+
+.faturas-back:hover {
+  background: rgba(31, 31, 35, 1);
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: translateY(-1px);
+}
+
+/* ===== Page Title ===== */
+.faturas-page-title {
+  font-size: 32px;
+  font-weight: 800;
+  color: #ffffff;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', system-ui, sans-serif;
+  margin: 0 0 8px 0;
+  letter-spacing: -0.5px;
+}
+
+.faturas-subtitle {
+  font-size: 14px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.5);
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+  margin-bottom: 24px;
+}
+
+/* ===== Upload Hero Section ===== */
+.upload-hero {
+  background: rgba(25, 30, 40, 0.4);
+  border: 2px dashed #00CED1;
+  border-radius: 20px;
+  padding: 40px 24px;
+  margin-bottom: 32px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  min-height: 180px;
+  backdrop-filter: blur(20px);
+  position: relative;
+  overflow: hidden;
+}
+
+.upload-hero::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: radial-gradient(circle at center, rgba(0, 206, 209, 0.1) 0%, transparent 70%);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.upload-hero:hover::before {
+  opacity: 1;
+}
+
+.upload-hero:hover {
+  background: rgba(25, 30, 40, 0.6);
+  border-color: #00FFFF;
+  transform: translateY(-2px);
+  box-shadow: 0 12px 40px rgba(0, 206, 209, 0.2);
+}
+
+.upload-icon-wrapper {
+  color: #00CED1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.3s ease;
+}
+
+.upload-hero:hover .upload-icon-wrapper {
+  transform: translateY(-4px);
+}
+
+.upload-text {
+  text-align: center;
+}
+
+.upload-main-text {
+  font-size: 20px;
+  font-weight: 700;
+  color: #ffffff;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', system-ui, sans-serif;
+  margin-bottom: 6px;
+}
+
+.upload-sub-text {
+  font-size: 14px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.5);
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+}
+
+/* ===== Invoices Section ===== */
+.invoices-section {
+  margin-top: 8px;
+}
+
+.section-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.5);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 16px;
+  padding-left: 4px;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+}
+
+.invoices-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ===== Invoice Item ===== */
+.invoice-item {
+  background: rgba(25, 30, 40, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  transition: all 0.2s ease;
+  cursor: pointer;
+  backdrop-filter: blur(20px);
+}
+
+.invoice-item:hover {
+  background: rgba(25, 30, 40, 0.8);
+  border-color: rgba(0, 206, 209, 0.3);
+  transform: translateX(4px);
+}
+
+.invoice-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: rgba(0, 206, 209, 0.15);
+  border: 1px solid rgba(0, 206, 209, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #00CED1;
+  flex-shrink: 0;
+}
+
+.invoice-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.invoice-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.invoice-reference {
+  font-size: 16px;
+  font-weight: 700;
+  color: #ffffff;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', system-ui, sans-serif;
+}
+
+.ai-badge {
+  font-size: 14px;
+  line-height: 1;
+  filter: drop-shadow(0 0 4px rgba(255, 215, 0, 0.5));
+}
+
+.invoice-details {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.5);
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+}
+
+.invoice-provider {
+  font-weight: 500;
+}
+
+.invoice-separator {
+  opacity: 0.5;
+}
+
+.invoice-date {
+  font-weight: 500;
+}
+
+.invoice-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.invoice-amount {
+  font-size: 20px;
+  font-weight: 800;
+  color: #ffffff;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', system-ui, sans-serif;
+  letter-spacing: -0.5px;
+  text-shadow: 0 0 12px rgba(255, 255, 255, 0.3);
+}
+
+/* ===== Status Badges ===== */
+.invoice-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 12px;
+  border-radius: 12px;
+  letter-spacing: 0.5px;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+  white-space: nowrap;
+}
+
+.badge-due {
+  color: #00CED1;
+  background: rgba(0, 206, 209, 0.15);
+  border: 1px solid rgba(0, 206, 209, 0.3);
+  text-transform: none;
+  font-weight: 600;
+}
+
+.badge-warning {
+  color: #F59E0B;
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  text-transform: none;
+  font-weight: 700;
+  animation: pulse-warning 2s ease-in-out infinite;
+}
+
+.badge-overdue {
+  color: #EF4444;
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  text-transform: uppercase;
+}
+
+@keyframes pulse-warning {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.85;
+    transform: scale(0.98);
+  }
+}
+
+/* ===== Empty State (Opcional) ===== */
+.invoices-empty {
+  text-align: center;
+  padding: 60px 20px;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.invoices-empty-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+  opacity: 0.5;
+}
+
+.invoices-empty-text {
+  font-size: 16px;
+  font-weight: 600;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+}
+
+/* ===== Responsive ===== */
+@media (max-width: 400px) {
+  .faturas-page-title {
+    font-size: 28px;
+  }
+
+  .upload-hero {
+    padding: 32px 20px;
+    min-height: 160px;
+  }
+
+  .upload-main-text {
+    font-size: 18px;
+  }
+
+  .invoice-amount {
+    font-size: 18px;
+  }
+
+  .invoice-reference {
+    font-size: 15px;
+  }
+}
+
+/* ===== Animations ===== */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.invoice-item {
+  animation: fadeIn 0.3s ease forwards;
+}
+
+.invoice-item:nth-child(1) { animation-delay: 0.05s; }
+.invoice-item:nth-child(2) { animation-delay: 0.1s; }
+.invoice-item:nth-child(3) { animation-delay: 0.15s; }
+.invoice-item:nth-child(4) { animation-delay: 0.2s; }

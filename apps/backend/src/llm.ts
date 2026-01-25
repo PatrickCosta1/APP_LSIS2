@@ -3,8 +3,11 @@ import { openrouterChat } from './llm/openrouter';
 
 export type LlmMode = 'off' | 'rewrite' | 'full' | 'mock';
 
+type LlmProvider = 'openrouter' | 'groq';
+
 type LlmConfig = {
   mode: LlmMode;
+  provider: LlmProvider;
   apiKey: string | null;
   model: string;
   timeoutMs: number;
@@ -14,6 +17,9 @@ function readLlmConfig(): LlmConfig {
   const modeRaw = String(process.env.LLM_MODE ?? 'off').toLowerCase();
   let mode: LlmMode = modeRaw === 'rewrite' ? 'rewrite' : modeRaw === 'full' ? 'full' : modeRaw === 'mock' ? 'mock' : 'off';
 
+  const providerRaw = String(process.env.LLM_PROVIDER ?? '').trim().toLowerCase();
+  const provider: LlmProvider = providerRaw === 'groq' ? 'groq' : 'openrouter';
+
   // Proteção: em produção, `mock` é quase sempre erro de configuração.
   // Faz override para `full` para evitar um "assistente" estático.
   const nodeEnv = String(process.env.NODE_ENV ?? '').toLowerCase();
@@ -21,11 +27,14 @@ function readLlmConfig(): LlmConfig {
     mode = 'full';
   }
 
-  const apiKey = (process.env.OPENROUTER_API_KEY ?? '').trim();
-  const model = (process.env.OPENROUTER_MODEL ?? 'arcee-ai/trinity-mini:free').trim();
-  const timeoutMs = Math.max(1500, Math.min(20000, Number(process.env.OPENROUTER_TIMEOUT_MS ?? 7000) || 7000));
+  const apiKey = String((provider === 'groq' ? process.env.GROQ_API_KEY : process.env.OPENROUTER_API_KEY) ?? '').trim();
+  const modelDefault = provider === 'groq' ? 'llama-3.1-8b-instant' : 'arcee-ai/trinity-mini:free';
+  const model = String((provider === 'groq' ? process.env.GROQ_MODEL : process.env.OPENROUTER_MODEL) ?? modelDefault).trim();
 
-  return { mode, apiKey: apiKey ? apiKey : null, model: model || 'arcee-ai/trinity-mini:free', timeoutMs };
+  const timeoutRaw = provider === 'groq' ? process.env.GROQ_TIMEOUT_MS : process.env.OPENROUTER_TIMEOUT_MS;
+  const timeoutMs = Math.max(1500, Math.min(20000, Number(timeoutRaw ?? 7000) || 7000));
+
+  return { mode, provider, apiKey: apiKey ? apiKey : null, model: model || modelDefault, timeoutMs };
 }
 
 export function isLlmGenerationEnabled(): boolean {
@@ -35,6 +44,7 @@ export function isLlmGenerationEnabled(): boolean {
 
 export function getLlmStatus(): {
   mode: LlmMode;
+  provider: LlmProvider;
   hasApiKey: boolean;
   model: string;
   timeoutMs: number;
@@ -43,6 +53,7 @@ export function getLlmStatus(): {
   const cfg = readLlmConfig();
   return {
     mode: cfg.mode,
+    provider: cfg.provider,
     hasApiKey: Boolean(cfg.apiKey),
     model: cfg.model,
     timeoutMs: cfg.timeoutMs,

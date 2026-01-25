@@ -2,8 +2,10 @@ import { z } from 'zod';
 
 export type LlmRole = 'system' | 'user' | 'assistant';
 export type LlmMessage = { role: LlmRole; content: string };
-console.log('OPENROUTER_API_KEY:', process.env.OPENROUTER_API_KEY, 'LLM_MODE:', process.env.LLM_MODE);
-const OpenRouterChatResponseSchema = z.object({
+
+type LlmProvider = 'openrouter' | 'groq';
+
+const OpenAiChatResponseSchema = z.object({
   choices: z
     .array(
       z.object({
@@ -16,8 +18,25 @@ const OpenRouterChatResponseSchema = z.object({
     .default([])
 });
 
-function getApiKey() {
-  const k = process.env.OPENROUTER_API_KEY;
+function getProvider(): LlmProvider {
+  const raw = String(process.env.LLM_PROVIDER ?? '').trim().toLowerCase();
+  return raw === 'groq' ? 'groq' : 'openrouter';
+}
+
+function getBaseUrl(provider: LlmProvider): string {
+  if (provider === 'groq') {
+    const base = String(process.env.GROQ_BASE_URL ?? 'https://api.groq.com/openai/v1').trim();
+    return base.replace(/\/$/, '');
+  }
+  return 'https://openrouter.ai/api/v1';
+}
+
+function getKeyEnvName(provider: LlmProvider): string {
+  return provider === 'groq' ? 'GROQ_API_KEY' : 'OPENROUTER_API_KEY';
+}
+
+function getApiKey(provider: LlmProvider) {
+  const k = provider === 'groq' ? process.env.GROQ_API_KEY : process.env.OPENROUTER_API_KEY;
   return typeof k === 'string' && k.trim() ? k.trim() : null;
 }
 
@@ -29,7 +48,7 @@ export function isLlmEnabled() {
     return force !== '0' && force !== 'false' && force !== 'off';
   }
 
-  const key = getApiKey();
+  const key = getApiKey(getProvider());
   if (!key) return false;
 
   // Compat: modo antigo
@@ -44,12 +63,15 @@ export function isLlmEnabled() {
 }
 
 export function getDefaultModel() {
-  const m = process.env.KYNEX_LLM_MODEL ?? process.env.OPENROUTER_MODEL;
-  return typeof m === 'string' && m.trim() ? m.trim() : 'arcee-ai/trinity-mini:free';
+  const provider = getProvider();
+  const m = process.env.KYNEX_LLM_MODEL ?? (provider === 'groq' ? process.env.GROQ_MODEL : process.env.OPENROUTER_MODEL);
+  if (typeof m === 'string' && m.trim()) return m.trim();
+  return provider === 'groq' ? 'llama-3.1-8b-instant' : 'arcee-ai/trinity-mini:free';
 }
 
 function getTimeoutMs() {
-  const raw = process.env.OPENROUTER_TIMEOUT_MS;
+  const provider = getProvider();
+  const raw = provider === 'groq' ? process.env.GROQ_TIMEOUT_MS : process.env.OPENROUTER_TIMEOUT_MS;
   const n = raw ? Number(raw) : NaN;
   if (!Number.isFinite(n)) return 12_000;
   return Math.max(1_000, Math.min(60_000, Math.floor(n)));
@@ -61,8 +83,11 @@ export async function openrouterChat(opts: {
   temperature?: number;
   maxTokens?: number;
 }): Promise<{ content: string; raw: unknown }> {
-  const apiKey = getApiKey();
-  if (!apiKey) throw new Error('OPENROUTER_API_KEY não definido');
+  const provider = getProvider();
+  const apiKey = getApiKey(provider);
+  if (!apiKey) throw new Error(`${getKeyEnvName(provider)} não definido`);
+
+  const baseUrl = getBaseUrl(provider);
 
   const model = opts.model ?? getDefaultModel();
   const temperature = Number.isFinite(opts.temperature as number) ? (opts.temperature as number) : 0.3;
@@ -73,27 +98,37 @@ export async function openrouterChat(opts: {
 
   let res, text;
   try {
-    res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    };
+
+    // headers opcionais recomendados pelo OpenRouter
+    if (provider === 'openrouter') {
+      headers['X-Title'] = 'Kynex';
+      headers['HTTP-Referer'] = 'http://localhost';
+    }
+
+    const body: any = {
+      model,
+      messages: opts.messages,
+      temperature
+    };
+
+    // OpenRouter usa max_tokens; Groq recomenda max_completion_tokens (max_tokens é deprecated)
+    if (provider === 'groq') body.max_completion_tokens = maxTokens;
+    else body.max_tokens = maxTokens;
+
+    res = await fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        // headers opcionais recomendados pelo OpenRouter
-        'X-Title': 'Kynex',
-        'HTTP-Referer': 'http://localhost'
-      },
+      headers,
       signal: controller.signal,
-      body: JSON.stringify({
-        model,
-        messages: opts.messages,
-        temperature,
-        max_tokens: maxTokens
-      })
+      body: JSON.stringify(body)
     });
     clearTimeout(timeout);
     text = await res.text();
   } catch (err) {
-    console.error('[LLM] Erro de fetch para OpenRouter:', err);
+    console.error(`[LLM] Erro de fetch para ${provider}:`, err);
     throw new Error('LLM_FETCH_ERROR');
   }
 
@@ -105,11 +140,11 @@ export async function openrouterChat(opts: {
   }
 
   if (!res.ok) {
-    console.error('[LLM] Erro HTTP OpenRouter:', res.status, text.slice(0, 400));
-    throw new Error(`OpenRouter erro ${res.status}: ${text.slice(0, 400)}`);
+    console.error(`[LLM] Erro HTTP ${provider}:`, res.status, text.slice(0, 400));
+    throw new Error(`${provider} erro ${res.status}: ${text.slice(0, 400)}`);
   }
 
-  const parsed = OpenRouterChatResponseSchema.safeParse(json);
+  const parsed = OpenAiChatResponseSchema.safeParse(json);
   const content = parsed.success ? (parsed.data.choices[0]?.message?.content ?? '') : '';
 
   return { content: String(content ?? ''), raw: json ?? text };

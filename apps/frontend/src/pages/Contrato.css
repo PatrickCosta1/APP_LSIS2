@@ -1,0 +1,462 @@
+/* ===== Base Frame ===== */
+.contrato-frame {
+  background: #0B0F19 !important;
+}
+
+.contrato-content {
+  padding: 16px 20px 40px;
+}
+
+/* ===== Header Actions ===== */
+.contrato-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.contrato-back {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(31, 31, 35, 0.8);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  backdrop-filter: blur(10px);
+}
+
+.contrato-back:hover {
+  background: rgba(31, 31, 35, 1);
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: translateY(-1px);
+}
+
+/* ===== Page Title ===== */
+.contrato-page-title {
+  font-size: 32px;
+  font-weight: 800;
+  color: #ffffff;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', system-ui, sans-serif;
+  margin: 0 0 8px 0;
+  letter-spacing: -0.5px;
+}
+
+.contrato-subtitle {
+  font-size: 14px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.5);
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+  margin-bottom: 24px;
+}
+
+/* ===== Loading State ===== */
+.contrato-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  gap: 16px;
+}
+
+.contrato-loading .spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid rgba(0, 206, 209, 0.2);
+  border-top-color: #00CED1;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+.contrato-loading p {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ===== Cartão Contrato Atual (Glassmorphism) ===== */
+.contrato-current-card {
+  background: rgba(25, 30, 40, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  padding: 24px;
+  margin-bottom: 32px;
+  backdrop-filter: blur(20px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.current-card-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.provider-logo {
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  background: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 16px rgba(0, 206, 209, 0.3);
+  overflow: hidden;
+  padding: 8px;
+}
+
+.provider-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.provider-info {
+  flex: 1;
+}
+
+.provider-name {
+  font-size: 20px;
+  font-weight: 700;
+  color: #ffffff;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', system-ui, sans-serif;
+  margin-bottom: 4px;
+}
+
+.provider-badge {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.current-card-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.info-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.info-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #00CED1;
+  flex-shrink: 0;
+}
+
+.info-content {
+  flex: 1;
+}
+
+.info-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+
+.info-value {
+  font-size: 16px;
+  font-weight: 700;
+  color: #ffffff;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', system-ui, sans-serif;
+}
+
+.current-price-highlight {
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  text-align: center;
+}
+
+.price-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+
+.price-value {
+  font-size: 28px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.9);
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', system-ui, sans-serif;
+  letter-spacing: -0.5px;
+}
+
+/* ===== AI Insights Header ===== */
+.ai-insights-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 20px;
+  padding: 0 4px;
+}
+
+.ai-icon {
+  font-size: 24px;
+  flex-shrink: 0;
+}
+
+.ai-text {
+  flex: 1;
+}
+
+.ai-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #ffffff;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', system-ui, sans-serif;
+  margin-bottom: 6px;
+}
+
+.ai-subtitle {
+  font-size: 14px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.6);
+  line-height: 1.5;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+}
+
+/* ===== Carrossel de Recomendações ===== */
+.recommendations-carousel {
+  display: flex;
+  gap: 16px;
+  overflow-x: auto;
+  padding: 4px 4px 20px;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+}
+
+.recommendations-carousel::-webkit-scrollbar {
+  height: 6px;
+}
+
+.recommendations-carousel::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 3px;
+}
+
+.recommendations-carousel::-webkit-scrollbar-thumb {
+  background: rgba(0, 206, 209, 0.5);
+  border-radius: 3px;
+}
+
+.recommendations-carousel::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 206, 209, 0.7);
+}
+
+.recommendation-card {
+  min-width: 280px;
+  max-width: 280px;
+  border-radius: 20px;
+  padding: 24px;
+  scroll-snap-align: start;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+
+.recommendation-card.cyan {
+  background: linear-gradient(135deg, rgba(0, 206, 209, 0.15) 0%, rgba(0, 153, 204, 0.15) 100%);
+  border: 1px solid rgba(0, 206, 209, 0.3);
+}
+
+.recommendation-card.green {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, rgba(5, 150, 105, 0.15) 100%);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.rec-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.rec-logo {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 6px;
+  flex-shrink: 0;
+}
+
+.rec-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.rec-provider {
+  font-size: 18px;
+  font-weight: 700;
+  color: #ffffff;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', system-ui, sans-serif;
+  flex: 1;
+}
+
+.rec-badge {
+  font-size: 10px;
+  font-weight: 700;
+  color: #10B981;
+  background: rgba(16, 185, 129, 0.2);
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  padding: 4px 10px;
+  border-radius: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+
+.rec-savings {
+  margin-bottom: 16px;
+}
+
+.savings-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.6);
+  margin-bottom: 6px;
+}
+
+.savings-value {
+  font-size: 48px;
+  font-weight: 900;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', system-ui, sans-serif;
+  letter-spacing: -2px;
+  line-height: 1;
+  margin-bottom: 2px;
+}
+
+.recommendation-card.cyan .savings-value {
+  color: #00CED1;
+  text-shadow: 0 0 30px rgba(0, 206, 209, 0.5);
+}
+
+.recommendation-card.green .savings-value {
+  color: #10B981;
+  text-shadow: 0 0 30px rgba(16, 185, 129, 0.5);
+}
+
+.rec-reason {
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.7);
+  line-height: 1.5;
+  margin-bottom: 16px;
+  min-height: 40px;
+}
+
+.rec-comparison {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 10px;
+  margin-bottom: 16px;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', system-ui, sans-serif;
+}
+
+.new-price {
+  font-size: 20px;
+  font-weight: 800;
+  color: #ffffff;
+}
+
+.vs {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.4);
+  text-transform: uppercase;
+}
+
+.old-price {
+  font-size: 18px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.4);
+  text-decoration: line-through;
+}
+
+.rec-button {
+  width: 100%;
+  padding: 14px;
+  border-radius: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.05);
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 700;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.rec-button:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.3);
+  transform: translateY(-2px);
+}
+
+.recommendation-card.cyan .rec-button:hover {
+  background: rgba(0, 206, 209, 0.2);
+  border-color: #00CED1;
+}
+
+.recommendation-card.green .rec-button:hover {
+  background: rgba(16, 185, 129, 0.2);
+  border-color: #10B981;
+}
+
+/* ===== Responsive ===== */
+@media (max-width: 400px) {
+  .contrato-page-title {
+    font-size: 28px;
+  }
+
+  .current-card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .recommendation-card {
+    min-width: 260px;
+    max-width: 260px;
+  }
+
+  .savings-value {
+    font-size: 42px;
+  }
+}
