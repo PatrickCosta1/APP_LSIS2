@@ -332,7 +332,22 @@ function Dashboard() {
     if (chartRange !== 'dia') setSelectedDayKey(null);
   }, [chartRange]);
 
-  const maxValue = React.useMemo(() => Math.max(...chart.items.map((i) => i.value), 1), [chart.items]);
+  const chartScale = React.useMemo(() => {
+    if (chart.items.length === 0) return { min: 0, max: 1 };
+    
+    const values = chart.items.map((i) => i.value);
+    const maxValue = Math.max(...values);
+    const minValue = Math.min(...values);
+    
+    // Se todos os valores forem muito próximos, cria uma escala flutuante (margem reduzida)
+    const range = maxValue - minValue;
+    const margin = range > 0 ? range * 0.1 : maxValue * 0.08;
+    
+    return {
+      min: Math.max(0, minValue - margin),
+      max: maxValue + margin
+    };
+  }, [chart.items]);
 
   useEffect(() => {
     if (!apiBase || !customerId || !activeDayKey) return;
@@ -522,7 +537,10 @@ function Dashboard() {
 
               <div className="bars" aria-label="Barras de consumo">
                 {chart.items.map((item) => {
-                  const heightPct = Math.max(6, Math.round((item.value / maxValue) * 100));
+                  const range = chartScale.max - chartScale.min;
+                  const heightPct = range > 0 
+                    ? Math.max(6, Math.round(((item.value - chartScale.min) / range) * 100))
+                    : 50;
                   const isPred = item.kind === 'previsto';
                   const isSelectable = chartRange === 'dia' && typeof item.date === 'string' && item.date.length === 10;
                   const isSelected = isSelectable && activeDayKey === item.date;
@@ -545,8 +563,8 @@ function Dashboard() {
                           style={{ height: `${heightPct}%` }}
                         >
                           <div className="bar-value">
-                            {item.value.toFixed(2)}
-                            <span className="bar-unit"> kWh</span>
+                            <span className="bar-value-number">{item.value.toFixed(2)}</span>
+                            <span className="bar-value-unit">kWh</span>
                           </div>
                         </div>
                       </div>

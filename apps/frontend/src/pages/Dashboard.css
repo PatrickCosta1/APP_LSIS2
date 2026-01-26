@@ -568,18 +568,29 @@ html, body, #root {
 .bar-value {
   position: absolute;
   top: 10px;
-  padding: 4px 6px;
-  border-radius: 999px;
-  color: rgba(255, 255, 255, 0.92);
-  font-weight: 800;
-  font-size: 7px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
   line-height: 1;
-  white-space: nowrap;
 }
 
-.bar-unit {
-  opacity: 0.85;
+.bar-value-number {
+  color: rgba(255, 255, 255, 0.92);
+  font-weight: 800;
+  font-size: 9px;
+  text-shadow: 
+    -0.5px -0.5px 0 #000,
+    0.5px -0.5px 0 #000,
+    -0.5px 0.5px 0 #000,
+    0.5px 0.5px 0 #000,
+    0 0 2px rgba(0, 0, 0, 0.5);
+}
+
+.bar-value-unit {
+  color: rgba(255, 255, 255, 0.75);
   font-weight: 700;
+  font-size: 6px;
 }
 
 .bar-label {
