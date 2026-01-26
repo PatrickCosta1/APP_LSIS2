@@ -598,16 +598,39 @@ function Dashboard() {
           )}
 
           <section className="stats-grid">
-            <div className="stat-card glass">
-              <p className="stat-title">Consumo mensal até ao momento</p>
-              <p className="stat-value">{nowStats ? `${nowStats.monthToDateEuros.toFixed(2)} €` : '—'}</p>
-              <p className="stat-delta negative">—</p>
-            </div>
-            <div className="stat-card glass">
-              <p className="stat-title">Consumo mensal previsto</p>
-              <p className="stat-value">{nowStats ? `${nowStats.forecastMonthEuros.toFixed(2)} €` : '—'}</p>
-              <p className="stat-delta positive">—</p>
-            </div>
+            {selectedDayKey && selectedDayKey !== todayKey ? (
+              <div className="stat-card glass single-card">
+                <p className="stat-title">Consumo na {activeDayKey ? (() => {
+                  const date = new Date(`${activeDayKey}T00:00:00`);
+                  const dayName = new Intl.DateTimeFormat('pt-PT', { weekday: 'long' }).format(date);
+                  const dayNumber = new Intl.DateTimeFormat('pt-PT', { day: 'numeric', month: 'long' }).format(date);
+                  return `${capitalizeFirstLetter(dayName)}, ${dayNumber}`;
+                })() : '—'}</p>
+                <div className="stat-values">
+                  <div className="stat-value-item">
+                    <p className="stat-label">Consumo (kWh)</p>
+                    <p className="stat-value">{dayStats && dayStats.kwh != null ? dayStats.kwh.toFixed(2) : '—'}</p>
+                  </div>
+                  <div className="stat-value-item">
+                    <p className="stat-label">Consumo (€)</p>
+                    <p className="stat-value">{dayStats && dayStats.euros != null ? dayStats.euros.toFixed(2) : '—'}</p>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="stat-card glass">
+                  <p className="stat-title">Consumo mensal até ao momento</p>
+                  <p className="stat-value">{nowStats ? `${nowStats.monthToDateEuros.toFixed(2)} €` : '—'}</p>
+                  <p className="stat-delta negative">—</p>
+                </div>
+                <div className="stat-card glass">
+                  <p className="stat-title">Consumo mensal previsto</p>
+                  <p className="stat-value">{nowStats ? `${nowStats.forecastMonthEuros.toFixed(2)} €` : '—'}</p>
+                  <p className="stat-delta positive">—</p>
+                </div>
+              </>
+            )}
           </section>
         </main>
 

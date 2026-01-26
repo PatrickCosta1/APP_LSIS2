@@ -645,6 +645,27 @@ html, body, #root {
   box-shadow: 0 14px 22px rgba(0, 0, 0, 0.32);
 }
 
+.stat-card.single-card {
+  grid-column: 1 / -1;
+}
+
+.stat-values {
+  display: flex;
+  gap: 16px;
+  margin-top: 8px;
+}
+
+.stat-value-item {
+  flex: 1;
+}
+
+.stat-label {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 500;
+}
+
 .stat-title {
   margin: 0 0 6px;
   color: var(--muted);
