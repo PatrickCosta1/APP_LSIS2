@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import logoImg from '../assets/images/logo.png';
 import AssistantChatModal from '../components/AssistantChatModal';
 import SettingsDrawer from '../components/SettingsDrawer';
+import { useNotificationCount } from '../hooks/useNotificationCount';
 import './Dashboard.css';
 import './Equipamentos.css';
 
@@ -206,6 +207,7 @@ function iconForApplianceName(name: string) {
 }
 
 function Equipamentos() {
+  const notificationCount = useNotificationCount();
   const [month, setMonth] = useState<string>(() => {
     const d = new Date();
     return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`;
@@ -487,7 +489,7 @@ function Equipamentos() {
             </button>
           </div>
           <div className="top-actions">
-            <button className="notif-btn" aria-label="Notificações" type="button">
+            <button className="notif-btn" aria-label="Notificações" type="button" onClick={() => window.location.assign('/notificacoes')}>
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path
                   d="M15 17h5l-1.4-1.4A2 2 0 0 1 18 14.2V11a6 6 0 0 0-5-5.9V4a1 1 0 0 0-2 0v1.1A6 6 0 0 0 6 11v3.2c0 .5-.2 1-.6 1.4L4 17h5"
@@ -496,7 +498,7 @@ function Equipamentos() {
                 />
                 <path d="M9 17a3 3 0 0 0 6 0" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
-              <span className="notif-badge">2</span>
+              {notificationCount > 0 && <span className="notif-badge">{notificationCount}</span>}
             </button>
             <button
               className="avatar-btn"

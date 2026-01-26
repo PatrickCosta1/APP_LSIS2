@@ -10,6 +10,7 @@ import Contrato from './pages/Contrato';
 import SobreNos from './pages/SobreNos';
 import Faturas from './pages/Faturas';
 import Definicoes from './pages/Definicoes';
+import Notifications from './pages/Notifications';
 
 function App() {
   const path = window.location.pathname;
@@ -61,6 +62,11 @@ function App() {
   // Página Definições
   if (path.startsWith('/definicoes')) {
     return <Definicoes />;
+  }
+
+  // Página Notificações
+  if (path.startsWith('/notificacoes')) {
+    return <Notifications />;
   }
 
   // Páginas simples para navegação do menu lateral de Configurações
