@@ -440,17 +440,17 @@ function Dashboard() {
                 </div>
               ) : null}
               <div className="metric">
-                <p className="metric-value">{dayStats ? dayStats.kwh.toFixed(2) : '—'}</p>
+                <p className="metric-value">{dayStats && dayStats.kwh != null ? dayStats.kwh.toFixed(2) : '—'}</p>
                 <p className="metric-label">Consumo (kWh)</p>
               </div>
               <div className="metric">
-                <p className="metric-value">{dayStats ? `${dayStats.euros.toFixed(2)}€` : '—'}</p>
+                <p className="metric-value">{dayStats && dayStats.euros != null ? `${dayStats.euros.toFixed(2)}€` : '—'}</p>
                 <p className="metric-label">Consumo (€)</p>
               </div>
               <div className="metric">
                 <div className="metric-value-row">
-                  <p className="metric-value">{dayStats ? dayStats.similarKwh.toFixed(2) : '—'}</p>
-                  {dayStats ? (
+                  <p className="metric-value">{dayStats && dayStats.similarKwh != null ? dayStats.similarKwh.toFixed(2) : '—'}</p>
+                  {dayStats && dayStats.similarDeltaPct != null ? (
                     <p className={`metric-delta ${dayStats.similarDeltaPct <= 0 ? 'positive' : 'negative'}`}>
                       {dayStats.similarDeltaPct > 0 ? `+${dayStats.similarDeltaPct.toFixed(0)}%` : `${dayStats.similarDeltaPct.toFixed(0)}%`}
                     </p>
