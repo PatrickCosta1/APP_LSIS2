@@ -79,6 +79,7 @@ export async function llmImproveText(opts: {
       model,
       temperature: 0.2,
       maxTokens: Number.isFinite(opts.maxTokens as number) ? (opts.maxTokens as number) : 160,
+      maxQueueWaitMs: 1_500,
       messages
     });
     const out = cleanText(content);
@@ -115,6 +116,7 @@ export async function llmGenerateText(opts: {
       model,
       temperature: 0.25,
       maxTokens: Number.isFinite(opts.maxTokens as number) ? (opts.maxTokens as number) : 220,
+      maxQueueWaitMs: 2_000,
       messages
     });
     const out = cleanText(content);

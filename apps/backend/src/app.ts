@@ -2432,11 +2432,48 @@ app.get('/customers/:customerId/ai/insights', async (req, res) => {
     maxTokens: 220
   });
 
+  const assistantTextFallback = (() => {
+    const pct = Math.round(offPct * 100);
+    const pieces: string[] = [];
+
+    const isBi = isBiTariff(currentTariff) || isTriTariff(currentTariff);
+    if (isBi) {
+      pieces.push(
+        pct >= 50
+          ? `Você já coloca bastante consumo em vazio (~${pct}%). Mantenha tarefas flexíveis nesse período.`
+          : `Apesar de ter bi-horário, só ~${pct}% está em vazio. Se mover 1–2 hábitos do fim da tarde para depois das 22h, tende a ganhar mais.`
+      );
+    } else {
+      pieces.push(
+        shouldBi
+          ? `O seu consumo tem ~${pct}% em vazio; um bi-horário pode fazer sentido sem mudar muito os seus hábitos.`
+          : 'O seu consumo não está muito concentrado em vazio; tarifa simples tende a ser mais previsível no dia-a-dia.'
+      );
+    }
+
+    const nw = Math.round(nightAvgWatts);
+    pieces.push(
+      nw >= 180
+        ? `De noite (2h–5h) há uma base média ~${nw}W: vale a pena atacar stand-by (box/TV/PC) e carregadores sempre na ficha.`
+        : 'O consumo noturno (2h–5h) está baixo — bom sinal de pouco stand-by.'
+    );
+
+    if (typeof peakHour === 'number') {
+      pieces.push(
+        `O seu pico típico é por volta das ${String(peakHour).padStart(2, '0')}h; espalhar alguns consumos por 1–2 horas ajuda a reduzir picos e stress no contador.`
+      );
+    }
+
+    // garante 2–4 frases curtas
+    const text = pieces.slice(0, 3).join(' ');
+    return text.length <= 600 ? text : text.slice(0, 585).trimEnd() + '…';
+  })();
+
   return res.json({
     customerId,
     lastUpdated: end.toISOString(),
     tips: out,
-    assistantText: assistantText ?? null
+    assistantText: assistantText ?? assistantTextFallback
   });
 });
 
