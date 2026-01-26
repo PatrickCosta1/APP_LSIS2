@@ -579,12 +579,7 @@ html, body, #root {
   color: rgba(255, 255, 255, 0.92);
   font-weight: 800;
   font-size: 9px;
-  text-shadow: 
-    -0.5px -0.5px 0 #000,
-    0.5px -0.5px 0 #000,
-    -0.5px 0.5px 0 #000,
-    0.5px 0.5px 0 #000,
-    0 0 2px rgba(0, 0, 0, 0.5);
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
 }
 
 .bar-value-unit {
