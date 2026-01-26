@@ -598,7 +598,7 @@ function Dashboard() {
           )}
 
           <section className="stats-grid">
-            {selectedDayKey && selectedDayKey !== todayKey ? (
+            {topSection === 'chart' && selectedDayKey && selectedDayKey !== todayKey ? (
               <div className="stat-card glass single-card">
                 <p className="stat-title">Consumo na {activeDayKey ? (() => {
                   const date = new Date(`${activeDayKey}T00:00:00`);
