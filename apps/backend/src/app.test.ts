@@ -313,7 +313,7 @@ describe('chat', () => {
       .send({ message: 'Qual o equipamento que mais consome?' });
     expect(first.status).toBe(200);
     expect(first.body).toHaveProperty('conversationId');
-    expect(String(first.body.reply)).toContain('OPENROUTER_API_KEY');
+    expect(String(first.body.reply)).toMatch(/GROQ_API_KEY/);
 
     const convId = String(first.body.conversationId);
     const follow = await request(app)
@@ -321,7 +321,7 @@ describe('chat', () => {
       .set('Authorization', `Bearer ${token}`)
       .send({ message: 'sim', conversationId: convId });
     expect(follow.status).toBe(200);
-    expect(String(follow.body.reply)).toContain('OPENROUTER_API_KEY');
+    expect(String(follow.body.reply)).toMatch(/GROQ_API_KEY/);
     expect(String(follow.body.conversationId)).toBe(convId);
   });
 
@@ -372,7 +372,7 @@ describe('chat', () => {
       .set('Authorization', `Bearer ${token}`)
       .send({ message: '__ACTION:FEEDBACK:UP__', conversationId: convId });
     expect(fb.status).toBe(200);
-    expect(String(fb.body.reply)).toContain('OPENROUTER_API_KEY');
+    expect(String(fb.body.reply)).toMatch(/GROQ_API_KEY/);
 
     const rows = await c.assistantFeedback.find({ customer_id: customerId }).toArray();
     expect(rows.length).toBe(0);
@@ -440,7 +440,7 @@ describe('chat', () => {
       .set('Authorization', `Bearer ${token}`)
       .send({ message: 'porquê?', conversationId: convId });
     expect(explain.status).toBe(200);
-    expect(String(explain.body.reply)).toContain('OPENROUTER_API_KEY');
+    expect(String(explain.body.reply)).toMatch(/GROQ_API_KEY/);
     expect(explain.body.actions).toBeUndefined();
   });
 
@@ -479,7 +479,7 @@ describe('chat', () => {
       .send({ message: '__ACTION:PLAN_7D__' });
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty('reply');
-    expect(String(res.body.reply)).toContain('OPENROUTER_API_KEY');
+    expect(String(res.body.reply)).toMatch(/GROQ_API_KEY/);
     expect(res.body.actions).toBeUndefined();
   });
 
@@ -528,7 +528,7 @@ describe('chat', () => {
       .send({ message: 'Quanto gastei na última semana?' });
     expect(first.status).toBe(200);
     expect(first.body).toHaveProperty('conversationId');
-    expect(String(first.body.reply)).toContain('OPENROUTER_API_KEY');
+    expect(String(first.body.reply)).toMatch(/GROQ_API_KEY/);
 
     const convId = String(first.body.conversationId);
     const follow = await request(app)
@@ -536,7 +536,7 @@ describe('chat', () => {
       .set('Authorization', `Bearer ${token}`)
       .send({ message: 'sim', conversationId: convId });
     expect(follow.status).toBe(200);
-    expect(String(follow.body.reply)).toContain('OPENROUTER_API_KEY');
+    expect(String(follow.body.reply)).toMatch(/GROQ_API_KEY/);
     expect(String(follow.body.conversationId)).toBe(convId);
   });
 });

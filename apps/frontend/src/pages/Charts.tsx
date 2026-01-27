@@ -5,14 +5,49 @@ import SettingsDrawer from '../components/SettingsDrawer';
 import './Dashboard.css';
 import './Charts.css';
 
-type RangeKey = 'semana' | 'mes';
+type RangeKey = 'dia' | 'semana' | 'mes';
+
+function toUtcDayKey(d: Date) {
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function todayUtcDayKey() {
+  return toUtcDayKey(new Date());
+}
 
 type ConsumptionSeriesResponse = {
   range: RangeKey;
   labels: string[];
   values: number[];
   lastUpdated: string;
+  // opcionais (range=dia -> date, range=semana -> days)
+  date?: string;
+  days?: number;
+  // opcionais (modo personalizado)
+  from?: string;
+  to?: string;
+  granularity?: '15m' | '1h' | '1d';
 };
+
+function toLocalInputValue(d: Date) {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const y = d.getFullYear();
+  const m = pad(d.getMonth() + 1);
+  const day = pad(d.getDate());
+  const hh = pad(d.getHours());
+  const mm = pad(d.getMinutes());
+  return `${y}-${m}-${day}T${hh}:${mm}`;
+}
+
+function toIsoOrNullFromLocalInput(v: string) {
+  if (!v) return null;
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString();
+}
 
 type PowerSuggestionResponse = {
   customerId: string;
@@ -213,8 +248,22 @@ function formatPtDateTime(iso: string) {
   }).format(d);
 }
 
+type AnalyticsRangeMode = 'dia' | 'semana' | 'mes' | 'periodo';
+
 function Charts() {
-  const [range, setRange] = useState<RangeKey>('semana');
+  const [rangeMode, setRangeMode] = useState<AnalyticsRangeMode>('dia');
+  const [selectedDay, setSelectedDay] = useState<string>(() => todayUtcDayKey());
+  const [weekDays, setWeekDays] = useState<number>(7);
+  const [periodFromLocal, setPeriodFromLocal] = useState<string>(() => {
+    const now = new Date();
+    const start = new Date(now);
+    start.setHours(0, 0, 0, 0);
+    return toLocalInputValue(start);
+  });
+  const [periodToLocal, setPeriodToLocal] = useState<string>(() => toLocalInputValue(new Date()));
+  const [periodGranularity, setPeriodGranularity] = useState<'15m' | '1h' | '1d'>('15m');
+
+  const range = (rangeMode === 'periodo' ? 'dia' : rangeMode) as RangeKey;
   const [exportOpen, setExportOpen] = useState(false);
   const exportRef = useRef<HTMLDivElement | null>(null);
 
@@ -307,7 +356,6 @@ function Charts() {
   useEffect(() => {
     const apiBases = [
       (import.meta as any).env?.VITE_API_BASE as string | undefined,
-      'http://localhost:4000',
       'http://localhost:4100'
     ].filter(Boolean) as string[];
 
@@ -343,7 +391,24 @@ function Charts() {
     async function loadSeries() {
       try {
         const token = localStorage.getItem('kynex:authToken');
-        const res = await fetch(`${apiBase}/customers/${customerId}/analytics/consumption?range=${encodeURIComponent(range)}`, {
+
+        const qp = new URLSearchParams();
+        qp.set('range', range);
+
+        if (rangeMode === 'periodo') {
+          const fromIso = toIsoOrNullFromLocalInput(periodFromLocal);
+          const toIso = toIsoOrNullFromLocalInput(periodToLocal);
+          if (fromIso) qp.set('from', fromIso);
+          if (toIso) qp.set('to', toIso);
+          qp.set('granularity', periodGranularity);
+        } else if (rangeMode === 'dia') {
+          qp.set('granularity', '15m');
+          if (selectedDay) qp.set('date', selectedDay);
+        } else if (rangeMode === 'semana' && Number.isFinite(weekDays)) {
+          qp.set('days', String(weekDays));
+        }
+
+        const res = await fetch(`${apiBase}/customers/${customerId}/analytics/consumption?${qp.toString()}`, {
           headers: token ? { Authorization: `Bearer ${token}` } : undefined
         });
         if (!res.ok) throw new Error('series');
@@ -459,7 +524,7 @@ function Charts() {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [apiBase, customerId, range]);
+  }, [apiBase, customerId, range, rangeMode, selectedDay, weekDays, periodFromLocal, periodToLocal, periodGranularity]);
 
   const effScore = typeof eff?.scorePct === 'number' ? eff.scorePct : null;
   const effNote = eff?.note ?? 'A calcular com base no seu histórico e no modelo.';
@@ -569,14 +634,33 @@ function Charts() {
 
   const labels = series.labels.length
     ? series.labels
-    : (range === 'semana' ? ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'] : Array.from({ length: 30 }, (_, i) => `${i + 1}`));
+    : (range === 'dia' 
+      ? Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, '0')}:00`)
+      : range === 'semana' ? ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'] : Array.from({ length: 30 }, (_, i) => `${i + 1}`));
   const values = series.values.length ? series.values : Array.from({ length: labels.length }, () => 0);
 
   const monthTicks = useMemo(() => {
+    if (range === 'dia') {
+      // Para dia, mostrar cada 3 horas (0, 3, 6, 9, 12, 15, 18, 21, 23)
+      return ['00:00', '03:00', '06:00', '09:00', '12:00', '15:00', '18:00', '21:00', '23:00'];
+    }
     const last = labels[labels.length - 1] ?? '30';
     const base = ['1', '5', '10', '15', '20', '25', last];
     return Array.from(new Set(base));
-  }, [labels]);
+  }, [labels, range]);
+
+  const xTicks = useMemo(() => {
+    if (range === 'semana') return labels;
+    if (range === 'mes') return monthTicks;
+    // dia (inclui custom). Para séries longas, reduz para ~8 ticks.
+    if (labels.length <= 12) return labels;
+    if (labels.length === 24 || labels.length === 96) return monthTicks;
+    const step = Math.max(1, Math.ceil(labels.length / 8));
+    const ticks = labels.filter((_, i) => i % step === 0);
+    const last = labels[labels.length - 1];
+    if (last && ticks[ticks.length - 1] !== last) ticks.push(last);
+    return ticks;
+  }, [labels, monthTicks, range]);
 
   const chart = useMemo(() => {
     const width = 360;
@@ -983,24 +1067,112 @@ function Charts() {
               <div className="ana-actions">
                 <div className="segmented" role="tablist" aria-label="Intervalo">
                   <button
-                    className={`seg-btn ${range === 'semana' ? 'active' : ''}`}
-                    onClick={() => setRange('semana')}
+                    className={`seg-btn ${rangeMode === 'dia' ? 'active' : ''}`}
+                    onClick={() => setRangeMode('dia')}
                     type="button"
                     role="tab"
-                    aria-selected={range === 'semana'}
+                    aria-selected={rangeMode === 'dia'}
+                  >
+                    Diário
+                  </button>
+                  <button
+                    className={`seg-btn ${rangeMode === 'semana' ? 'active' : ''}`}
+                    onClick={() => setRangeMode('semana')}
+                    type="button"
+                    role="tab"
+                    aria-selected={rangeMode === 'semana'}
                   >
                     Semanal
                   </button>
                   <button
-                    className={`seg-btn ${range === 'mes' ? 'active' : ''}`}
-                    onClick={() => setRange('mes')}
+                    className={`seg-btn ${rangeMode === 'mes' ? 'active' : ''}`}
+                    onClick={() => setRangeMode('mes')}
                     type="button"
                     role="tab"
-                    aria-selected={range === 'mes'}
+                    aria-selected={rangeMode === 'mes'}
                   >
                     Mensal
                   </button>
+                  <button
+                    className={`seg-btn ${rangeMode === 'periodo' ? 'active' : ''}`}
+                    onClick={() => setRangeMode('periodo')}
+                    type="button"
+                    role="tab"
+                    aria-selected={rangeMode === 'periodo'}
+                  >
+                    Período
+                  </button>
                 </div>
+
+                {rangeMode === 'dia' && (
+                  <div className="ana-control-group" aria-label="Selecionar dia">
+                    <label className="ana-label">Dia</label>
+                    <input
+                      type="date"
+                      value={selectedDay}
+                      onChange={(e) => setSelectedDay(e.target.value)}
+                      max={todayUtcDayKey()}
+                      className="ana-input"
+                      aria-label="Dia (UTC)"
+                    />
+                  </div>
+                )}
+
+                {rangeMode === 'semana' && (
+                  <div className="ana-control-group" aria-label="Período (dias)">
+                    <label className="ana-label">Período</label>
+                    <select
+                      value={String(weekDays)}
+                      onChange={(e) => setWeekDays(Number(e.target.value))}
+                      className="ana-input"
+                      aria-label="Últimos dias"
+                    >
+                      <option value="7">7 dias</option>
+                      <option value="14">14 dias</option>
+                      <option value="30">30 dias</option>
+                    </select>
+                  </div>
+                )}
+
+                {rangeMode === 'periodo' && (
+                  <div className="ana-control-group ana-period-controls" aria-label="Período personalizado">
+                    <div className="ana-period-row">
+                      <div className="ana-period-col">
+                        <label className="ana-label">De</label>
+                        <input
+                          type="datetime-local"
+                          value={periodFromLocal}
+                          onChange={(e) => setPeriodFromLocal(e.target.value)}
+                          className="ana-input"
+                          aria-label="Data/hora inicial"
+                        />
+                      </div>
+                      <div className="ana-period-col">
+                        <label className="ana-label">Até</label>
+                        <input
+                          type="datetime-local"
+                          value={periodToLocal}
+                          onChange={(e) => setPeriodToLocal(e.target.value)}
+                          className="ana-input"
+                          aria-label="Data/hora final"
+                        />
+                      </div>
+                      <div className="ana-period-col">
+                        <label className="ana-label">Granularidade</label>
+                        <select
+                          value={periodGranularity}
+                          onChange={(e) => setPeriodGranularity(e.target.value as any)}
+                          className="ana-input"
+                          aria-label="Granularidade"
+                        >
+                          <option value="15m">15 min</option>
+                          <option value="1h">1 hora</option>
+                          <option value="1d">1 dia</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 <div className="ana-export" ref={exportRef}>
                   <button
@@ -1046,16 +1218,10 @@ function Charts() {
               </svg>
 
               <div className="ana-x">
-                {range === 'semana'
-                  ? labels.map((l) => (
-                      <span key={l} className="ana-x-tick">{l}</span>
-                    ))
-                    : monthTicks.map((l) => (
-                      <span key={l} className="ana-x-tick">{l}</span>
-                    ))}
+                {xTicks.map((l) => (
+                  <span key={l} className="ana-x-tick">{l}</span>
+                ))}
               </div>
-
-              
             </div>
           </section>
 

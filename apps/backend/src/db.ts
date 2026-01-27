@@ -55,6 +55,60 @@ export type AuthSessionDoc = {
   last_seen_at?: Date;
 };
 
+export type ErseTariffDoc = {
+  key: string; // `${cod_proposta}:${pot_cont}`
+  cod_proposta: string;
+  comercializador: string;
+  nome_proposta: string;
+  modalidade?: string;
+  pot_cont: number;
+  price_kwh_eur: number;
+  fixed_daily_fee_eur: number;
+  imported_at: Date;
+  source_url: string;
+  raw: Record<string, any>;
+};
+
+export type ErseTariffImportDoc = {
+  id: string;
+  source_url: string;
+  fetched_at: Date;
+  sha256: string;
+  status: 'ok' | 'error';
+  error?: string;
+  row_count?: number;
+};
+
+export type CustomerInvoiceDoc = {
+  id: string;
+  customer_id: string;
+  filename: string;
+  mime_type: string;
+  size_bytes: number;
+  uploaded_at: Date;
+
+  // Texto extraído (quando existir) para debug/reprocessamento
+  extracted_text?: string;
+
+  // Campos relevantes (o que o utilizador pediu)
+  valor_pagar_eur?: number;
+  potencia_contratada_kva?: number;
+  termo_energia_eur?: number;
+  termo_potencia_eur?: number;
+
+  // Campos operacionais para comparação (quando inferidos)
+  price_kwh_eur?: number;
+  fixed_daily_fee_eur?: number;
+
+  analysis?: {
+    consumption_kwh_year: number;
+    current_cost_year_eur: number;
+    best_cost_year_eur: number;
+    savings_year_eur: number;
+    top: Array<{ comercializador: string; nome_proposta: string; cost_year_eur: number; savings_year_eur: number }>;
+  };
+};
+
 export type Collections = {
   samples: Collection<{ ts: Date; watts: number; euros: number }>;
   telemetry15m: Collection<{ ts: Date; watts: number; euros: number }>;
@@ -78,6 +132,10 @@ export type Collections = {
   eredesOpenDataCache: Collection<{ key: string; fetched_at: Date; data: any }>;
 
   customerThirdParties: Collection<{ id: string; customer_id: string; name: string; created_at: Date; last_activity_at?: Date; alerts_last_48h?: number }>;
+
+  erseTariffs: Collection<ErseTariffDoc>;
+  erseTariffImports: Collection<ErseTariffImportDoc>;
+  customerInvoices: Collection<CustomerInvoiceDoc>;
 
   users: Collection<UserDoc>;
   authSessions: Collection<AuthSessionDoc>;
@@ -139,6 +197,10 @@ export function getCollections(db: Db = getDb()): Collections {
     customerTelemetry15m: db.collection('customer_telemetry_15m'),
     customerThirdParties: db.collection('customer_third_parties'),
 
+    erseTariffs: db.collection('erse_tariffs'),
+    erseTariffImports: db.collection('erse_tariff_imports'),
+    customerInvoices: db.collection('customer_invoices'),
+
     eredesOpenDataLatest: db.collection('eredes_open_data_latest'),
     eredesOpenDataCache: db.collection('eredes_open_data_cache'),
     users: db.collection('users'),
@@ -197,7 +259,13 @@ async function ensureIndexesAndSeed(db: Db) {
     c.authSessions.createIndex({ id: 1 }, { unique: true }),
     c.authSessions.createIndex({ token_hash: 1 }, { unique: true }),
     c.authSessions.createIndex({ customer_id: 1, expires_at: -1 }),
-    c.authSessions.createIndex({ user_id: 1, expires_at: -1 })
+    c.authSessions.createIndex({ user_id: 1, expires_at: -1 }),
+    c.erseTariffs.createIndex({ key: 1 }, { unique: true }),
+    c.erseTariffs.createIndex({ pot_cont: 1, price_kwh_eur: 1 }),
+    c.erseTariffImports.createIndex({ id: 1 }, { unique: true }),
+    c.erseTariffImports.createIndex({ fetched_at: -1 }),
+    c.customerInvoices.createIndex({ id: 1 }, { unique: true }),
+    c.customerInvoices.createIndex({ customer_id: 1, uploaded_at: -1 })
   ]);
 
   // Seed dos dados globais (não dos clientes). Clientes novos continuam a começar sem telemetria.
@@ -248,14 +316,20 @@ async function ensureIndexesAndSeed(db: Db) {
     peak_watts: 2600
   });
 
-  await c.nilmEvents.insertMany([
-    { id: 1, label: null, status: 'pending', confidence: 0.72, watts: 2400, duration_min: 45, created_at: new Date(now - 2 * 60 * 60 * 1000) },
-    { id: 2, label: 'Máquina de lavar', status: 'confirmed', confidence: 0.88, watts: 1200, duration_min: 60, created_at: new Date(now - 6 * 60 * 60 * 1000) },
-    { id: 3, label: 'Forno', status: 'confirmed', confidence: 0.81, watts: 2100, duration_min: 50, created_at: new Date(now - 24 * 60 * 60 * 1000) }
-  ]);
+  // Seeds com IDs únicos devem ser idempotentes (ts-node-dev pode inicializar mais do que uma vez)
+  await c.nilmEvents.bulkWrite(
+    [
+      { id: 1, label: null, status: 'pending', confidence: 0.72, watts: 2400, duration_min: 45, created_at: new Date(now - 2 * 60 * 60 * 1000) },
+      { id: 2, label: 'Máquina de lavar', status: 'confirmed', confidence: 0.88, watts: 1200, duration_min: 60, created_at: new Date(now - 6 * 60 * 60 * 1000) },
+      { id: 3, label: 'Forno', status: 'confirmed', confidence: 0.81, watts: 2100, duration_min: 50, created_at: new Date(now - 24 * 60 * 60 * 1000) }
+    ].map((doc) => ({
+      updateOne: { filter: { id: doc.id }, update: { $set: doc }, upsert: true }
+    }))
+  );
 
   const createdAt = new Date(now - 7 * 24 * 60 * 60 * 1000);
-  await c.appliances.insertMany([
+  await c.appliances.bulkWrite(
+    [
     { id: 1, name: 'Frigorífico/Arca', category: 'frio', standby_watts: 5, efficiency_score: 0.9, annual_cost: 120, created_at: createdAt },
     { id: 2, name: 'Aquecedor (genérico)', category: 'climatizacao', standby_watts: 2, efficiency_score: 0.5, annual_cost: 320, created_at: createdAt },
     { id: 3, name: 'Máquina de lavar roupa', category: 'lavandaria', standby_watts: 1, efficiency_score: 0.8, annual_cost: 95, created_at: createdAt },
@@ -263,15 +337,19 @@ async function ensureIndexesAndSeed(db: Db) {
     { id: 5, name: 'Stand-by', category: 'standby', standby_watts: 40, efficiency_score: 0.6, annual_cost: 110, created_at: createdAt },
     { id: 6, name: 'Ar Condicionado', category: 'climatizacao', standby_watts: 3, efficiency_score: 0.7, annual_cost: 210, created_at: createdAt },
     { id: 7, name: 'Água quente (Termoacumulador)', category: 'agua_quente', standby_watts: 2, efficiency_score: 0.65, annual_cost: 260, created_at: createdAt }
-  ]);
+    ].map((doc) => ({ updateOne: { filter: { id: doc.id }, update: { $set: doc }, upsert: true } }))
+  );
 
-  await c.applianceUsage.insertMany([
+  await c.applianceUsage.bulkWrite(
+    [
     { id: 1, appliance_id: 1, start_ts: new Date(now - 5 * 60 * 60 * 1000), end_ts: new Date(now - 4.5 * 60 * 60 * 1000), energy_wh: 180, cost_eur: 0.04, confidence: 0.9 },
     { id: 2, appliance_id: 2, start_ts: new Date(now - 3 * 60 * 60 * 1000), end_ts: new Date(now - 2 * 60 * 60 * 1000), energy_wh: 1800, cost_eur: 0.36, confidence: 0.7 },
     { id: 3, appliance_id: 3, start_ts: new Date(now - 25 * 60 * 60 * 1000), end_ts: new Date(now - 24 * 60 * 60 * 1000), energy_wh: 900, cost_eur: 0.18, confidence: 0.8 }
-  ]);
+    ].map((doc) => ({ updateOne: { filter: { id: doc.id }, update: { $set: doc }, upsert: true } }))
+  );
 
-  await c.alerts.insertMany([
+  await c.alerts.bulkWrite(
+    [
     {
       id: 1,
       message: 'Prancha de cabelo ligada em casa vazia. Sugestão: desligar tomada smart plug.',
@@ -288,16 +366,23 @@ async function ensureIndexesAndSeed(db: Db) {
       type: 'efficiency',
       created_at: new Date(now - 4 * 60 * 60 * 1000)
     }
-  ]);
+    ].map((doc) => ({ updateOne: { filter: { id: doc.id }, update: { $set: doc }, upsert: true } }))
+  );
 
-  await c.advice.insertOne({
-    id: 1,
-    current_power: 6.9,
-    suggested_power: 4.6,
-    tariff: 'Bi-horário',
-    savings_per_month: 7.5,
-    created_at: new Date(now)
-  });
+  await c.advice.updateOne(
+    { id: 1 },
+    {
+      $set: {
+        current_power: 6.9,
+        suggested_power: 4.6,
+        tariff: 'Bi-horário',
+        savings_per_month: 7.5,
+        created_at: new Date(now)
+      },
+      $setOnInsert: { id: 1 }
+    },
+    { upsert: true }
+  );
 
   await c.contractProfile.updateOne(
     { _id: 1 },

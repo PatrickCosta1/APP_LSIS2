@@ -22,16 +22,31 @@ function App() {
     }
   })();
 
-  if (path.startsWith('/onboarding')) {
-    return <Onboarding />;
-  }
-  if (path.startsWith('/login')) {
+  // Sem sessão: permite Login/Onboarding, caso contrário força Login.
+  if (!hasAuth) {
+    if (path.startsWith('/onboarding')) return <Onboarding />;
+    if (path.startsWith('/login')) return <Login />;
     return <Login />;
   }
 
-  // Primeira execução: força login como página inicial
-  if (!hasAuth) {
-    return <Login />;
+  // Com sessão: oculta Login/Onboarding (mantém páginas no código, mas não no fluxo normal)
+  if (path.startsWith('/onboarding') || path.startsWith('/login')) {
+    try {
+      window.history.replaceState(null, '', '/dashboard');
+    } catch {
+      // ignore
+    }
+    return <Dashboard />;
+  }
+
+  // Com sessão: ao entrar na raiz, força sempre Dashboard
+  if (path === '/' || path === '') {
+    try {
+      window.history.replaceState(null, '', '/dashboard');
+    } catch {
+      // ignore
+    }
+    return <Dashboard />;
   }
   if (path.startsWith('/equipamentos')) {
     return <Equipamentos />;

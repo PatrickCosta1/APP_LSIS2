@@ -43,60 +43,32 @@ function IconBolt() {
 
 type Invoice = {
   id: string;
-  reference: string;
-  date: string;
-  amount: number;
-  dueDate: Date;
-  provider: string;
-  aiAnalyzed: boolean;
+  filename: string;
+  uploaded_at: string;
+  valor_pagar_eur?: number;
+  potencia_contratada_kva?: number;
+  termo_energia_eur?: number;
+  termo_potencia_eur?: number;
+  analysis?: {
+    consumption_kwh_year: number;
+    current_cost_year_eur: number;
+    best_cost_year_eur: number;
+    savings_year_eur: number;
+    top: Array<{ comercializador: string; nome_proposta: string; cost_year_eur: number; savings_year_eur: number }>;
+  };
 };
 
 export default function Faturas() {
+  const [apiBase, setApiBase] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [customerName, setCustomerName] = useState<string>('Cliente');
   const [userEmail, setUserEmail] = useState<string>('');
   const [userPhotoUrl, setUserPhotoUrl] = useState<string | null>(null);
   const [customerId, setCustomerId] = useState<string | null>(null);
 
-  // Dados de exemplo
-  const [invoices] = useState<Invoice[]>([
-    {
-      id: '1',
-      reference: 'Fatura #2024-02',
-      date: '12 Fev',
-      amount: 45.20,
-      dueDate: new Date('2026-02-27'),
-      provider: 'EDP Comercial',
-      aiAnalyzed: true
-    },
-    {
-      id: '2',
-      reference: 'Fatura #2024-01',
-      date: '10 Jan',
-      amount: 38.90,
-      dueDate: new Date('2026-01-26'), // 2 dias - warning
-      provider: 'EDP Comercial',
-      aiAnalyzed: true
-    },
-    {
-      id: '3',
-      reference: 'Fatura #2023-12',
-      date: '08 Dez',
-      amount: 52.15,
-      dueDate: new Date('2025-12-23'), // ultrapassada
-      provider: 'EDP Comercial',
-      aiAnalyzed: true
-    },
-    {
-      id: '4',
-      reference: 'Fatura #2023-11',
-      date: '05 Nov',
-      amount: 41.30,
-      dueDate: new Date('2025-11-20'), // ultrapassada
-      provider: 'EDP Comercial',
-      aiAnalyzed: true
-    }
-  ]);
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
     try {
@@ -113,6 +85,60 @@ export default function Faturas() {
       // ignore
     }
   }, []);
+
+  useEffect(() => {
+    const apiBases = [(import.meta as any).env?.VITE_API_BASE as string | undefined, 'http://localhost:4100'].filter(Boolean) as string[];
+    let cancelled = false;
+
+    async function resolveBase() {
+      for (const base of apiBases) {
+        try {
+          const controller = new AbortController();
+          const t = window.setTimeout(() => controller.abort(), 1200);
+          const res = await fetch(`${base}/health`, { signal: controller.signal });
+          window.clearTimeout(t);
+          if (!res.ok) continue;
+          if (!cancelled) setApiBase(base);
+          return;
+        } catch {
+          // tenta próxima base
+        }
+      }
+    }
+
+    resolveBase();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!apiBase || !customerId) return;
+    let cancelled = false;
+
+    async function loadInvoices() {
+      setLoading(true);
+      try {
+        const token = localStorage.getItem('kynex:authToken');
+        const res = await fetch(`${apiBase}/customers/${customerId}/invoices`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined
+        });
+        if (!res.ok) throw new Error('invoices');
+        const json = (await res.json()) as { items: Invoice[] };
+        if (!cancelled) setInvoices(Array.isArray(json.items) ? json.items : []);
+      } catch (err) {
+        console.error('Error loading invoices:', err);
+        if (!cancelled) setInvoices([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    loadInvoices();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBase, customerId]);
 
   useEffect(() => {
     if (!settingsOpen) return;
@@ -141,58 +167,63 @@ export default function Faturas() {
   }, [settingsOpen]);
 
   const handleUploadClick = () => {
-    // TODO: Implementar lógica de upload
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = '.pdf,image/*';
-    input.onchange = (e) => {
+    input.onchange = async (e) => {
       const file = (e.target as HTMLInputElement).files?.[0];
-      if (file) {
-        console.log('Ficheiro selecionado:', file.name);
-        // Aqui seria feito o upload para o backend
+      if (!file) return;
+      if (!apiBase || !customerId) return;
+
+      try {
+        setUploading(true);
+        const token = localStorage.getItem('kynex:authToken');
+
+        const form = new FormData();
+        form.append('file', file);
+
+        const res = await fetch(`${apiBase}/customers/${customerId}/invoices`, {
+          method: 'POST',
+          body: form,
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined
+        });
+        if (!res.ok) throw new Error('upload');
+
+        // recarrega lista
+        const listRes = await fetch(`${apiBase}/customers/${customerId}/invoices`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined
+        });
+        if (listRes.ok) {
+          const json = (await listRes.json()) as { items: Invoice[] };
+          setInvoices(Array.isArray(json.items) ? json.items : []);
+        }
+      } catch (err) {
+        console.error('Upload failed:', err);
+      } finally {
+        setUploading(false);
       }
     };
     input.click();
   };
 
-  const getInvoiceStatus = (dueDate: Date): 'overdue' | 'warning' | 'normal' => {
-    const now = new Date();
-    const diffTime = dueDate.getTime() - now.getTime();
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-
-    if (diffDays < 0) {
-      return 'overdue'; // Ultrapassada
-    } else if (diffDays <= 3) {
-      return 'warning'; // Últimos 3 dias
-    } else {
-      return 'normal'; // Ainda tem tempo
-    }
-  };
-
-  const getStatusBadgeClass = (status: 'overdue' | 'warning' | 'normal') => {
-    switch (status) {
-      case 'overdue':
-        return 'badge-overdue';
-      case 'warning':
-        return 'badge-warning';
-      case 'normal':
-        return 'badge-due';
-    }
+  const getStatusBadgeClass = (invoice: Invoice) => {
+    const s = invoice.analysis?.savings_year_eur;
+    if (typeof s !== 'number') return 'badge-due';
+    if (s > 0.5) return 'badge-due';
+    return 'badge-warning';
   };
 
   const getStatusText = (invoice: Invoice) => {
-    const status = getInvoiceStatus(invoice.dueDate);
-    
-    if (status === 'overdue') {
-      return 'Ultrapassada';
-    } else if (status === 'warning') {
-      const diffTime = invoice.dueDate.getTime() - new Date().getTime();
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-      return `⚠️ ${diffDays} ${diffDays === 1 ? 'dia' : 'dias'}`;
-    } else {
-      const formatted = invoice.dueDate.toLocaleDateString('pt-PT', { day: 'numeric', month: 'short' });
-      return `Até ${formatted}`;
-    }
+    const s = invoice.analysis?.savings_year_eur;
+    if (typeof s !== 'number') return 'Sem análise';
+    if (s > 0.5) return `✅ Poupa ${Math.round(s)}€/ano`;
+    return 'Sem poupança';
+  };
+
+  const fmtUploaded = (iso: string) => {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '—';
+    return d.toLocaleDateString('pt-PT', { day: '2-digit', month: 'short' });
   };
 
   return (
@@ -241,7 +272,7 @@ export default function Faturas() {
             </div>
             <div className="upload-text">
               <div className="upload-main-text">Carregar Nova Fatura</div>
-              <div className="upload-sub-text">PDF ou Imagem</div>
+              <div className="upload-sub-text">{uploading ? 'A enviar…' : 'PDF ou Imagem'}</div>
             </div>
           </div>
 
@@ -250,7 +281,9 @@ export default function Faturas() {
             <div className="section-title">Recentes</div>
             
             <div className="invoices-list">
-              {invoices.map((invoice) => (
+              {loading && <div className="invoice-item">A carregar…</div>}
+              {!loading && invoices.length === 0 && <div className="invoice-item">Sem faturas ainda</div>}
+              {!loading && invoices.map((invoice) => (
                 <div key={invoice.id} className="invoice-item">
                   <div className="invoice-icon">
                     <IconBolt />
@@ -258,19 +291,19 @@ export default function Faturas() {
                   
                   <div className="invoice-info">
                     <div className="invoice-header">
-                      <span className="invoice-reference">{invoice.reference}</span>
-                      {invoice.aiAnalyzed && <span className="ai-badge">✨</span>}
+                      <span className="invoice-reference">{invoice.filename || 'Fatura'}</span>
+                      {invoice.analysis && <span className="ai-badge">✨</span>}
                     </div>
                     <div className="invoice-details">
-                      <span className="invoice-provider">{invoice.provider}</span>
+                      <span className="invoice-provider">{invoice.analysis?.top?.[0]?.comercializador ?? '—'}</span>
                       <span className="invoice-separator">•</span>
-                      <span className="invoice-date">{invoice.date}</span>
+                      <span className="invoice-date">{fmtUploaded(invoice.uploaded_at)}</span>
                     </div>
                   </div>
 
                   <div className="invoice-right">
-                    <div className="invoice-amount">{invoice.amount.toFixed(2)}€</div>
-                    <div className={`invoice-badge ${getStatusBadgeClass(getInvoiceStatus(invoice.dueDate))}`}>
+                    <div className="invoice-amount">{typeof invoice.valor_pagar_eur === 'number' ? invoice.valor_pagar_eur.toFixed(2) + '€' : '—'}</div>
+                    <div className={`invoice-badge ${getStatusBadgeClass(invoice)}`}>
                       {getStatusText(invoice)}
                     </div>
                   </div>

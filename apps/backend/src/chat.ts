@@ -146,7 +146,7 @@ export async function handleCustomerChat(c: Collections, customerId: string, bod
 
   const reply = llm?.reply?.trim()
     ? llm.reply.trim()
-    : 'O assistente LLM está desativado ou indisponível. Configure OPENROUTER_API_KEY e LLM_MODE=full.';
+    : 'O assistente de chat está desativado ou indisponível. Configure GROQ_API_KEY (e, se necessário, KYNEX_GROQ_ENABLED=true).';
 
   const assistantMsgId = crypto.randomUUID();
   await c.chatMessages.insertOne({ id: assistantMsgId, customer_id: customerId, conversation_id: conversationId, role: 'assistant', content: reply, created_at: new Date() });

@@ -87,7 +87,6 @@ export default function AssistantChatModal({ open, onClose, apiBase: apiBaseProp
 
     const apiBases = [
       (import.meta as any).env?.VITE_API_BASE as string | undefined,
-      'http://localhost:4000',
       'http://localhost:4100'
     ].filter(Boolean) as string[];
 

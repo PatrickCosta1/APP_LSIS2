@@ -2,6 +2,7 @@ import { getIpmaDailyForecast, getIpmaTempForLocalDateTime, getIpmaWeatherTypeDe
 import cors from 'cors';
 import express from 'express';
 import crypto from 'node:crypto';
+import multer from 'multer';
 import { z } from 'zod';
 import { getCollections, initDb, type Collections } from './db';
 import { clampPredictionForCustomer, loadAiModel, makeFeatures, predictNextWatts, type CustomerProfile } from './ai';
@@ -10,13 +11,22 @@ import { getAiRetrainStatus, runAiRetrainOnce } from './aiTrainer';
 import { getCustomerChatHistory, handleCustomerChat } from './chat';
 import { hashPassword, hashToken, normalizeEmail, newToken, validatePassword, verifyPassword } from './auth';
 import { getEredesNationalContext } from './openDataContext';
-import { llmGenerateText, llmImproveText } from './llm/assistantText';
+import { llmImproveText } from './llm/assistantText';
 import { buildAssistantBaseContext, buildAssistantEnvelope } from './assistantContext';
+import { extractInvoiceFromFile, newInvoiceId } from './invoiceEngine';
+import { compareWithErseTariffs } from './tariffComparison';
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
+
+const invoiceUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: Math.max(1_000_000, Math.min(25_000_000, Number(process.env.KYNEX_MAX_INVOICE_BYTES ?? 12_000_000)))
+  }
+});
 
 function getBearerToken(req: express.Request): string | null {
   const raw = req.header('authorization') ?? req.header('Authorization');
@@ -152,6 +162,31 @@ function stddev(values: number[]) {
   const mean = v.reduce((a, b) => a + b, 0) / v.length;
   const variance = v.reduce((acc, x) => acc + (x - mean) ** 2, 0) / (v.length - 1);
   return Math.sqrt(Math.max(0, variance));
+}
+
+function getShellyBaseUrl() {
+  const raw = String(process.env.SHELLY_BASE_URL ?? 'http://192.168.1.185').trim();
+  return raw.replace(/\/+$/, '');
+}
+
+async function shellyRequest(path: string, opts?: { timeoutMs?: number }) {
+  const base = getShellyBaseUrl();
+  const url = `${base}${path.startsWith('/') ? '' : '/'}${path}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), Math.max(200, Math.min(8000, opts?.timeoutMs ?? 1800)));
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    const text = await res.text();
+    let json: any = null;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      // ignore
+    }
+    return { ok: res.ok, status: res.status, text, json };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 app.get('/health', (_req, res) => {
@@ -844,9 +879,34 @@ app.get('/customers/:customerId/dashboard/day', async (req, res) => {
 app.get('/customers/:customerId/analytics/consumption', async (req, res) => {
   const { customerId } = req.params;
   const range = (req.query.range as string | undefined) ?? 'semana';
-  if (!['semana', 'mes'].includes(range)) {
-    return res.status(400).json({ message: 'range inválido (semana|mes)' });
+  if (!['dia', 'semana', 'mes'].includes(range)) {
+    return res.status(400).json({ message: 'range inválido (dia|semana|mes)' });
   }
+
+  const dateRaw = typeof req.query.date === 'string' ? req.query.date : undefined;
+  const daysRaw = typeof req.query.days === 'string' ? req.query.days : undefined;
+  const fromRaw = typeof req.query.from === 'string' ? req.query.from : undefined;
+  const toRaw = typeof req.query.to === 'string' ? req.query.to : undefined;
+  const granRaw = typeof req.query.granularity === 'string' ? req.query.granularity : undefined;
+
+  const granularity = (() => {
+    const g = String(granRaw ?? '').trim().toLowerCase();
+    if (!g) return null;
+    if (g === '15m' || g === '1h' || g === '1d') return g as '15m' | '1h' | '1d';
+    return 'invalid' as const;
+  })();
+
+  if (granularity === 'invalid') {
+    return res.status(400).json({ message: 'granularity inválida (15m|1h|1d)' });
+  }
+
+  const days = (() => {
+    const n = Number(daysRaw);
+    if (!Number.isFinite(n)) return null;
+    const v = Math.floor(n);
+    if (v < 1 || v > 60) return null;
+    return v;
+  })();
 
   const c = await collections();
 
@@ -863,6 +923,42 @@ app.get('/customers/:customerId/analytics/consumption', async (req, res) => {
 
   const latest = { ts: latestDoc.ts.toISOString() };
   const now = new Date(latest.ts);
+
+  const parseIsoDate = (raw: string) => {
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return null;
+    return d;
+  };
+
+  const floorTo15mUtc = (d: Date) => {
+    const ms = d.getTime();
+    const step = 15 * 60 * 1000;
+    return new Date(Math.floor(ms / step) * step);
+  };
+
+  const floorToHourUtc = (d: Date) => {
+    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), d.getUTCHours(), 0, 0, 0));
+  };
+
+  const floorToDayUtc = (d: Date) => {
+    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  };
+
+  const parseDayKey = (raw: string) => {
+    const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return null;
+    const y = Number(m[1]);
+    const mo = Number(m[2]);
+    const d = Number(m[3]);
+    if (!Number.isFinite(y) || !Number.isFinite(mo) || !Number.isFinite(d)) return null;
+    if (mo < 1 || mo > 12) return null;
+    if (d < 1 || d > 31) return null;
+    const dt = new Date(Date.UTC(y, mo - 1, d));
+    // valida que bate no mesmo dia (evita 2026-02-31 virar março)
+    const key = toDayKeyUtc(dt);
+    if (key !== raw) return null;
+    return { dayKey: key, dayStart: dt, dayEnd: new Date(dt.getTime() + 24 * 60 * 60 * 1000) };
+  };
 
   const sumByDay = async (from: Date, to: Date) => {
     const rows = await c.customerTelemetry15m
@@ -881,18 +977,149 @@ app.get('/customers/:customerId/analytics/consumption', async (req, res) => {
     return map;
   };
 
-  if (range === 'semana') {
-    const labels = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
-    const weekStart = startOfUtcWeekMonday(now);
-    const weekEnd = addUtcDays(weekStart, 7);
-    const actual = await sumByDay(weekStart, weekEnd);
+  const sumByBucket = async (from: Date, to: Date, format: string) => {
+    const rows = await c.customerTelemetry15m
+      .aggregate([
+        { $match: { customer_id: customerId, ts: { $gte: from, $lt: to } } },
+        {
+          $group: {
+            _id: { $dateToString: { format, date: '$ts' } },
+            sumWatts: { $sum: '$watts' }
+          }
+        }
+      ])
+      .toArray();
+    const map = new Map<string, number>();
+    for (const r of rows) map.set(String(r._id), sumKwhFromSumWatts(Number(r.sumWatts ?? 0)));
+    return map;
+  };
 
-    const values = labels.map((_, idx) => {
-      const dayKey = toDayKeyUtc(addUtcDays(weekStart, idx));
-      return Number(((actual.get(dayKey) ?? 0)).toFixed(2));
+  const sumByHour = async (from: Date, to: Date) => {
+    const rows = await c.customerTelemetry15m
+      .aggregate([
+        { $match: { customer_id: customerId, ts: { $gte: from, $lt: to } } },
+        {
+          $group: {
+            _id: { $dateToString: { format: '%Y-%m-%d %H:00', date: '$ts' } },
+            sumWatts: { $sum: '$watts' }
+          }
+        }
+      ])
+      .toArray();
+    const map = new Map<string, number>();
+    for (const r of rows) map.set(String(r._id), sumKwhFromSumWatts(Number(r.sumWatts ?? 0)));
+    return map;
+  };
+
+  const sumBy15m = async (from: Date, to: Date) => {
+    return sumByBucket(from, to, '%Y-%m-%d %H:%M');
+  };
+
+  const buildSeriesByWindow = async (opts: {
+    from: Date;
+    to: Date;
+    granularity: '15m' | '1h' | '1d';
+  }) => {
+    const { from, to } = opts;
+    const g = opts.granularity;
+    if (!(from instanceof Date) || !(to instanceof Date)) throw new Error('invalid_dates');
+    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) throw new Error('invalid_dates');
+    if (from.getTime() >= to.getTime()) throw new Error('invalid_range');
+
+    const bucketMs = g === '15m' ? 15 * 60 * 1000 : g === '1h' ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+    const maxPoints = 2500;
+    const approx = Math.ceil((to.getTime() - from.getTime()) / bucketMs);
+    if (approx > maxPoints) throw new Error('too_large');
+
+    const fromAligned = g === '15m' ? floorTo15mUtc(from) : g === '1h' ? floorToHourUtc(from) : floorToDayUtc(from);
+    const toAligned = to;
+
+    const actual =
+      g === '15m' ? await sumBy15m(fromAligned, toAligned)
+      : g === '1h' ? await sumByHour(fromAligned, toAligned)
+      : await sumByDay(fromAligned, toAligned);
+
+    const labels: string[] = [];
+    const values: number[] = [];
+
+    for (let t = fromAligned.getTime(); t < toAligned.getTime(); t += bucketMs) {
+      const dt = new Date(t);
+      const dayKey = toDayKeyUtc(dt);
+      const hh = String(dt.getUTCHours()).padStart(2, '0');
+      const mm = String(dt.getUTCMinutes()).padStart(2, '0');
+
+      const key =
+        g === '1d' ? dayKey
+        : g === '1h' ? `${dayKey} ${hh}:00`
+        : `${dayKey} ${hh}:${mm}`;
+
+      // labels para UI: se for apenas 1 dia, mostra só hora; se atravessar dias, inclui dia
+      const label = (() => {
+        if (g === '1d') return dayKey;
+        const spansDays = toDayKeyUtc(fromAligned) !== toDayKeyUtc(new Date(toAligned.getTime() - 1));
+        return spansDays ? key : `${hh}:${mm}`;
+      })();
+
+      labels.push(label);
+      values.push(Number(((actual.get(key) ?? 0)).toFixed(2)));
+    }
+
+    return { labels, values };
+  };
+
+  const customWindow = (() => {
+    if (!fromRaw && !toRaw) return null;
+    if (!fromRaw || !toRaw) return 'invalid' as const;
+    const from = parseIsoDate(fromRaw);
+    const to = parseIsoDate(toRaw);
+    if (!from || !to) return 'invalid' as const;
+    return { from, to };
+  })();
+
+  if (customWindow === 'invalid') {
+    return res.status(400).json({ message: 'from/to inválidos (ISO datetime)'});
+  }
+
+  if (customWindow) {
+    const g = granularity ?? '15m';
+    try {
+      const { labels, values } = await buildSeriesByWindow({ from: customWindow.from, to: customWindow.to, granularity: g });
+      return res.json({ range: 'dia', labels, values, lastUpdated: latest.ts, from: customWindow.from.toISOString(), to: customWindow.to.toISOString(), granularity: g });
+    } catch (err: any) {
+      const code = String(err?.message ?? 'error');
+      if (code === 'too_large') return res.status(400).json({ message: 'Intervalo demasiado grande para a granularidade escolhida.' });
+      if (code === 'invalid_range') return res.status(400).json({ message: 'Intervalo inválido (from deve ser < to).' });
+      return res.status(400).json({ message: 'Não foi possível gerar a série para o intervalo.' });
+    }
+  }
+
+  if (range === 'dia') {
+    const parsedDay = dateRaw ? parseDayKey(dateRaw) : null;
+    const dayStart = parsedDay?.dayStart ?? new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const dayEnd = parsedDay?.dayEnd ?? new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+
+    const g = granularity ?? '15m';
+    try {
+      const { labels, values } = await buildSeriesByWindow({ from: dayStart, to: dayEnd, granularity: g });
+      return res.json({ range: 'dia', labels, values, lastUpdated: latest.ts, date: toDayKeyUtc(dayStart), granularity: g });
+    } catch {
+      return res.status(400).json({ message: 'Não foi possível gerar a série diária.' });
+    }
+  }
+
+  if (range === 'semana') {
+    const windowDays = days ?? 7;
+    const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
+    const start = addUtcDays(end, -windowDays);
+    const actual = await sumByDay(start, end);
+
+    const labels = Array.from({ length: windowDays }, (_, i) => {
+      const dt = addUtcDays(start, i);
+      return toDayKeyUtc(dt);
     });
 
-    return res.json({ range: 'semana', labels, values, lastUpdated: latest.ts });
+    const values = labels.map((dayKey) => Number(((actual.get(dayKey) ?? 0)).toFixed(2)));
+    return res.json({ range: 'semana', labels, values, lastUpdated: latest.ts, days: windowDays });
   }
 
   // mes: do dia 1 ao último dia do mês do "tempo simulado" (latest.ts)
@@ -1837,100 +2064,7 @@ app.get('/customers/:customerId/security/kynex-node', async (req, res) => {
     };
   });
 
-  // --- IA (heurística): deteta anomalia por duração/energia vs histórico + consumo global recente ---
-  let alert: null | { title: string; message: string; severity: 'info' | 'warning' | 'critical' } = null;
-
-  // 1) anomalia por dispositivo (sessão mais recente muito acima do padrão)
-  let anomalyDevice: null | { id: number; name: string } = null;
-  for (const id of topIds) {
-    const last = byAppliance.get(id);
-    if (!last) continue;
-
-    const durationMin = Math.max(0, (last.lastEnd.getTime() - last.lastStart.getTime()) / (60 * 1000));
-    if (durationMin < 20) continue;
-
-    const hist = await c.customerApplianceUsage
-      .find(
-        { customer_id: customerId, appliance_id: id, start_ts: { $gte: since14d, $lte: end } },
-        { projection: { _id: 0, start_ts: 1, end_ts: 1, energy_wh: 1 } }
-      )
-      .limit(400)
-      .toArray();
-
-    const durations = (hist as any[])
-      .map((x) => (new Date(x.end_ts).getTime() - new Date(x.start_ts).getTime()) / (60 * 1000))
-      .filter((x) => Number.isFinite(x) && x > 0);
-    const energies = (hist as any[])
-      .map((x) => Number(x.energy_wh ?? 0))
-      .filter((x) => Number.isFinite(x) && x > 0);
-
-    const medDur = Math.max(1, median(durations));
-    const medWh = Math.max(1, median(energies));
-
-    const longRun = durationMin >= Math.max(60, medDur * 2.2);
-    const highWh = last.lastEnergyWh >= medWh * 2.0;
-
-    if (longRun || highWh) {
-      anomalyDevice = { id, name: nameById.get(id)?.name ?? `Dispositivo ${id}` };
-      break;
-    }
-  }
-
-  // 2) anomalia global (últimas 2h muito acima do padrão)
-  const since2h = new Date(end.getTime() - 2 * 60 * 60 * 1000);
-  const last2h = await c.customerTelemetry15m
-    .find({ customer_id: customerId, ts: { $gte: since2h, $lte: end } }, { projection: { _id: 0, watts: 1 } })
-    .toArray();
-  const last2hAvg = last2h.length ? last2h.reduce((acc: number, r: any) => acc + Number(r.watts ?? 0), 0) / last2h.length : 0;
-
-  const since7d = new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000);
-  const hourNow = end.getUTCHours();
-  const weekRows = await c.customerTelemetry15m
-    .find({ customer_id: customerId, ts: { $gte: since7d, $lte: end } }, { projection: { _id: 0, ts: 1, watts: 1 } })
-    .limit(4000)
-    .toArray();
-
-  const sameHourWatts = (weekRows as any[])
-    .filter((r) => new Date(r.ts).getUTCHours() === hourNow)
-    .map((r) => Number(r.watts ?? 0))
-    .filter((w) => Number.isFinite(w));
-  const hourMedian = median(sameHourWatts);
-  const globalAnomaly = hourMedian > 0 ? last2hAvg >= hourMedian * 1.85 && last2hAvg >= 900 : false;
-
-  if (anomalyDevice || globalAnomaly) {
-    const target = anomalyDevice?.name;
-    alert = {
-      title: 'Consumo anómalo!',
-      message: target ? `Verifique o ${target}: pode ter ficado ligado.` : 'Há um pico fora do padrão. Verifique os equipamentos ligados.',
-      severity: 'warning'
-    };
-  }
-
-  if (alert) {
-    const baseContext = await buildAssistantBaseContext(c, customer as any, {
-      end,
-      includeGrid: true,
-      includeEnergyWindows: false,
-      includeTopAppliances30d: false
-    });
-
-    const improved = await llmImproveText({
-      kind: 'security_alert_message',
-      customer: baseContext.customer,
-      context: buildAssistantEnvelope({
-        base: baseContext,
-        extra: {
-          lastUpdated: end.toISOString(),
-          devices,
-          anomalyDevice,
-          globalAnomaly
-        }
-      }),
-      draft: alert.message,
-      maxTokens: 140
-    });
-    if (improved) alert.message = improved;
-  }
+  const alert: null | { title: string; message: string; severity: 'info' | 'warning' | 'critical' } = null;
 
   return res.json({
     customerId,
@@ -1938,6 +2072,35 @@ app.get('/customers/:customerId/security/kynex-node', async (req, res) => {
     devices,
     alert
   });
+});
+
+// Controlo manual (teste) - Shelly no Wi-Fi: candeeiro
+app.get('/customers/:customerId/security/kynex-node/candeeiro', async (_req, res) => {
+  try {
+    const r = await shellyRequest('/relay/0');
+    if (!r.ok) return res.status(502).json({ message: 'SHELLY_UNAVAILABLE', status: r.status });
+    const isOn = Boolean(r.json?.ison ?? r.json?.isOn ?? r.json?.state);
+    return res.json({ device: 'candeeiro', state: isOn ? 'on' : 'off' });
+  } catch {
+    return res.status(502).json({ message: 'SHELLY_UNAVAILABLE' });
+  }
+});
+
+app.post('/customers/:customerId/security/kynex-node/candeeiro', async (req, res) => {
+  const turnRaw = (typeof req.query.turn === 'string' ? req.query.turn : undefined) ?? (req.body?.turn as string | undefined);
+  const turn = String(turnRaw ?? '').trim().toLowerCase();
+  if (turn !== 'on' && turn !== 'off') return res.status(400).json({ message: 'turn deve ser on|off' });
+
+  try {
+    const r = await shellyRequest(`/relay/0?turn=${encodeURIComponent(turn)}`, { timeoutMs: 2500 });
+    if (!r.ok) return res.status(502).json({ message: 'SHELLY_UNAVAILABLE', status: r.status });
+
+    // alguns firmwares devolvem JSON; se não, assumimos o estado pedido
+    const isOn = typeof r.json?.ison === 'boolean' ? r.json.ison : turn === 'on';
+    return res.json({ device: 'candeeiro', state: isOn ? 'on' : 'off' });
+  } catch {
+    return res.status(502).json({ message: 'SHELLY_UNAVAILABLE' });
+  }
 });
 
 app.get('/customers/:customerId/security/third-parties', async (req, res) => {
@@ -2190,6 +2353,157 @@ app.post('/customers/:customerId/contract/simulate', async (req, res) => {
   });
 });
 
+app.get('/customers/:customerId/invoices', async (req, res) => {
+  const { customerId } = req.params;
+  const c = await collections();
+  const rows = await c.customerInvoices
+    .find(
+      { customer_id: customerId },
+      {
+        projection: {
+          _id: 0,
+          id: 1,
+          filename: 1,
+          mime_type: 1,
+          size_bytes: 1,
+          uploaded_at: 1,
+          valor_pagar_eur: 1,
+          potencia_contratada_kva: 1,
+          termo_energia_eur: 1,
+          termo_potencia_eur: 1,
+          analysis: 1
+        }
+      }
+    )
+    .sort({ uploaded_at: -1 })
+    .limit(50)
+    .toArray();
+
+  return res.json({ items: rows.map((r) => ({ ...r, uploaded_at: r.uploaded_at.toISOString() })) });
+});
+
+app.get('/customers/:customerId/invoices/:invoiceId', async (req, res) => {
+  const { customerId, invoiceId } = req.params;
+  const c = await collections();
+  const row = await c.customerInvoices.findOne(
+    { customer_id: customerId, id: invoiceId },
+    {
+      projection: {
+        _id: 0,
+        id: 1,
+        filename: 1,
+        mime_type: 1,
+        size_bytes: 1,
+        uploaded_at: 1,
+        extracted_text: 1,
+        valor_pagar_eur: 1,
+        potencia_contratada_kva: 1,
+        termo_energia_eur: 1,
+        termo_potencia_eur: 1,
+        price_kwh_eur: 1,
+        fixed_daily_fee_eur: 1,
+        analysis: 1
+      }
+    }
+  );
+  if (!row) return res.status(404).json({ message: 'Fatura não encontrada' });
+
+  return res.json({
+    ...row,
+    uploaded_at: row.uploaded_at.toISOString()
+  });
+});
+
+app.post('/customers/:customerId/invoices', invoiceUpload.single('file'), async (req, res) => {
+  const { customerId } = req.params;
+  const file = (req as any).file as { originalname: string; mimetype: string; buffer: Buffer; size: number } | undefined;
+  if (!file) return res.status(400).json({ message: 'Ficheiro em falta (campo multipart: file)' });
+
+  const c = await collections();
+  const customer = await c.customers.findOne(
+    { id: customerId },
+    { projection: { _id: 0, id: 1, contracted_power_kva: 1, price_eur_per_kwh: 1, fixed_daily_fee_eur: 1 } }
+  );
+  if (!customer) return res.status(404).json({ message: 'Cliente não encontrado' });
+
+  const extracted = await extractInvoiceFromFile({
+    buffer: file.buffer,
+    filename: file.originalname,
+    mimeType: file.mimetype
+  });
+
+  const invoiceId = newInvoiceId();
+  const uploadedAt = new Date();
+
+  const contractedPowerKva = extracted.potenciaContratadaKva ?? (customer as any).contracted_power_kva ?? null;
+  const currentPriceKwh = extracted.priceKwhEur ?? (customer as any).price_eur_per_kwh ?? null;
+  const currentFixedDaily = extracted.fixedDailyFeeEur ?? (customer as any).fixed_daily_fee_eur ?? null;
+
+  let analysis: any = null;
+  if (
+    typeof contractedPowerKva === 'number' &&
+    Number.isFinite(contractedPowerKva) &&
+    typeof currentPriceKwh === 'number' &&
+    Number.isFinite(currentPriceKwh) &&
+    typeof currentFixedDaily === 'number' &&
+    Number.isFinite(currentFixedDaily)
+  ) {
+    const cmp = await compareWithErseTariffs({
+      customerId,
+      contractedPowerKva,
+      currentPriceKwhEur: currentPriceKwh,
+      currentFixedDailyFeeEur: currentFixedDaily
+    });
+    analysis = {
+      consumption_kwh_year: cmp.consumptionKwhYear,
+      current_cost_year_eur: cmp.currentCostYearEur,
+      best_cost_year_eur: cmp.bestCostYearEur,
+      savings_year_eur: cmp.savingsYearEur,
+      top: cmp.top.map((t) => ({
+        comercializador: t.comercializador,
+        nome_proposta: t.nomeProposta,
+        cost_year_eur: t.costYearEur,
+        savings_year_eur: t.savingsYearEur
+      }))
+    };
+  }
+
+  const maxText = Math.max(1_000, Math.min(200_000, Number(process.env.KYNEX_MAX_INVOICE_TEXT_CHARS ?? 80_000)));
+  const extractedText = extracted.extractedText.length > maxText ? extracted.extractedText.slice(0, maxText) : extracted.extractedText;
+
+  await c.customerInvoices.insertOne({
+    id: invoiceId,
+    customer_id: customerId,
+    filename: file.originalname,
+    mime_type: file.mimetype,
+    size_bytes: file.size,
+    uploaded_at: uploadedAt,
+    extracted_text: extractedText,
+    valor_pagar_eur: extracted.valorPagarEur ?? undefined,
+    potencia_contratada_kva: extracted.potenciaContratadaKva ?? undefined,
+    termo_energia_eur: extracted.termoEnergiaEur ?? undefined,
+    termo_potencia_eur: extracted.termoPotenciaEur ?? undefined,
+    price_kwh_eur: extracted.priceKwhEur ?? undefined,
+    fixed_daily_fee_eur: extracted.fixedDailyFeeEur ?? undefined,
+    analysis
+  });
+
+  return res.status(201).json({
+    id: invoiceId,
+    uploadedAt: uploadedAt.toISOString(),
+    extracted: {
+      valorPagarEur: extracted.valorPagarEur,
+      potenciaContratadaKva: extracted.potenciaContratadaKva,
+      termoEnergiaEur: extracted.termoEnergiaEur,
+      termoPotenciaEur: extracted.termoPotenciaEur,
+      priceKwhEur: extracted.priceKwhEur,
+      fixedDailyFeeEur: extracted.fixedDailyFeeEur,
+      usedOcr: extracted.debug.usedOcr
+    },
+    analysis
+  });
+});
+
 app.get('/customers/:customerId/market/offers', async (req, res) => {
   const { customerId } = req.params;
   const baseRes = await (async () => {
@@ -2413,67 +2727,29 @@ app.get('/customers/:customerId/ai/insights', async (req, res) => {
   // Mantém só as melhores (com “pé e cabeça” e sem redundância)
   const out = tips.slice(0, limit);
 
-  const assistantText = await llmGenerateText({
-    kind: 'ai_insights_summary',
-    customer: baseContext.customer,
-    context: buildAssistantEnvelope({
-      base: baseContext,
-      extra: {
-        lastUpdated: end.toISOString(),
-        hourly,
-        nightAvgWatts: Math.round(nightAvgWatts),
-        renewablesSharePct: typeof renewPct === 'number' ? Math.round(renewPct) : null,
-        tips: out
-      }
-    }),
-    prompt:
-      'Cria um resumo curto (2–4 frases) com os 2–3 insights mais relevantes e uma próxima ação concreta. ' +
-      'Sem listas com bullets; pode usar "1)" apenas se ajudar. Não inventes números.',
-    maxTokens: 220
-  });
+  // Resumo heurístico (sem LLM): 2–4 frases a partir dos melhores insights.
+  const assistantText = (() => {
+    const t0 = out[0]?.text ? String(out[0].text).trim() : '';
+    const t1 = out[1]?.text ? String(out[1].text).trim() : '';
+    const t2 = out[2]?.text ? String(out[2].text).trim() : '';
 
-  const assistantTextFallback = (() => {
-    const pct = Math.round(offPct * 100);
-    const pieces: string[] = [];
+    const parts = [t0, t1].filter(Boolean);
+    if (!parts.length) return null;
 
-    const isBi = isBiTariff(currentTariff) || isTriTariff(currentTariff);
-    if (isBi) {
-      pieces.push(
-        pct >= 50
-          ? `Você já coloca bastante consumo em vazio (~${pct}%). Mantenha tarefas flexíveis nesse período.`
-          : `Apesar de ter bi-horário, só ~${pct}% está em vazio. Se mover 1–2 hábitos do fim da tarde para depois das 22h, tende a ganhar mais.`
-      );
-    } else {
-      pieces.push(
-        shouldBi
-          ? `O seu consumo tem ~${pct}% em vazio; um bi-horário pode fazer sentido sem mudar muito os seus hábitos.`
-          : 'O seu consumo não está muito concentrado em vazio; tarifa simples tende a ser mais previsível no dia-a-dia.'
-      );
-    }
+    // Próxima ação: pega na primeira frase do melhor insight.
+    const next = t0.split(/[.!?]\s/)[0]?.trim();
+    const summary = parts.join(' ').replace(/\s+/g, ' ').trim();
+    const withNext = next && next.length >= 8 ? `${summary} Próxima ação: ${next}.` : summary;
 
-    const nw = Math.round(nightAvgWatts);
-    pieces.push(
-      nw >= 180
-        ? `De noite (2h–5h) há uma base média ~${nw}W: vale a pena atacar stand-by (box/TV/PC) e carregadores sempre na ficha.`
-        : 'O consumo noturno (2h–5h) está baixo — bom sinal de pouco stand-by.'
-    );
-
-    if (typeof peakHour === 'number') {
-      pieces.push(
-        `O seu pico típico é por volta das ${String(peakHour).padStart(2, '0')}h; espalhar alguns consumos por 1–2 horas ajuda a reduzir picos e stress no contador.`
-      );
-    }
-
-    // garante 2–4 frases curtas
-    const text = pieces.slice(0, 3).join(' ');
-    return text.length <= 600 ? text : text.slice(0, 585).trimEnd() + '…';
+    // Proteção de tamanho (UI e logs)
+    return withNext.length <= 420 ? withNext : withNext.slice(0, 420);
   })();
 
   return res.json({
     customerId,
     lastUpdated: end.toISOString(),
     tips: out,
-    assistantText: assistantText ?? assistantTextFallback
+    assistantText
   });
 });
 

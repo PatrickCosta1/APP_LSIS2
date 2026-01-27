@@ -71,6 +71,28 @@ Monorepo académico com frontend React + TypeScript (Vite) e backend Express + T
 	- `chat_conversations`
 	- `chat_messages`
 
+## Faturas (upload + comparação ERSE)
+
+O backend suporta upload de faturas (PDF/imagem), extração automática dos campos principais e comparação com tarifários ERSE guardados na base de dados.
+
+### Job diário ERSE
+- Configurar `KYNEX_ERSE_TARIFF_ZIP_URL` com o URL do ZIP (`CSV.zip`) do simulador ERSE.
+- Ajustar o intervalo com `KYNEX_ERSE_TICK_MS` (por defeito 24h).
+
+> Se `KYNEX_ERSE_TARIFF_ZIP_URL` não estiver definida, o backend arranca na mesma, mas não atualiza tarifários ERSE.
+
+### Endpoints
+- Listar faturas: `GET /customers/:id/invoices`
+- Upload (multipart): `POST /customers/:id/invoices` com campo `file` (`.pdf` ou imagem)
+- Detalhe/análise: `GET /customers/:id/invoices/:invoiceId`
+
+### Variáveis úteis
+- `KYNEX_MAX_INVOICE_BYTES` (limite do upload; por defeito ~12MB)
+- `KYNEX_MAX_INVOICE_TEXT_CHARS` (limite de texto guardado para debug)
+- `KYNEX_TESSERACT_LANG` (OCR; por defeito `por`)
+- `KYNEX_CONSUMPTION_LOOKBACK_DAYS` (estimativa consumo anual via telemetria; por defeito 30)
+- `KYNEX_CONSUMPTION_FALLBACK_KWH_YEAR` (fallback se não houver telemetria; por defeito 3500)
+
 ## Estrutura
 - apps/frontend: SPA em React + Vite.
 - apps/backend: API Express com MongoDB.

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import logoImg from '../assets/images/logo2.png';
 import SettingsDrawer from '../components/SettingsDrawer';
 import './Definicoes.css';
-
+  
 function IconBack() {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">

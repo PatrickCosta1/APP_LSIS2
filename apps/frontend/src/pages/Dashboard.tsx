@@ -245,7 +245,6 @@ function Dashboard() {
   useEffect(() => {
     const apiBases = [
       (import.meta as any).env?.VITE_API_BASE as string | undefined,
-      'http://localhost:4000',
       'http://localhost:4100'
     ].filter(Boolean) as string[];
 
@@ -438,17 +437,17 @@ function Dashboard() {
                 </div>
               ) : null}
               <div className="metric">
-                <p className="metric-value">{dayStats ? dayStats.kwh.toFixed(2) : '—'}</p>
+                <p className="metric-value">{dayStats?.kwh ? dayStats.kwh.toFixed(2) : '—'}</p>
                 <p className="metric-label">Consumo (kWh)</p>
               </div>
               <div className="metric">
-                <p className="metric-value">{dayStats ? `${dayStats.euros.toFixed(2)}€` : '—'}</p>
+                <p className="metric-value">{dayStats?.euros ? `${dayStats.euros.toFixed(2)}€` : '—'}</p>
                 <p className="metric-label">Consumo (€)</p>
               </div>
               <div className="metric">
                 <div className="metric-value-row">
-                  <p className="metric-value">{dayStats ? dayStats.similarKwh.toFixed(2) : '—'}</p>
-                  {dayStats ? (
+                  <p className="metric-value">{dayStats?.similarKwh ? dayStats.similarKwh.toFixed(2) : '—'}</p>
+                  {dayStats?.similarDeltaPct !== null && dayStats?.similarDeltaPct !== undefined ? (
                     <p className={`metric-delta ${dayStats.similarDeltaPct <= 0 ? 'positive' : 'negative'}`}>
                       {dayStats.similarDeltaPct > 0 ? `+${dayStats.similarDeltaPct.toFixed(0)}%` : `${dayStats.similarDeltaPct.toFixed(0)}%`}
                     </p>

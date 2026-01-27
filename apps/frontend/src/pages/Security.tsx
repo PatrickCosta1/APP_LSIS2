@@ -108,6 +108,10 @@ function Security() {
   const [node, setNode] = useState<KynexNodeResponse | null>(null);
   const [third, setThird] = useState<ThirdPartiesResponse | null>(null);
 
+  const [lampState, setLampState] = useState<'on' | 'off' | null>(null);
+  const [lampBusy, setLampBusy] = useState(false);
+  const [lampError, setLampError] = useState<string | null>(null);
+
   const [addOpen, setAddOpen] = useState(false);
   const [thirdName, setThirdName] = useState('');
   const [addBusy, setAddBusy] = useState(false);
@@ -157,7 +161,6 @@ function Security() {
   useEffect(() => {
     const apiBases = [
       (import.meta as any).env?.VITE_API_BASE as string | undefined,
-      'http://localhost:4000',
       'http://localhost:4100'
     ].filter(Boolean) as string[];
 
@@ -203,6 +206,19 @@ function Security() {
         if (!cancelled) setNode(null);
       }
 
+      // Estado do candeeiro (Shelly via backend proxy)
+      try {
+        const res = await fetch(`${apiBase}/customers/${customerId}/security/kynex-node/candeeiro`, { headers });
+        if (!res.ok) throw new Error('candeeiro');
+        const json = (await res.json()) as { state?: 'on' | 'off' };
+        if (!cancelled) {
+          if (json?.state === 'on' || json?.state === 'off') setLampState(json.state);
+          setLampError(null);
+        }
+      } catch {
+        if (!cancelled) setLampError('Offline');
+      }
+
       try {
         const res = await fetch(`${apiBase}/customers/${customerId}/security/third-parties`, { headers });
         if (!res.ok) throw new Error('third');
@@ -220,6 +236,34 @@ function Security() {
       window.clearInterval(id);
     };
   }, [apiBase, customerId]);
+
+  async function setLamp(turn: 'on' | 'off') {
+    if (!apiBase || !customerId || lampBusy) return;
+
+    setLampBusy(true);
+    setLampError(null);
+    // otimista (a UI responde já)
+    setLampState(turn);
+
+    try {
+      const token = localStorage.getItem('kynex:authToken');
+      const res = await fetch(`${apiBase}/customers/${customerId}/security/kynex-node/candeeiro?turn=${encodeURIComponent(turn)}`,
+        {
+          method: 'POST',
+          headers: {
+            ...(token ? { Authorization: `Bearer ${token}` } : {})
+          }
+        }
+      );
+      if (!res.ok) throw new Error('toggle');
+      const json = (await res.json()) as { state?: 'on' | 'off' };
+      if (json?.state === 'on' || json?.state === 'off') setLampState(json.state);
+    } catch {
+      setLampError('Erro ao comunicar com o candeeiro');
+    } finally {
+      setLampBusy(false);
+    }
+  }
 
   const activeNavKey = useMemo(() => 'security' as const, []);
 
@@ -339,22 +383,30 @@ function Security() {
                 <div className="sec-card-head">
                   <div>
                     <div className="sec-card-title">Kynex Node</div>
-                    <div className="sec-card-sub">As tuas tomadas inteligentes</div>
+                    <div className="sec-card-sub"></div>
                   </div>
-                  <button className="sec-buy" type="button">comprar</button>
                 </div>
 
                 <div className="sec-devices" aria-label="Dispositivos">
-                  {(node?.devices?.length ? node.devices : []).slice(0, 3).map((d) => (
-                    <div key={d.applianceId} className="sec-device">
-                      <div className="sec-device-name" title={d.name}>{d.name}</div>
-                      <div className={`sec-device-state ${d.state === 'on' ? 'on' : 'off'}`}>{d.state === 'on' ? 'ON' : 'OFF'}</div>
-                    </div>
-                  ))}
+                  <div className="sec-device sec-device-manual" aria-label="Candeeiro">
+                    <div className="sec-device-name" title="Candeeiro">Candeeiro</div>
 
-                  {node?.devices?.length ? null : (
-                    <div className="sec-empty">Ainda a detetar dispositivos. Aguarde alguns minutos.</div>
-                  )}
+                    <div className="sec-device-bottom">
+                      <div className={`sec-device-state ${lampState === 'on' ? 'on' : 'off'}`}>{lampState === 'on' ? 'ON' : 'OFF'}</div>
+                      <button
+                        className={`sec-switch ${lampState === 'on' ? 'on' : 'off'}`}
+                        type="button"
+                        onClick={() => setLamp(lampState === 'on' ? 'off' : 'on')}
+                        disabled={lampBusy}
+                        aria-label={lampState === 'on' ? 'Desligar candeeiro' : 'Ligar candeeiro'}
+                      >
+                        {lampBusy ? 'A ligar…' : lampState === 'on' ? 'Desligar' : 'Ligar'}
+                      </button>
+                    </div>
+
+                    {lampError ? <div className="sec-device-error">{lampError}</div> : null}
+                    <div className="sec-device-hint">Shelly em Wi-Fi (relay 0)</div>
+                  </div>
                 </div>
               </article>
             </section>

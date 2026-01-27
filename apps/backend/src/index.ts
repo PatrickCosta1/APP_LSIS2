@@ -4,8 +4,9 @@ import app from './app';
 import { startAiRetrainJob } from './aiTrainer';
 import { startTelemetryJob } from './telemetryJob';
 import { startEredesOpenDataJob } from './openDataJob';
+import { startErseTariffsJob } from './erseTariffsJob';
 
-const port = process.env.PORT || 4000;
+const port = process.env.PORT || 4100;
 
 app.listen(port, () => {
   // eslint-disable-next-line no-console
@@ -19,4 +20,7 @@ app.listen(port, () => {
 
   // Cache de Open Data (E-REDES) para enriquecer insights/explicações (configurável via KYNEX_EREDES_TICK_MS)
   startEredesOpenDataJob();
+
+  // Importação diária de tarifários ERSE (configurável via KYNEX_ERSE_TARIFF_ZIP_URL e KYNEX_ERSE_TICK_MS)
+  startErseTariffsJob();
 });

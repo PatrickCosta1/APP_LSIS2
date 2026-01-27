@@ -34,12 +34,15 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  flex-wrap: wrap;
+  row-gap: 12px;
 }
 
 .ana-export {
   position: relative;
   display: inline-flex;
   align-items: center;
+  margin-left: auto;
 }
 
 .ana-export-btn {
@@ -1055,6 +1058,79 @@
   .ana-contract-pill-val {
     font-size: 16px;
   }
+}
+
+input[type="checkbox"] {
+  cursor: pointer;
+  accent-color: rgba(141, 224, 255, 0.95);
+}
+
+.ana-control-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: fit-content;
+}
+
+.ana-label {
+  font-size: 12px;
+  opacity: 0.8;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.ana-input {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: rgba(255, 255, 255, 0.92);
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+  min-width: auto;
+}
+
+.ana-input:hover {
+  background: rgba(255, 255, 255, 0.11);
+  border-color: rgba(141, 224, 255, 0.3);
+}
+
+.ana-input:focus {
+  outline: none;
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(141, 224, 255, 0.6);
+  box-shadow: 0 0 0 2px rgba(141, 224, 255, 0.15);
+}
+
+.ana-input::placeholder {
+  color: rgba(255, 255, 255, 0.48);
+}
+
+.ana-period-controls {
+  width: 100%;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.ana-period-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: -5px;
+  width: 100%;
+}
+
+.ana-period-col {
+  display: flex;
+  flex-direction: column;
+  gap: 03px;
+}
+
+.ana-period-col .ana-input {
+  min-width: 0;
+  width: 80%;
 }
 
 @media print {
