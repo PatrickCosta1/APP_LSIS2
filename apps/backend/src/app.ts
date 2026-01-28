@@ -2074,17 +2074,30 @@ app.get('/customers/:customerId/security/kynex-node', async (req, res) => {
 // Controlo manual (teste) - Shelly no Wi-Fi: candeeiro
 app.get('/customers/:customerId/security/kynex-node/candeeiro', async (_req, res) => {
   try {
-    if (isShellyMqttConfigured()) {
+    const mqttConfigured = isShellyMqttConfigured();
+    // eslint-disable-next-line no-console
+    console.log('[CANDEEIRO GET] MQTT configured:', mqttConfigured);
+
+    if (mqttConfigured) {
       const st = await shellySwitchGetStatus();
+      // eslint-disable-next-line no-console
+      console.log('[CANDEEIRO GET] MQTT status:', st);
       return res.json({ device: 'candeeiro', state: st.on ? 'on' : 'off', ack: st.ack, mode: 'mqtt' });
     }
 
+    // eslint-disable-next-line no-console
+    console.log('[CANDEEIRO GET] Tentando HTTP request...');
     const r = await shellyRequest('/relay/0');
+    // eslint-disable-next-line no-console
+    console.log('[CANDEEIRO GET] HTTP response:', { ok: r.ok, status: r.status, json: r.json });
+
     if (!r.ok) return res.status(502).json({ message: 'SHELLY_UNAVAILABLE', status: r.status });
     const isOn = Boolean(r.json?.ison ?? r.json?.isOn ?? r.json?.state);
     return res.json({ device: 'candeeiro', state: isOn ? 'on' : 'off', mode: 'http' });
-  } catch {
-    return res.status(502).json({ message: 'SHELLY_UNAVAILABLE' });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[CANDEEIRO GET] Error:', err instanceof Error ? err.message : String(err));
+    return res.status(502).json({ message: 'SHELLY_UNAVAILABLE', error: err instanceof Error ? err.message : String(err) });
   }
 });
 
@@ -2094,19 +2107,35 @@ app.post('/customers/:customerId/security/kynex-node/candeeiro', async (req, res
   if (turn !== 'on' && turn !== 'off') return res.status(400).json({ message: 'turn deve ser on|off' });
 
   try {
-    if (isShellyMqttConfigured()) {
+    // eslint-disable-next-line no-console
+    console.log('[CANDEEIRO POST] turn requested:', turn);
+
+    const mqttConfigured = isShellyMqttConfigured();
+    // eslint-disable-next-line no-console
+    console.log('[CANDEEIRO POST] MQTT configured:', mqttConfigured);
+
+    if (mqttConfigured) {
       const st = await shellySwitchSet(turn === 'on');
+      // eslint-disable-next-line no-console
+      console.log('[CANDEEIRO POST] MQTT set result:', st);
       return res.json({ device: 'candeeiro', state: st.on ? 'on' : 'off', ack: st.ack, mode: 'mqtt' });
     }
 
+    // eslint-disable-next-line no-console
+    console.log('[CANDEEIRO POST] Tentando HTTP request...');
     const r = await shellyRequest(`/relay/0?turn=${encodeURIComponent(turn)}`, { timeoutMs: 2500 });
+    // eslint-disable-next-line no-console
+    console.log('[CANDEEIRO POST] HTTP response:', { ok: r.ok, status: r.status, json: r.json });
+
     if (!r.ok) return res.status(502).json({ message: 'SHELLY_UNAVAILABLE', status: r.status });
 
     // alguns firmwares devolvem JSON; se não, assumimos o estado pedido
     const isOn = typeof r.json?.ison === 'boolean' ? r.json.ison : turn === 'on';
     return res.json({ device: 'candeeiro', state: isOn ? 'on' : 'off', mode: 'http' });
-  } catch {
-    return res.status(502).json({ message: 'SHELLY_UNAVAILABLE' });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[CANDEEIRO POST] Error:', err instanceof Error ? err.message : String(err));
+    return res.status(502).json({ message: 'SHELLY_UNAVAILABLE', error: err instanceof Error ? err.message : String(err) });
   }
 });
 
