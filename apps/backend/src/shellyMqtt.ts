@@ -69,8 +69,10 @@ async function shellyRpc(method: string, params: Record<string, any>) {
     throw err;
   }
 
+
   const id = crypto.randomInt(1, 2 ** 31 - 1);
   const payload = { id, src: cfg.src, method, params };
+  console.log('[SHELLY][MQTT] RPC request:', { topic: cfg.topic, payload });
 
   return await new Promise<any>((resolve, reject) => {
     const client = mqtt.connect({
@@ -122,21 +124,29 @@ async function shellyRpc(method: string, params: Record<string, any>) {
       try {
         json = JSON.parse(message.toString('utf8'));
       } catch {
+        console.warn('[SHELLY][MQTT] Mensagem inválida recebida:', message.toString('utf8'));
         return;
       }
+
+      console.log('[SHELLY][MQTT] Mensagem recebida:', { id: json?.id, esperado: id, json });
 
       if (json?.id !== id) return;
 
       // Ignora o eco do próprio pedido (normalmente vem com method+params mas sem result)
-      if (json?.result == null && json?.error == null) return;
+      if (json?.result == null && json?.error == null) {
+        console.log('[SHELLY][MQTT] Eco do pedido ignorado:', json);
+        return;
+      }
 
       if (json?.error) {
+        console.error('[SHELLY][MQTT] Erro na resposta:', json.error);
         const err: any = new Error('SHELLY_RPC_ERROR');
         err.code = 'SHELLY_RPC_ERROR';
         err.details = json.error;
         return finish(err);
       }
 
+      console.log('[SHELLY][MQTT] Resposta válida recebida:', json);
       return finish(undefined, json);
     });
   });
