@@ -10,6 +10,7 @@ import Contrato from './pages/Contrato';
 import SobreNos from './pages/SobreNos';
 import Faturas from './pages/Faturas';
 import Definicoes from './pages/Definicoes';
+import Notifications from './pages/Notifications';
 
 function App() {
   const path = window.location.pathname;
@@ -56,6 +57,10 @@ function App() {
   }
   if (path.startsWith('/seguranca')) {
     return <Security />;
+  }
+
+  if (path.startsWith('/notificacoes')) {
+    return <Notifications />;
   }
 
   // Página de Contrato

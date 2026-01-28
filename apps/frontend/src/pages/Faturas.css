@@ -193,14 +193,38 @@
   align-items: center;
   gap: 8px;
   margin-bottom: 6px;
+  min-width: 0;
 }
 
 .invoice-reference {
+  flex: 1;
   font-size: 16px;
   font-weight: 700;
   color: #ffffff;
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', system-ui, sans-serif;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
+
+.ai-badge {
+  flex-shrink: 0;
+}
+  .contract-hint {
+    margin-top: 12px;
+    margin-bottom: 14px;
+    padding: 14px;
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(0, 206, 209, 0.08);
+  }
+  .contract-hint-title {
+    font-size: 14px;
+    font-weight: 800;
+    color: #ffffff;
+    margin-bottom: 6px;
+  }
 
 .ai-badge {
   font-size: 14px;
@@ -215,18 +239,26 @@
   font-size: 13px;
   color: rgba(255, 255, 255, 0.5);
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+  min-width: 0;
 }
 
 .invoice-provider {
   font-weight: 500;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .invoice-separator {
   opacity: 0.5;
+  flex-shrink: 0;
 }
 
 .invoice-date {
   font-weight: 500;
+  flex-shrink: 0;
 }
 
 .invoice-right {
@@ -235,6 +267,52 @@
   align-items: flex-end;
   gap: 6px;
   flex-shrink: 0;
+}
+
+/* ===== Contract Hint (Toast/Card) ===== */
+.contract-hint {
+  background: rgba(0, 206, 209, 0.08);
+  border: 1px solid rgba(0, 206, 209, 0.25);
+  border-radius: 16px;
+  padding: 14px 14px;
+  margin: 0 0 16px 0;
+  backdrop-filter: blur(16px);
+}
+
+.contract-hint-title {
+  color: #ffffff;
+  font-weight: 800;
+  font-size: 14px;
+  margin-bottom: 6px;
+}
+
+.contract-hint-text {
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.contract-hint-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.contract-hint-btn {
+  border: 1px solid rgba(0, 206, 209, 0.35);
+  background: rgba(0, 206, 209, 0.12);
+  color: #ffffff;
+  font-weight: 700;
+  font-size: 12px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.contract-hint-btn.secondary {
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(31, 31, 35, 0.6);
+  color: rgba(255, 255, 255, 0.9);
 }
 
 .invoice-amount {

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import logoImg from '../assets/images/logo.png';
 import AssistantChatModal from '../components/AssistantChatModal';
 import SettingsDrawer from '../components/SettingsDrawer';
+import { useNotificationCount } from '../hooks/useNotificationCount';
 import './Dashboard.css';
 import './Security.css';
 
@@ -101,6 +102,8 @@ function Security() {
   const [customerName, setCustomerName] = useState<string>('Cliente');
   const [userEmail, setUserEmail] = useState<string>('');
   const [userPhotoUrl, setUserPhotoUrl] = useState<string | null>(null);
+
+  const notificationCount = useNotificationCount();
 
   const [apiBase, setApiBase] = useState<string | null>(null);
   const [customerId, setCustomerId] = useState<string | null>(null);
@@ -313,12 +316,12 @@ function Security() {
           </div>
 
           <div className="top-actions">
-            <button className="notif-btn" aria-label="Notificações" type="button">
+            <button className="notif-btn" aria-label="Notificações" type="button" onClick={() => window.location.assign('/notificacoes')}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 7h18s-3 0-3-7" strokeLinecap="round" strokeLinejoin="round" />
                 <path d="M13.73 21a2 2 0 0 1-3.46 0" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
-              <span className="notif-badge">2</span>
+              <span className="notif-badge">{notificationCount}</span>
             </button>
             <button
               className="avatar-btn"

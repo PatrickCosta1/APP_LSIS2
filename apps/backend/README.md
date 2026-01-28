@@ -13,6 +13,13 @@ API Express em TypeScript com MongoDB.
 - `MONGODB_URI` (obrigatória)
 - `MONGODB_DB` (opcional)
 
+\#\#\# Telemetria 15m (CSV / modelo)
+- `KYNEX_SIM_TICK_MS` (opcional; default: `900000` = 15 min)
+- `KYNEX_TELEMETRY_CSV_PATH` (opcional; path para CSV 15m real, ex.: `meusDados1Ano.csv`)
+- `KYNEX_TELEMETRY_CSV_CUSTOMER_ID` (opcional; customerId a popular com o CSV)
+- `KYNEX_TELEMETRY_CSV_OVERWRITE=1` (opcional; apaga e reimporta)
+- `KYNEX_TELEMETRY_MODEL_PATH` (opcional; default: `apps/backend/data/consumption_model_15m.json`)
+
 \#\# IA (Chat)
 O Groq é usado **apenas** no chatbot de conversação. Todo o resto (dicas/sugestões/insights) é gerado por heurísticas locais.
 
@@ -42,7 +49,8 @@ Para ativar o chat com LLM:
 - `GET /customers/:customerId/chart?range=dia|semana|mes` — série agregada (com consumido/previsto).
 
 ## Base de dados
-- MongoDB (coleções principais): `customers`, `customerTelemetry15m`, `customerApplianceUsage`, `appliances`, `chatConversations`, `chatMessages`.
+- MongoDB (coleções principais): `customers`, `customerTelemetry15m`, `chatConversations`, `chatMessages`.
+- Nota: `customerApplianceUsage` e `appliances` passam a ser legado para “Equipamentos” (agora inferidos a partir do consumo agregado em `customerTelemetry15m`).
 
 ## IA (dados sintéticos + treino + previsão)
 O backend inclui scripts Python para treino/geração dos modelos (ex.: `ai_train.py`) e usa telemetria guardada em MongoDB.

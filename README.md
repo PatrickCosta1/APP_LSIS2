@@ -17,8 +17,13 @@ Monorepo académico com frontend React + TypeScript (Vite) e backend Express + T
 - (Opcional) Treinar IA:
 	- `py -3 apps/backend/ai_train.py --days 14 --lambda 2.0`
 - Desenvolver backend: `npm run dev:backend`
-	- Gera novas leituras sintéticas continuamente (por defeito a cada 10s, simulando passos de 15 minutos)
-	- Ajuste com `KYNEX_SIM_TICK_MS=5000` (mais rápido) / `KYNEX_SIM_TICK_MS=30000` (mais lento)
+	- Gera/atualiza telemetria em passos de 15 minutos (por defeito `KYNEX_SIM_TICK_MS=900000`)
+	- Ajuste com `KYNEX_SIM_TICK_MS=300000` (5 min) / `KYNEX_SIM_TICK_MS=1800000` (30 min)
+	- (Opcional) Importar telemetria 15m real do CSV:
+		- `KYNEX_TELEMETRY_CSV_PATH` (ex.: `meusDados1Ano.csv`)
+		- `KYNEX_TELEMETRY_CSV_CUSTOMER_ID` (id do cliente alvo)
+		- `KYNEX_TELEMETRY_CSV_OVERWRITE=1` (apaga e reimporta)
+		- `KYNEX_TELEMETRY_MODEL_PATH` (onde guardar/carregar o modelo 15m)
 - Desenvolver frontend: `npm run dev:frontend`
 - Abrir a app (Vite imprime o URL) e completar o Onboarding (é a página inicial quando não existe perfil)
 
@@ -45,7 +50,7 @@ Monorepo académico com frontend React + TypeScript (Vite) e backend Express + T
 ## Equipamentos (dinâmico)
 - A página “Equipamentos” usa dados por cliente (estimativa/seed) via:
 	- `GET /customers/:id/appliances/summary?days=30`
-- O backend agrega “sessões” por equipamento em MongoDB na coleção `customer_appliance_usage`.
+- O backend infere “equipamentos” a partir do consumo agregado (`customerTelemetry15m`) em runtime (NILM simplificado), sem depender da coleção `customer_appliance_usage` no caminho crítico.
 
 ## Assistente (chat)
 - O botão central (estrela) abre um chat/modal no frontend.

@@ -116,8 +116,6 @@
 .sd-gap {
   height: var(--sd-gap-5mm);
 }
-  height: var(--sd-gap-5mm);
-}
 
 .sd-section {
   margin-bottom: var(--sd-gap-5mm);

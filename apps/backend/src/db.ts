@@ -87,6 +87,8 @@ export type CustomerInvoiceDoc = {
   size_bytes: number;
   uploaded_at: Date;
 
+  utility_guess?: string;
+
   // Texto extraído (quando existir) para debug/reprocessamento
   extracted_text?: string;
 

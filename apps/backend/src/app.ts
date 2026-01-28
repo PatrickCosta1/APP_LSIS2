@@ -13,6 +13,7 @@ import { hashPassword, hashToken, normalizeEmail, newToken, validatePassword, ve
 import { getEredesNationalContext } from './openDataContext';
 import { llmImproveText } from './llm/assistantText';
 import { buildAssistantBaseContext, buildAssistantEnvelope } from './assistantContext';
+import { inferAppliancesFromAggregate } from './nilmInfer';
 import { extractInvoiceFromFile, newInvoiceId } from './invoiceEngine';
 import { compareWithErseTariffs } from './tariffComparison';
 
@@ -1570,52 +1571,28 @@ app.get('/customers/:customerId/appliances/summary', async (req, res) => {
   const start = monthStart ?? new Date(end.getTime() - windowDays * 24 * 60 * 60 * 1000);
   const startMatch = monthStart && monthEndExclusive ? { $gte: monthStart, $lt: monthEndExclusive } : { $gte: start, $lte: end };
 
-  const usageAgg = await c.customerApplianceUsage
-    .aggregate([
-      { $match: { customer_id: customerId, start_ts: startMatch } },
-      {
-        $group: {
-          _id: '$appliance_id',
-          cost_eur: { $sum: '$cost_eur' },
-          energy_wh: { $sum: '$energy_wh' },
-          sessions: { $sum: 1 },
-          confidence: { $avg: '$confidence' }
-        }
-      }
-    ])
+  const telRows = await c.customerTelemetry15m
+    .find({ customer_id: customerId, ts: startMatch as any }, { projection: { _id: 0, ts: 1, watts: 1 } })
+    .sort({ ts: 1 })
     .toArray();
 
-  const usageById = new Map<number, { cost_eur: number; energy_wh: number; sessions: number; confidence: number }>();
-  for (const row of usageAgg as any[]) {
-    const id = Number(row?._id);
-    if (!Number.isFinite(id)) continue;
-    usageById.set(id, {
-      cost_eur: Number(row?.cost_eur ?? 0),
-      energy_wh: Number(row?.energy_wh ?? 0),
-      sessions: Number(row?.sessions ?? 0),
-      confidence: Number(row?.confidence ?? 0.85)
-    });
-  }
-
-  const appliances = await c.appliances
-    .find({}, { projection: { _id: 0, id: 1, name: 1, category: 1, efficiency_score: 1, standby_watts: 1 } })
-    .sort({ id: 1 })
-    .toArray();
-
-  const itemsRaw = appliances.map((a) => {
-    const u = usageById.get(a.id) ?? { cost_eur: 0, energy_wh: 0, sessions: 0, confidence: 0.85 };
-    return {
-      id: a.id,
-      name: a.name,
-      category: a.category,
-      costEur: Number(u.cost_eur.toFixed(2)),
-      energyKwh: Number((u.energy_wh / 1000).toFixed(2)),
-      sessions: u.sessions,
-      confidence: Number(u.confidence.toFixed(2)),
-      efficiencyScore: typeof a.efficiency_score === 'number' ? a.efficiency_score : null,
-      standbyWatts: typeof a.standby_watts === 'number' ? a.standby_watts : null
-    };
+  const inferred = inferAppliancesFromAggregate({
+    points: (telRows as any[]).map((r) => ({ ts: new Date(r.ts), watts: Number(r.watts ?? 0) })),
+    priceEurPerKwh: typeof (customer as any)?.price_eur_per_kwh === 'number' ? Number((customer as any).price_eur_per_kwh) : 0.2,
+    maxAppliances: 6
   });
+
+  const itemsRaw = inferred.appliances.map((a) => ({
+    id: a.id,
+    name: a.name,
+    category: a.category,
+    costEur: a.costEur,
+    energyKwh: a.energyKwh,
+    sessions: a.sessions,
+    confidence: a.confidence,
+    efficiencyScore: null,
+    standbyWatts: null
+  }));
 
   const totalCost = itemsRaw.reduce((acc, x) => acc + x.costEur, 0);
 
@@ -1700,11 +1677,7 @@ app.get('/customers/:customerId/appliances/:applianceId/weekly', async (req, res
   const applianceId = Number(applianceIdRaw);
   if (!Number.isFinite(applianceId)) return res.status(400).json({ message: 'applianceId inválido' });
 
-  const appliance = await c.appliances.findOne(
-    { id: applianceId },
-    { projection: { _id: 0, id: 1, name: 1, category: 1, standby_watts: 1 } }
-  );
-  if (!appliance) return res.status(404).json({ message: 'Equipamento não encontrado' });
+  // O equipamento é inferido a partir do consumo agregado; o `applianceId` vem do endpoint /summary.
 
   const latestTs = await getCustomerLatestTs(customerId);
   if (!latestTs) return res.status(404).json({ message: 'Sem telemetria para este cliente' });
@@ -1714,35 +1687,33 @@ app.get('/customers/:customerId/appliances/:applianceId/weekly', async (req, res
   const toExclusive = addUtcDays(endDay, 1);
   const start = addUtcDays(toExclusive, -windowDays);
 
-  const totalAgg = await c.customerApplianceUsage
-    .aggregate([
-      { $match: { customer_id: customerId, start_ts: { $gte: start, $lt: toExclusive } } },
-      { $group: { _id: null, totalCostEur: { $sum: '$cost_eur' } } }
-    ])
+  const telRows = await c.customerTelemetry15m
+    .find({ customer_id: customerId, ts: { $gte: start, $lt: toExclusive } }, { projection: { _id: 0, ts: 1, watts: 1 } })
+    .sort({ ts: 1 })
     .toArray();
-  const totalCostEur = Number((totalAgg[0] as any)?.totalCostEur ?? 0);
 
-  const dailyAgg = await c.customerApplianceUsage
-    .aggregate([
-      { $match: { customer_id: customerId, appliance_id: applianceId, start_ts: { $gte: start, $lt: toExclusive } } },
-      {
-        $group: {
-          _id: { $dateToString: { format: '%Y-%m-%d', date: '$start_ts' } },
-          energyWh: { $sum: '$energy_wh' },
-          costEur: { $sum: '$cost_eur' }
-        }
-      }
-    ])
-    .toArray();
+  const price = await c.customers
+    .findOne({ id: customerId }, { projection: { _id: 0, price_eur_per_kwh: 1 } })
+    .then((r: any) => (typeof r?.price_eur_per_kwh === 'number' && Number.isFinite(r.price_eur_per_kwh) ? Number(r.price_eur_per_kwh) : 0.2))
+    .catch(() => 0.2);
+
+  const inferred = inferAppliancesFromAggregate({
+    points: (telRows as any[]).map((r) => ({ ts: new Date(r.ts), watts: Number(r.watts ?? 0) })),
+    priceEurPerKwh: price,
+    maxAppliances: 6
+  });
+
+  const appliance = inferred.appliances.find((a) => a.id === applianceId);
+  if (!appliance) return res.status(404).json({ message: 'Equipamento não encontrado' });
+
+  const sessions = inferred.sessions.filter((s) => s.applianceId === applianceId);
+  const totalCostEur = inferred.appliances.reduce((acc, a) => acc + a.costEur, 0);
 
   const dailyByDay = new Map<string, { energyWh: number; costEur: number }>();
-  for (const row of dailyAgg as any[]) {
-    const day = String(row?._id ?? '');
-    if (!isValidYmd(day)) continue;
-    dailyByDay.set(day, {
-      energyWh: Number(row?.energyWh ?? 0),
-      costEur: Number(row?.costEur ?? 0)
-    });
+  for (const s of sessions) {
+    const day = toDayKeyUtc(s.startTs);
+    const prev = dailyByDay.get(day) ?? { energyWh: 0, costEur: 0 };
+    dailyByDay.set(day, { energyWh: prev.energyWh + s.energyWh, costEur: prev.costEur + s.costEur });
   }
 
   const daily = Array.from({ length: windowDays }, (_, i) => {
@@ -1760,12 +1731,7 @@ app.get('/customers/:customerId/appliances/:applianceId/weekly', async (req, res
   const sharePct = totalCostEur > 0 ? (thisTotalCostEur / totalCostEur) * 100 : 0;
 
   // --- personalização: distribuição horária + ação concreta (dica curta) ---
-  const sessions = await c.customerApplianceUsage
-    .find(
-      { customer_id: customerId, appliance_id: applianceId, start_ts: { $gte: start, $lt: toExclusive } },
-      { projection: { _id: 0, start_ts: 1, end_ts: 1, energy_wh: 1, cost_eur: 1 } }
-    )
-    .toArray();
+  // sessões inferidas pelo NILM
 
   const kwhByHour = Array.from({ length: 24 }, () => 0);
 
@@ -1794,10 +1760,8 @@ app.get('/customers/:customerId/appliances/:applianceId/weekly', async (req, res
     }
   };
 
-  for (const s of sessions as any[]) {
-    const st = new Date(s.start_ts);
-    const et = s.end_ts ? new Date(s.end_ts) : new Date(new Date(s.start_ts).getTime() + 15 * 60 * 1000);
-    distributeSession(st, et, Number(s.energy_wh ?? 0));
+  for (const s of sessions) {
+    distributeSession(s.startTs, s.endTs, Number(s.energyWh ?? 0));
   }
 
   const totalKwhByHour = kwhByHour.reduce((a, b) => a + b, 0);
@@ -1827,7 +1791,7 @@ app.get('/customers/:customerId/appliances/:applianceId/weekly', async (req, res
   const minDay = daily.reduce((best, cur) => (cur.kwh < (best?.kwh ?? 1e9) ? cur : best), null as null | (typeof daily)[number]);
 
   const nameLower = String(appliance.name ?? '').toLowerCase();
-  const categoryLower = String((appliance as any).category ?? '').toLowerCase();
+  const categoryLower = String(appliance.category ?? '').toLowerCase();
   const isFlexible =
     nameLower.includes('lavar') ||
     nameLower.includes('máquina') ||
@@ -1836,7 +1800,7 @@ app.get('/customers/:customerId/appliances/:applianceId/weekly', async (req, res
     nameLower.includes('carreg') ||
     categoryLower.includes('laundry');
 
-  const standbyWatts = typeof (appliance as any).standby_watts === 'number' ? Number((appliance as any).standby_watts) : null;
+  const standbyWatts: number | null = null;
 
   // sinal de clima: usa média diária de temperatura no período (se existir)
   const temps = await c.customerTelemetry15m
@@ -1913,7 +1877,7 @@ app.get('/customers/:customerId/appliances/:applianceId/weekly', async (req, res
     context: buildAssistantEnvelope({
       base: baseContext,
       extra: {
-        appliance: { id: applianceId, name: appliance.name, category: (appliance as any).category ?? null, standbyWatts },
+        appliance: { id: applianceId, name: appliance.name, category: appliance.category ?? null, standbyWatts },
         windowDays,
         totals: {
           totalKwh: Number(thisTotalKwh.toFixed(3)),
@@ -2262,9 +2226,62 @@ app.get('/customers/:customerId/contract/analysis', async (req, res) => {
   });
   if (improvedTariffMessage) recommendation.message = improvedTariffMessage;
 
+  let marketComparison: any = null;
+  try {
+    const latestInvoice = await c.customerInvoices
+      .find(
+        { customer_id: customerId },
+        {
+          projection: {
+            _id: 0,
+            analysis: 1,
+            uploaded_at: 1,
+            potencia_contratada_kva: 1,
+            price_kwh_eur: 1,
+            fixed_daily_fee_eur: 1
+          }
+        }
+      )
+      .sort({ uploaded_at: -1 })
+      .limit(1)
+      .toArray();
+
+    const hasInvoice = Boolean(latestInvoice[0]);
+    const contractedPowerKva = typeof customer.contracted_power_kva === 'number' ? customer.contracted_power_kva : hasInvoice ? Number((latestInvoice[0] as any)?.potencia_contratada_kva ?? 0) : 0;
+    const currentPriceKwhEur = typeof customer.price_eur_per_kwh === 'number' ? customer.price_eur_per_kwh : hasInvoice ? Number((latestInvoice[0] as any)?.price_kwh_eur ?? 0) : 0;
+    const currentFixedDailyFeeEur = typeof customer.fixed_daily_fee_eur === 'number' ? customer.fixed_daily_fee_eur : hasInvoice ? Number((latestInvoice[0] as any)?.fixed_daily_fee_eur ?? 0) : 0;
+
+    if (contractedPowerKva > 0 && currentPriceKwhEur > 0) {
+      const cmp = await compareWithErseTariffs({
+        customerId,
+        contractedPowerKva,
+        currentPriceKwhEur,
+        currentFixedDailyFeeEur
+      });
+
+      marketComparison = {
+        consumption_kwh_year: cmp.consumptionKwhYear,
+        current_cost_year_eur: cmp.currentCostYearEur,
+        best_cost_year_eur: cmp.bestCostYearEur,
+        savings_year_eur: cmp.savingsYearEur,
+        top: cmp.top.map((t) => ({
+          comercializador: t.comercializador,
+          nome_proposta: t.nomeProposta,
+          cost_year_eur: t.costYearEur,
+          savings_year_eur: t.savingsYearEur
+        }))
+      };
+    }
+  } catch {
+    marketComparison = null;
+  }
+
   return res.json({
     customerId,
     lastUpdated: endIso,
+    contractedPowerKva: Number((customer.contracted_power_kva ?? 0).toFixed(1)),
+    avgPriceEurPerKwh: Number(avgPrice.toFixed(4)),
+    fixedDailyFeeEur: Number(fixedDailyFeeEur.toFixed(4)),
     forecastMonthKwh: Number(forecastMonthKwh.toFixed(1)),
     offpeakPct: Number((hourly.offpeakPct * 100).toFixed(1)),
     current: {
@@ -2282,7 +2299,8 @@ app.get('/customers/:customerId/contract/analysis', async (req, res) => {
         simples: { rates: simpleRates, estimatedMonth: simpleCost },
         bihorario: { rates: biRates, estimatedMonth: biCost }
       }
-    }
+    },
+    marketComparison
   });
 });
 
@@ -2367,6 +2385,8 @@ app.get('/customers/:customerId/invoices', async (req, res) => {
           mime_type: 1,
           size_bytes: 1,
           uploaded_at: 1,
+          utility_guess: 1,
+          extracted_text: 1,
           valor_pagar_eur: 1,
           potencia_contratada_kva: 1,
           termo_energia_eur: 1,
@@ -2379,7 +2399,36 @@ app.get('/customers/:customerId/invoices', async (req, res) => {
     .limit(50)
     .toArray();
 
-  return res.json({ items: rows.map((r) => ({ ...r, uploaded_at: r.uploaded_at.toISOString() })) });
+  // best-effort: corrigir totals claramente errados sem exigir novo upload
+  // (não devolvemos extracted_text no payload)
+  const { extractLikelyInvoiceTotalEur } = await import('./invoiceEngine');
+
+  const items = await Promise.all(
+    rows.map(async (r: any) => {
+      try {
+        const current = typeof r.valor_pagar_eur === 'number' && Number.isFinite(r.valor_pagar_eur) ? r.valor_pagar_eur : null;
+        const shouldRecalc = (current === null || current < 10) && typeof r.extracted_text === 'string' && r.extracted_text.length > 50;
+
+        if (shouldRecalc) {
+          const recalced = extractLikelyInvoiceTotalEur(r.extracted_text);
+          if (typeof recalced === 'number' && Number.isFinite(recalced) && recalced > 0) {
+            // Só atualiza se mudar de forma material (evita writes constantes)
+            if (current === null || Math.abs(recalced - current) > 0.5) {
+              await c.customerInvoices.updateOne({ customer_id: customerId, id: r.id }, { $set: { valor_pagar_eur: recalced } });
+              r.valor_pagar_eur = recalced;
+            }
+          }
+        }
+      } catch {
+        // ignora
+      }
+
+      const { extracted_text: _ignored, ...rest } = r;
+      return { ...rest, uploaded_at: r.uploaded_at.toISOString() };
+    })
+  );
+
+  return res.json({ items });
 });
 
 app.get('/customers/:customerId/invoices/:invoiceId', async (req, res) => {
@@ -2395,6 +2444,7 @@ app.get('/customers/:customerId/invoices/:invoiceId', async (req, res) => {
         mime_type: 1,
         size_bytes: 1,
         uploaded_at: 1,
+        utility_guess: 1,
         extracted_text: 1,
         valor_pagar_eur: 1,
         potencia_contratada_kva: 1,
@@ -2422,9 +2472,10 @@ app.post('/customers/:customerId/invoices', invoiceUpload.single('file'), async 
   const c = await collections();
   const customer = await c.customers.findOne(
     { id: customerId },
-    { projection: { _id: 0, id: 1, contracted_power_kva: 1, price_eur_per_kwh: 1, fixed_daily_fee_eur: 1 } }
+    { projection: { _id: 0, id: 1, utility: 1, contracted_power_kva: 1, price_eur_per_kwh: 1, fixed_daily_fee_eur: 1 } }
   );
   if (!customer) return res.status(404).json({ message: 'Cliente não encontrado' });
+
 
   const extracted = await extractInvoiceFromFile({
     buffer: file.buffer,
@@ -2432,12 +2483,57 @@ app.post('/customers/:customerId/invoices', invoiceUpload.single('file'), async 
     mimeType: file.mimetype
   });
 
+  // DEBUG: Printar todos os dados extraídos da fatura
+  try {
+    const debugObj = {
+      ...extracted,
+      extractedText: extracted.extractedText?.slice(0, 800) + (extracted.extractedText?.length > 800 ? '... (truncado)' : '')
+    };
+    // eslint-disable-next-line no-console
+    console.log('[FATURA][EXTRACTED]', JSON.stringify(debugObj, null, 2));
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('[FATURA][EXTRACTED][ERROR]', e);
+  }
+
   const invoiceId = newInvoiceId();
   const uploadedAt = new Date();
 
   const contractedPowerKva = extracted.potenciaContratadaKva ?? (customer as any).contracted_power_kva ?? null;
   const currentPriceKwh = extracted.priceKwhEur ?? (customer as any).price_eur_per_kwh ?? null;
   const currentFixedDaily = extracted.fixedDailyFeeEur ?? (customer as any).fixed_daily_fee_eur ?? null;
+
+  // best-effort: se a fatura trouxer potência/preços, atualiza o perfil do cliente
+  const customerUpdates: Record<string, any> = {};
+  const powerTol = Number(process.env.KYNEX_POWER_TOL_KVA ?? 0.11);
+  if (typeof extracted.potenciaContratadaKva === 'number' && Number.isFinite(extracted.potenciaContratadaKva)) {
+    const prev = Number((customer as any).contracted_power_kva);
+    if (!Number.isFinite(prev) || Math.abs(prev - extracted.potenciaContratadaKva) > powerTol) {
+      customerUpdates.contracted_power_kva = extracted.potenciaContratadaKva;
+    }
+  }
+  if (typeof extracted.priceKwhEur === 'number' && Number.isFinite(extracted.priceKwhEur)) {
+    const prev = Number((customer as any).price_eur_per_kwh);
+    if (!Number.isFinite(prev) || Math.abs(prev - extracted.priceKwhEur) > 0.0001) {
+      customerUpdates.price_eur_per_kwh = extracted.priceKwhEur;
+    }
+  }
+  if (typeof extracted.fixedDailyFeeEur === 'number' && Number.isFinite(extracted.fixedDailyFeeEur)) {
+    const prev = Number((customer as any).fixed_daily_fee_eur);
+    if (!Number.isFinite(prev) || Math.abs(prev - extracted.fixedDailyFeeEur) > 0.0001) {
+      customerUpdates.fixed_daily_fee_eur = extracted.fixedDailyFeeEur;
+    }
+  }
+
+  if (typeof extracted.utilityGuess === 'string' && extracted.utilityGuess.trim()) {
+    const prev = String((customer as any).utility ?? '').trim();
+    if (!prev || prev.toLowerCase() !== extracted.utilityGuess.toLowerCase()) {
+      customerUpdates.utility = extracted.utilityGuess;
+    }
+  }
+  if (Object.keys(customerUpdates).length) {
+    c.customers.updateOne({ id: customerId }, { $set: customerUpdates }).catch(() => null);
+  }
 
   let analysis: any = null;
   if (
@@ -2478,6 +2574,7 @@ app.post('/customers/:customerId/invoices', invoiceUpload.single('file'), async 
     mime_type: file.mimetype,
     size_bytes: file.size,
     uploaded_at: uploadedAt,
+    utility_guess: extracted.utilityGuess ?? undefined,
     extracted_text: extractedText,
     valor_pagar_eur: extracted.valorPagarEur ?? undefined,
     potencia_contratada_kva: extracted.potenciaContratadaKva ?? undefined,
@@ -2491,6 +2588,7 @@ app.post('/customers/:customerId/invoices', invoiceUpload.single('file'), async 
   return res.status(201).json({
     id: invoiceId,
     uploadedAt: uploadedAt.toISOString(),
+    customerUpdated: Object.keys(customerUpdates).length ? customerUpdates : null,
     extracted: {
       valorPagarEur: extracted.valorPagarEur,
       potenciaContratadaKva: extracted.potenciaContratadaKva,

@@ -1,6 +1,7 @@
 /* ===== Base Frame ===== */
+/* Fundo igual ao das notificações */
 .contrato-frame {
-  background: #0B0F19 !important;
+  background: #3b4a57 !important;
 }
 
 .contrato-content {
@@ -120,6 +121,20 @@
   object-fit: contain;
 }
 
+.provider-logo .erse-logo {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 900;
+  font-size: 14px;
+  letter-spacing: 1px;
+  color: rgba(11, 15, 25, 0.9);
+  border-radius: 10px;
+  background: linear-gradient(135deg, #00CED1 0%, #7C3AED 100%);
+}
+
 .provider-info {
   flex: 1;
 }
@@ -208,6 +223,95 @@
   color: rgba(255, 255, 255, 0.9);
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', system-ui, sans-serif;
   letter-spacing: -0.5px;
+}
+
+.market-card {
+  margin-bottom: 28px;
+}
+
+.market-highlight .price-value.positive {
+  color: #22c55e;
+}
+
+.market-highlight .price-value.negative {
+  color: #ef4444;
+}
+
+.market-highlight .price-value.negative {
+  color: #ef4444;
+}
+
+.market-best-offer {
+  margin-top: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.market-top-list {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.market-offer-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.market-offer-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.market-offer-provider {
+  font-size: 13px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.92);
+  margin-bottom: 4px;
+}
+
+.market-offer-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.6);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.market-offer-savings {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 900;
+  color: rgba(255, 255, 255, 0.6);
+  padding-left: 8px;
+}
+
+.market-offer-savings.positive {
+  color: #22c55e;
+}
+
+.market-offer-savings.negative {
+  color: #ef4444;
+}
+
+.market-offer-savings.negative {
+  color: #ef4444;
+}
+
+.market-empty {
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.6);
 }
 
 /* ===== AI Insights Header ===== */

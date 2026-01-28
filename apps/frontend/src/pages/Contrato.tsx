@@ -4,6 +4,7 @@ import logoEdp from '../assets/images/edp.png';
 import logoEndesa from '../assets/images/endesa.png';
 import logoGoldEnergy from '../assets/images/goldenergy.png';
 import logoIberdrola from '../assets/images/iberdrola.png';
+import logoSU from '../assets/images/su-eletricidade.png';
 
 import SettingsDrawer from '../components/SettingsDrawer';
 import './Contrato.css';
@@ -11,6 +12,9 @@ import './Contrato.css';
 type ContractAnalysisResponse = {
   customerId: string;
   lastUpdated: string;
+  contractedPowerKva: number;
+  avgPriceEurPerKwh: number;
+  fixedDailyFeeEur: number;
   forecastMonthKwh: number;
   offpeakPct: number;
   current: {
@@ -28,6 +32,23 @@ type ContractAnalysisResponse = {
       simples: { rates: { vazio: number; cheia: number }; estimatedMonth: { energy: number; power: number; total: number; offpeakPct: number } };
       bihorario: { rates: { vazio: number; cheia: number }; estimatedMonth: { energy: number; power: number; total: number; offpeakPct: number } };
     };
+  };
+  marketComparison?: InvoiceSummary['analysis'] | null;
+};
+
+type InvoiceSummary = {
+  id: string;
+  filename: string;
+  uploaded_at: string;
+  valor_pagar_eur?: number;
+  potencia_contratada_kva?: number;
+  utility_guess?: string;
+  analysis?: { 
+    consumption_kwh_year: number;
+    current_cost_year_eur: number;
+    best_cost_year_eur: number;
+    savings_year_eur: number;
+    top: Array<{ comercializador: string; nome_proposta: string; cost_year_eur: number; savings_year_eur: number }>;
   };
 };
 
@@ -57,11 +78,41 @@ function fmtEur(val: number | null | undefined) {
   return val.toFixed(4) + '€';
 }
 
+function fmtEur0(val: number | null | undefined) {
+  if (typeof val !== 'number' || Number.isNaN(val)) return '—';
+  return new Intl.NumberFormat('pt-PT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(val);
+}
+
+function fmtEurSigned0(val: number | null | undefined) {
+  if (typeof val !== 'number' || !Number.isFinite(val)) return '—';
+  const abs = Math.abs(val);
+  const formatted = new Intl.NumberFormat('pt-PT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(abs);
+  if (val > 0) return `-${formatted}`; // poupança: mostrar '-'
+  if (val < 0) return `+${formatted}`; // mais caro: mostrar '+'
+  return formatted;
+}
+
+function fmtKwhYear(val: number | null | undefined) {
+  if (typeof val !== 'number' || Number.isNaN(val)) return '—';
+  return new Intl.NumberFormat('pt-PT', { maximumFractionDigits: 0 }).format(Math.round(val)) + ' kWh/ano';
+}
+
+function pickUtilityLogo(utility: string) {
+  const u = String(utility ?? '').toLowerCase();
+  if (u.includes('endesa')) return logoEndesa;
+  if (u.includes('iberdrola')) return logoIberdrola;
+  if (u.includes('gold')) return logoGoldEnergy;
+  if (u.includes('edp')) return logoEdp;
+  if (u.includes('su')) return logoSU;
+  return logoImg;
+}
+
 export default function Contrato() {
   const [apiBase, setApiBase] = useState<string | null>(null);
   const [customerId, setCustomerId] = useState<string | null>(null);
   const [contract, setContract] = useState<ContractAnalysisResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [latestInvoice, setLatestInvoice] = useState<InvoiceSummary | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [customerName, setCustomerName] = useState<string>('Cliente');
   const [userEmail, setUserEmail] = useState<string>('');
@@ -138,16 +189,31 @@ export default function Contrato() {
     let cancelled = false;
 
     async function load() {
+      setLoading(true);
       try {
-        const res = await fetch(`${apiBase}/customers/${customerId}/contract-analysis`);
+        const token = localStorage.getItem('kynex:authToken');
+        const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
+
+        const res = await fetch(`${apiBase}/customers/${customerId}/contract/analysis`, { headers });
         if (!res.ok) throw new Error('Failed to load contract');
         const data = await res.json();
         if (!cancelled) {
           setContract(data);
-          setLoading(false);
+        }
+
+        const invRes = await fetch(`${apiBase}/customers/${customerId}/invoices`, { headers });
+        if (invRes.ok) {
+          const json = (await invRes.json()) as { items: InvoiceSummary[] };
+          const first = Array.isArray(json.items) ? json.items[0] : null;
+          if (!cancelled) setLatestInvoice(first ?? null);
         }
       } catch (err) {
         console.error('Error loading contract:', err);
+        if (!cancelled) {
+          setContract(null);
+          setLatestInvoice(null);
+        }
+      } finally {
         if (!cancelled) setLoading(false);
       }
     }
@@ -158,47 +224,31 @@ export default function Contrato() {
     };
   }, [apiBase, customerId]);
 
-  const utility = contract?.current?.utility ?? 'EDP Comercial';
-  const tariff = contract?.current?.tariff ?? 'Bi-horário';
-  const vazio = contract?.current?.price_vazio_eur_per_kwh ?? 0.14;
-  const cheia = contract?.current?.price_cheia_eur_per_kwh ?? 0.19;
+  const utility = contract?.current?.utility ?? '—';
+  const displayUtility = latestInvoice?.utility_guess ?? utility;
+  const tariff = contract?.current?.tariff ?? '—';
+  const vazio = contract?.current?.price_vazio_eur_per_kwh ?? 0;
+  const cheia = contract?.current?.price_cheia_eur_per_kwh ?? 0;
   const lastUpdated = contract?.lastUpdated ?? '';
-  
-  // Preço médio ponderado (assumindo 40% vazio, 60% cheia)
-  const avgPrice = (vazio * 0.4 + cheia * 0.6).toFixed(2);
 
-  const recommendations = [
-    {
-      id: 1,
-      provider: 'Goldenergy',
-      logo: logoGoldEnergy,
-      savings: 145,
-      reason: 'Ideal para o seu alto consumo de fim-de-semana',
-      priceKwh: 0.14,
-      badge: null,
-      color: 'cyan'
-    },
-    {
-      id: 2,
-      provider: 'Iberdrola',
-      logo: logoIberdrola,
-      savings: 90,
-      reason: 'Tarifa verde adaptada ao seu perfil',
-      priceKwh: 0.16,
-      badge: 'Energia 100% Verde',
-      color: 'green'
-    },
-    {
-      id: 3,
-      provider: 'Endesa',
-      logo: logoEndesa,
-      savings: 65,
-      reason: 'Desconto para consumo noturno',
-      priceKwh: 0.17,
-      badge: null,
-      color: 'cyan'
-    }
-  ];
+  const offpeakFrac = Math.max(0, Math.min(1, (contract?.offpeakPct ?? 0) / 100));
+  const computedAvg = tariff.toLowerCase().includes('bi') ? vazio * offpeakFrac + cheia * (1 - offpeakFrac) : cheia;
+  const avgPrice = (typeof contract?.avgPriceEurPerKwh === 'number' ? contract.avgPriceEurPerKwh : computedAvg).toFixed(4);
+
+  const contractedPower =
+    (typeof latestInvoice?.potencia_contratada_kva === 'number' ? latestInvoice.potencia_contratada_kva : null) ??
+    (typeof contract?.contractedPowerKva === 'number' ? contract.contractedPowerKva : null);
+
+  const suggestionMsg = contract?.suggestion?.message ?? '';
+  const simpleTotal = contract?.suggestion?.compare?.simples?.estimatedMonth?.total ?? null;
+  const biTotal = contract?.suggestion?.compare?.bihorario?.estimatedMonth?.total ?? null;
+  const suggestedTariff = contract?.suggestion?.tariff ?? null;
+
+  const market = (contract?.marketComparison ?? null) || (latestInvoice?.analysis ?? null);
+  const bestOffer = Array.isArray(market?.top) && market!.top.length > 0 ? market!.top[0] : null;
+  const savingsYear = typeof market?.savings_year_eur === 'number' && Number.isFinite(market!.savings_year_eur) ? market!.savings_year_eur : null;
+  const hasPositiveSavings = typeof bestOffer?.savings_year_eur === 'number' && bestOffer.savings_year_eur > 0.5;
+  const hasNegativeSavings = typeof savingsYear === 'number' && savingsYear < -0.5;
 
   return (
     <div className="app-shell">
@@ -238,7 +288,7 @@ export default function Contrato() {
         <main className="content contrato-content">
           <div className="contrato-page-title">O Meu Contrato</div>
           <div className="contrato-subtitle">
-            Última atualização: {loading ? '...' : formatPtDateTime(lastUpdated) || 'Hoje, 09:41'}
+            Última atualização: {loading ? '...' : formatPtDateTime(lastUpdated)}
           </div>
 
           {loading ? (
@@ -252,10 +302,10 @@ export default function Contrato() {
               <div className="contrato-current-card">
                 <div className="current-card-header">
                   <div className="provider-logo">
-                    <img src={logoEdp} alt={utility} />
+                    <img src={pickUtilityLogo(displayUtility)} alt={displayUtility} />
                   </div>
                   <div className="provider-info">
-                    <div className="provider-name">{utility}</div>
+                    <div className="provider-name">{displayUtility}</div>
                     <div className="provider-badge">Contrato Atual</div>
                   </div>
                 </div>
@@ -269,7 +319,7 @@ export default function Contrato() {
                     </div>
                     <div className="info-content">
                       <div className="info-label">Potência</div>
-                      <div className="info-value">6.9 kVA</div>
+                      <div className="info-value">{typeof contractedPower === 'number' ? contractedPower.toFixed(1) + ' kVA' : '—'}</div>
                     </div>
                   </div>
 
@@ -293,45 +343,112 @@ export default function Contrato() {
                 </div>
               </div>
 
-              {/* Separador com Insights AI */}
-              <div className="ai-insights-header">
-                <div className="ai-icon">✨</div>
+              {/* Comparação de Mercado (ERSE) */}
+              <div className="ai-insights-header" style={{ marginTop: -8 }}>
                 <div className="ai-text">
-                  <div className="ai-title">Insights AI</div>
-                  <div className="ai-subtitle">
-                    Analisámos o seu padrão de consumo das últimas 4 semanas e encontrámos poupanças:
-                  </div>
+                  <div className="ai-title">Comparação de Mercado (ERSE)</div>
+                  <div className="ai-subtitle">Estimativa anual com base na sua telemetria e tarifários publicados.</div>
                 </div>
               </div>
 
-              {/* Carrossel de Recomendações */}
-              <div className="recommendations-carousel">
-                {recommendations.map((rec) => (
-                  <div key={rec.id} className={`recommendation-card ${rec.color}`}>
-                    <div className="rec-header">
-                      <div className="rec-logo">
-                        <img src={rec.logo} alt={rec.provider} />
-                      </div>
-                      <div className="rec-provider">{rec.provider}</div>
-                      {rec.badge && <div className="rec-badge">{rec.badge}</div>}
+              <div className="contrato-current-card market-card" style={{ marginBottom: 28 }}>
+                <div className="current-card-header">
+                    <div className="provider-logo">
+                      <img src="https://floene.pt/img/2022/11/logo_erse-final.png" alt="ERSE" style={{ height: 32, width: 'auto', display: 'block', background: 'white', borderRadius: 4, padding: 2 }} />
                     </div>
-
-                    <div className="rec-savings">
-                      <div className="savings-label">Poupe por ano</div>
-                      <div className="savings-value">-{rec.savings}€</div>
-                    </div>
-
-                    <div className="rec-reason">{rec.reason}</div>
-
-                    <div className="rec-comparison">
-                      <span className="new-price">{rec.priceKwh.toFixed(2)}€</span>
-                      <span className="vs">vs</span>
-                      <span className="old-price">{avgPrice}€</span>
-                    </div>
-
-                    <button className="rec-button">Ver Oferta</button>
+                  <div className="provider-info">
+                    <div className="provider-name">Mercado</div>
+                    <div className="provider-badge">Comparação</div>
                   </div>
-                ))}
+                </div>
+
+                {market ? (
+                  <>
+                    <div className="current-card-grid market-metrics">
+                      <div className="info-item">
+                        <div className="info-content">
+                          <div className="info-label">Consumo estimado</div>
+                          <div className="info-value">{fmtKwhYear(market.consumption_kwh_year)}</div>
+                        </div>
+                      </div>
+                      <div className="info-item">
+                        <div className="info-content">
+                          <div className="info-label">Custo atual (estim.)</div>
+                          <div className="info-value">{fmtEur0(market.current_cost_year_eur)} / ano</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="current-price-highlight market-highlight">
+                      <div className="price-label">Poupança potencial</div>
+                      <div className={`price-value ${hasPositiveSavings ? 'positive' : hasNegativeSavings ? 'negative' : ''}`}>
+                        {hasPositiveSavings
+                          ? `-${fmtEur0(savingsYear)} / ano`
+                          : hasNegativeSavings
+                            ? `Mais caro +${fmtEur0(Math.abs(savingsYear!))} / ano`
+                            : 'Sem diferença relevante'}
+                      </div>
+                      {hasPositiveSavings ? (
+                        <div className="market-best-offer">
+                          Melhor opção: <strong>{bestOffer.comercializador}</strong>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    {Array.isArray(market.top) && market.top.length > 0 ? (
+                      <div className="market-top-list" aria-label="Top ofertas (ERSE)">
+                        {market.top.slice(0, 5).map((o, idx) => {
+                          const sRaw = typeof o.savings_year_eur === 'number' ? o.savings_year_eur : null;
+                          const s = typeof sRaw === 'number' && Number.isFinite(sRaw) ? sRaw : null;
+                          const cls = s !== null && s > 0.1 ? 'positive' : s !== null && s < -0.1 ? 'negative' : '';
+                          return (
+                            <div className="market-offer-row" key={`${o.comercializador}-${o.nome_proposta}-${idx}`}>
+                              <div className="market-offer-main">
+                                <div className="market-offer-provider">{o.comercializador}</div>
+                                <div className="market-offer-name">{o.nome_proposta}</div>
+                              </div>
+                              <div className={`market-offer-savings ${cls}`}>{s !== null ? `${fmtEurSigned0(s)} / ano` : '—'}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="market-empty">Sem ofertas ERSE disponíveis para comparação.</div>
+                    )}
+                  </>
+                ) : (
+                  <div className="market-empty">Carregue uma fatura e/ou aguarde telemetria suficiente para gerar a comparação.</div>
+                )}
+              </div>
+
+              {/* Sugestão (dados reais do backend) */}
+              <div className="ai-insights-header">
+                <div className="ai-icon">✨</div>
+                <div className="ai-text">
+                  <div className="ai-title">Sugestão de Tarifa</div>
+                  <div className="ai-subtitle">{suggestionMsg || '—'}</div>
+                </div>
+              </div>
+
+              <div className="contrato-current-card" style={{ marginTop: 12 }}>
+                <div className="current-card-grid">
+                  <div className="info-item">
+                    <div className="info-content">
+                      <div className="info-label">Simples (estim.)</div>
+                      <div className="info-value">{typeof simpleTotal === 'number' ? `${Math.round(simpleTotal)}€ / mês` : '—'}</div>
+                    </div>
+                  </div>
+                  <div className="info-item">
+                    <div className="info-content">
+                      <div className="info-label">Bi-horário (estim.)</div>
+                      <div className="info-value">{typeof biTotal === 'number' ? `${Math.round(biTotal)}€ / mês` : '—'}</div>
+                    </div>
+                  </div>
+                </div>
+                <div className="current-price-highlight">
+                  <div className="price-label">Recomendação</div>
+                  <div className="price-value">{suggestedTariff ? String(suggestedTariff) : '—'}</div>
+                </div>
               </div>
             </>
           )}

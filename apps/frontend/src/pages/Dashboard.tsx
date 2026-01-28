@@ -5,6 +5,7 @@ import setinha1Img from '../assets/images/setinha1.png';
 import seta1Img from '../assets/images/seta1.png';
 import AssistantChatModal from '../components/AssistantChatModal';
 import SettingsDrawer from '../components/SettingsDrawer';
+import { useNotificationCount } from '../hooks/useNotificationCount';
 import './Dashboard.css';
 
 type ChartItem = { label: string; value: number; kind: 'consumido' | 'previsto'; date?: string };
@@ -132,6 +133,8 @@ function Dashboard() {
   const [dayStats, setDayStats] = useState<DashboardDayResponse | null>(null);
   const [chart, setChart] = useState<CustomerChartResponse>({ title: 'Consumo', items: [] });
   const [isApiOnline, setIsApiOnline] = useState<boolean>(true);
+
+  const notificationCount = useNotificationCount();
 
   const todayKey = React.useMemo(() => {
     const iso = nowStats?.lastUpdated;
@@ -372,6 +375,8 @@ function Dashboard() {
     else setActiveTab('home');
   }, []);
 
+  // Contagem de notificações sincronizada via hook
+
   return (
     <div className="app-shell">
       <div className="phone-frame">
@@ -382,12 +387,12 @@ function Dashboard() {
             </button>
           </div>
           <div className="top-actions">
-            <button className="notif-btn" aria-label="Notificações">
+            <button className="notif-btn" aria-label="Notificações" type="button" onClick={() => window.location.assign('/notificacoes')}>
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M15 17h5l-1.4-1.4A2 2 0 0 1 18 14.2V11a6 6 0 0 0-5-5.9V4a1 1 0 0 0-2 0v1.1A6 6 0 0 0 6 11v3.2c0 .5-.2 1-.6 1.4L4 17h5" strokeLinecap="round" strokeLinejoin="round" />
                 <path d="M9 17a3 3 0 0 0 6 0" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
-              <span className="notif-badge">2</span>
+              <span className="notif-badge">{notificationCount}</span>
             </button>
             <button
               className="avatar-btn"

@@ -45,6 +45,7 @@ type Invoice = {
   id: string;
   filename: string;
   uploaded_at: string;
+  utility_guess?: string;
   valor_pagar_eur?: number;
   potencia_contratada_kva?: number;
   termo_energia_eur?: number;
@@ -69,11 +70,15 @@ export default function Faturas() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [contractHintVisible, setContractHintVisible] = useState(false);
 
   useEffect(() => {
     try {
       const id = localStorage.getItem('kynex:customerId');
       setCustomerId(id);
+
+      const hint = localStorage.getItem('kynex:contractAnalysisHint');
+      if (hint === '1') setContractHintVisible(true);
 
       // Verifica se deve abrir o menu ao retornar de uma página de configurações
       const shouldOpenSettings = localStorage.getItem('openSettingsOnReturn');
@@ -189,6 +194,14 @@ export default function Faturas() {
         });
         if (!res.ok) throw new Error('upload');
 
+        // marca hint para a página Contrato
+        try {
+          localStorage.setItem('kynex:contractAnalysisHint', '1');
+          setContractHintVisible(true);
+        } catch {
+          // ignore
+        }
+
         // recarrega lista
         const listRes = await fetch(`${apiBase}/customers/${customerId}/invoices`, {
           headers: token ? { Authorization: `Bearer ${token}` } : undefined
@@ -265,6 +278,56 @@ export default function Faturas() {
           <div className="faturas-page-title">Arquivo de Faturas</div>
           <div className="faturas-subtitle">Histórico e validação</div>
 
+          {contractHintVisible && (
+            <div className="contract-hint">
+              <div className="contract-hint-title">Análise contratual disponível</div>
+              <div className="contract-hint-text" style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, marginBottom: 10 }}>
+                A informação do seu contrato foi atualizada com base na sua última fatura. Veja os detalhes na página Contrato.
+              </div>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button
+                  type="button"
+                  className="contract-hint-btn"
+                  style={{
+                    background: '#00CED1',
+                    border: 'none',
+                    color: '#061018',
+                    fontWeight: 800,
+                    borderRadius: 12,
+                    padding: '10px 12px',
+                    cursor: 'pointer'
+                  }}
+                  onClick={() => window.location.assign('/contrato')}
+                >
+                  Ir para Contrato
+                </button>
+                <button
+                  type="button"
+                  className="contract-hint-close"
+                  style={{
+                    background: 'rgba(255,255,255,0.08)',
+                    border: '1px solid rgba(255,255,255,0.15)',
+                    color: '#fff',
+                    fontWeight: 700,
+                    borderRadius: 12,
+                    padding: '10px 12px',
+                    cursor: 'pointer'
+                  }}
+                  onClick={() => {
+                    setContractHintVisible(false);
+                    try {
+                      localStorage.removeItem('kynex:contractAnalysisHint');
+                    } catch {
+                      // ignore
+                    }
+                  }}
+                >
+                  Fechar
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Hero Section - Upload */}
           <div className="upload-hero" onClick={handleUploadClick}>
             <div className="upload-icon-wrapper">
@@ -291,11 +354,11 @@ export default function Faturas() {
                   
                   <div className="invoice-info">
                     <div className="invoice-header">
-                      <span className="invoice-reference">{invoice.filename || 'Fatura'}</span>
+                      <span className="invoice-reference" title={invoice.filename || 'Fatura'}>{invoice.filename || 'Fatura'}</span>
                       {invoice.analysis && <span className="ai-badge">✨</span>}
                     </div>
                     <div className="invoice-details">
-                      <span className="invoice-provider">{invoice.analysis?.top?.[0]?.comercializador ?? '—'}</span>
+                      <span className="invoice-provider" title={invoice.utility_guess || '—'}>{invoice.utility_guess ?? '—'}</span>
                       <span className="invoice-separator">•</span>
                       <span className="invoice-date">{fmtUploaded(invoice.uploaded_at)}</span>
                     </div>

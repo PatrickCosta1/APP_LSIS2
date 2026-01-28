@@ -1,4 +1,7 @@
 import { getCollections, initDb } from './db';
+import fs from 'node:fs';
+import path from 'node:path';
+import { generateWatts15mFromModel, readTelemetry15mFromCsvFile, trainSlotModelFromCsv, type ConsumptionSlotModel } from './telemetryFromCsv';
 
 type CustomerRow = {
   id: string;
@@ -35,14 +38,8 @@ type OngoingEvent = {
 const profileCache = new Map<string, SimProfile>();
 const eventByCustomer = new Map<string, OngoingEvent>();
 
-type ApplianceSessionState = {
-  active: boolean;
-  startTs: Date | null;
-  energyWh: number;
-  confidence: number;
-};
-
-const applianceSessionsByCustomer = new Map<string, Map<number, ApplianceSessionState>>();
+// A app deixou de guardar "registos de eletrodomésticos" (customer_appliance_usage).
+// A identificação passa a ser inferida a partir do consumo agregado (ver `nilmInfer.ts`).
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
@@ -314,13 +311,57 @@ export async function seedCustomerTelemetry(customer: CustomerRow, days = 1) {
 }
 
 export function startTelemetryJob() {
-  const tickMs = Number.parseInt(process.env.KYNEX_SIM_TICK_MS ?? '10000', 10);
+  // Por defeito, gera 1 amostra a cada 15 minutos (em vez de 10s).
+  const tickMs = Number.parseInt(process.env.KYNEX_SIM_TICK_MS ?? String(15 * 60 * 1000), 10);
   if (!Number.isFinite(tickMs) || tickMs < 500) {
     // eslint-disable-next-line no-console
-    console.warn('KYNEX_SIM_TICK_MS inválido; a usar 10000ms');
+    console.warn('KYNEX_SIM_TICK_MS inválido; a usar 900000ms');
   }
 
-  const effectiveTickMs = Number.isFinite(tickMs) && tickMs >= 500 ? tickMs : 10000;
+  const effectiveTickMs = Number.isFinite(tickMs) && tickMs >= 500 ? tickMs : 15 * 60 * 1000;
+
+  const maxStepsPerTick = (() => {
+    const raw = Number.parseInt(process.env.KYNEX_SIM_MAX_STEPS_PER_TICK ?? '4', 10);
+    if (!Number.isFinite(raw)) return 4;
+    return Math.max(1, Math.min(96, raw));
+  })();
+
+  // Fonte de telemetria baseada em CSV real.
+  const csvPathEnv = process.env.KYNEX_TELEMETRY_CSV_PATH ?? '';
+  let csvCustomerId = process.env.KYNEX_TELEMETRY_CSV_CUSTOMER_ID ?? '';
+  const csvOverwrite = String(process.env.KYNEX_TELEMETRY_CSV_OVERWRITE ?? '').toLowerCase() === '1';
+  const csvImportAll = String(process.env.KYNEX_TELEMETRY_CSV_IMPORT_ALL ?? '').toLowerCase() === '1';
+  const modelPathEnv = process.env.KYNEX_TELEMETRY_MODEL_PATH ?? path.join(process.cwd(), 'apps', 'backend', 'data', 'consumption_model_15m.json');
+
+  let slotModel: ConsumptionSlotModel | null = null;
+  const loadOrTrainModel = () => {
+    if (slotModel) return slotModel;
+    try {
+      if (fs.existsSync(modelPathEnv)) {
+        const raw = fs.readFileSync(modelPathEnv, 'utf-8');
+        slotModel = JSON.parse(raw) as ConsumptionSlotModel;
+        return slotModel;
+      }
+    } catch {
+      // ignore
+    }
+
+    if (!csvPathEnv) return null;
+    try {
+      const rows = readTelemetry15mFromCsvFile(csvPathEnv);
+      if (!rows.length) return null;
+      slotModel = trainSlotModelFromCsv(rows);
+      try {
+        fs.mkdirSync(path.dirname(modelPathEnv), { recursive: true });
+        fs.writeFileSync(modelPathEnv, JSON.stringify(slotModel), 'utf-8');
+      } catch {
+        // ignore
+      }
+      return slotModel;
+    } catch {
+      return null;
+    }
+  };
 
   let interval: NodeJS.Timeout | null = null;
   let stopped = false;
@@ -344,6 +385,81 @@ export function startTelemetryJob() {
     try {
       await initDb();
       const c = getCollections();
+
+      // Se existir CSV mas não existir customerId configurado, tenta auto-detetar quando há apenas 1 cliente.
+      if (csvPathEnv && !csvCustomerId) {
+        try {
+          const rows = await c.customers.find({}, { projection: { _id: 0, id: 1 } }).limit(2).toArray();
+          if (rows.length === 1 && String(rows[0]?.id ?? '').length > 0) {
+            csvCustomerId = String(rows[0].id);
+            // eslint-disable-next-line no-console
+            console.log(`KYNEX_TELEMETRY_CSV_CUSTOMER_ID não definido; a usar o único cliente encontrado: ${csvCustomerId}`);
+          } else if (rows.length > 1) {
+            // eslint-disable-next-line no-console
+            console.warn('KYNEX_TELEMETRY_CSV_CUSTOMER_ID não definido e existem múltiplos clientes; import do CSV foi ignorado.');
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      // Seed inicial: se existir CSV e o cliente alvo ainda não tiver telemetria, importa o ano real.
+      if (csvPathEnv && csvCustomerId) {
+        try {
+          const existing = await c.customerTelemetry15m
+            .find({ customer_id: csvCustomerId }, { projection: { _id: 1 } })
+            .limit(1)
+            .toArray();
+
+          if (!existing.length || csvOverwrite) {
+            if (csvOverwrite) {
+              await c.customerTelemetry15m.deleteMany({ customer_id: csvCustomerId });
+            }
+
+            const rows = readTelemetry15mFromCsvFile(csvPathEnv);
+
+            // Por defeito, evita importar leituras "no futuro" (ex.: o CSV tem o dia completo, mas agora ainda não chegou).
+            const importCutoff = new Date();
+            importCutoff.setUTCMinutes(Math.floor(importCutoff.getUTCMinutes() / 15) * 15, 0, 0);
+            const filteredRows = csvImportAll ? rows : rows.filter((r) => r.ts.getTime() <= importCutoff.getTime());
+
+            const customer = await c.customers.findOne(
+              { id: csvCustomerId },
+              { projection: { _id: 0, id: 1, price_eur_per_kwh: 1 } }
+            );
+            const price = typeof customer?.price_eur_per_kwh === 'number' && Number.isFinite(customer.price_eur_per_kwh) ? customer.price_eur_per_kwh : 0.2;
+
+            const docs = filteredRows.map((r) => {
+              const watts = Math.max(0, Math.round(r.kw * 1000));
+              const kwh = (watts / 1000) * SAMPLE_INTERVAL_HOURS;
+              const euros = kwh * price;
+              return {
+                customer_id: csvCustomerId,
+                ts: r.ts,
+                watts,
+                euros: Number(euros.toFixed(6)),
+                temp_c: null,
+                is_estimated: false
+              };
+            });
+
+            if (docs.length) {
+              await c.customerTelemetry15m.insertMany(docs, { ordered: false });
+              // eslint-disable-next-line no-console
+              console.log(
+                `Importado CSV 15m para customer_id=${csvCustomerId} (${docs.length} pontos)${csvImportAll ? '' : ' (sem futuros)'}${
+                  csvImportAll ? '' : `; cutoff=${importCutoff.toISOString()}`
+                }`
+              );
+            }
+
+            // treina/carrega modelo baseado no CSV
+            loadOrTrainModel();
+          }
+        } catch {
+          // ignore
+        }
+      }
 
       interval = setInterval(() => {
         if (stopped || inFlight) return;
@@ -393,6 +509,8 @@ export function startTelemetryJob() {
             const nowAligned = new Date();
             nowAligned.setUTCMinutes(Math.floor(nowAligned.getUTCMinutes() / 15) * 15, 0, 0);
 
+            const maxAllowedTs = nowAligned;
+
             const docs = [] as Array<{
               customer_id: string;
               ts: Date;
@@ -404,85 +522,36 @@ export function startTelemetryJob() {
 
             for (const customer of customers) {
               const latest = latestByCustomer.get(customer.id);
-              const nextTs = latest ? new Date(latest.ts.getTime() + SAMPLE_INTERVAL_MINUTES * 60 * 1000) : nowAligned;
-              const lastWatts = latest ? latest.watts : 420;
+              const model = loadOrTrainModel();
 
-              const nextWatts = simulateNextWatts(customer, nextTs, lastWatts);
-              const kwh = (nextWatts / 1000) * SAMPLE_INTERVAL_HOURS;
-              const euros = kwh * (customer.price_eur_per_kwh ?? 0.2);
-              const tempC = simulateTempC(nextTs);
+              let lastTs = latest ? new Date(latest.ts) : null;
+              let lastWatts = latest ? latest.watts : 420;
 
-              // Breakdown sintético por equipamento (para a página Equipamentos)
-              const ongoing = eventByCustomer.get(customer.id);
-              const laundryWatts = ongoing?.kind === 'laundry' && ongoing.remainingSteps > 0 ? ongoing.extraWatts : 0;
-              const provisional = applianceWattsProvisional(customer, nextTs, tempC, laundryWatts);
-              const byAppliance = scaleToTotal(nextWatts, provisional);
+              // Nunca gerar amostras "no futuro". Se já estiver atualizado até ao slot atual, não faz nada.
+              if (lastTs && lastTs.getTime() >= maxAllowedTs.getTime()) continue;
 
-              const sessions = applianceSessionsByCustomer.get(customer.id) ?? new Map<number, ApplianceSessionState>();
-              if (!applianceSessionsByCustomer.has(customer.id)) applianceSessionsByCustomer.set(customer.id, sessions);
+              // Backfill controlado: gera até N steps por tick, mas apenas até ao slot atual.
+              for (let step = 0; step < maxStepsPerTick; step += 1) {
+                const nextTs = lastTs ? new Date(lastTs.getTime() + SAMPLE_INTERVAL_MINUTES * 60 * 1000) : new Date(maxAllowedTs);
+                if (nextTs.getTime() > maxAllowedTs.getTime()) break;
 
-              const usageDocs: Array<{
-                customer_id: string;
-                appliance_id: number;
-                start_ts: Date;
-                end_ts: Date;
-                energy_wh: number;
-                cost_eur: number;
-                confidence: number;
-                source: 'synthetic';
-              }> = [];
+                const nextWatts = model ? generateWatts15mFromModel(model, nextTs, lastWatts) : simulateNextWatts(customer, nextTs, lastWatts);
+                const kwh = (nextWatts / 1000) * SAMPLE_INTERVAL_HOURS;
+                const euros = kwh * (customer.price_eur_per_kwh ?? 0.2);
+                const tempC = simulateTempC(nextTs);
 
-              for (const [applianceIdStr, w] of Object.entries(byAppliance)) {
-                const applianceId = Number(applianceIdStr);
-                const threshold = applianceId === 5 ? 1 : 40; // stand-by conta sempre
-                const isOn = w >= threshold;
+                docs.push({
+                  customer_id: customer.id,
+                  ts: nextTs,
+                  watts: nextWatts,
+                  euros: Number(euros.toFixed(6)),
+                  temp_c: tempC,
+                  is_estimated: true
+                });
 
-                const state = sessions.get(applianceId) ?? { active: false, startTs: null, energyWh: 0, confidence: 0.85 };
-                if (!sessions.has(applianceId)) sessions.set(applianceId, state);
-
-                if (isOn) {
-                  if (!state.active) {
-                    state.active = true;
-                    state.startTs = nextTs;
-                    state.energyWh = 0;
-                    state.confidence = applianceId === 5 ? 0.8 : 0.88;
-                  }
-                  state.energyWh += w * SAMPLE_INTERVAL_HOURS;
-                } else if (state.active && state.startTs) {
-                  const energyWh = state.energyWh;
-                  const cost = (energyWh / 1000) * (customer.price_eur_per_kwh ?? 0.2);
-                  usageDocs.push({
-                    customer_id: customer.id,
-                    appliance_id: applianceId,
-                    start_ts: state.startTs,
-                    end_ts: nextTs,
-                    energy_wh: Number(energyWh.toFixed(3)),
-                    cost_eur: Number(cost.toFixed(6)),
-                    confidence: state.confidence,
-                    source: 'synthetic'
-                  });
-                  state.active = false;
-                  state.startTs = null;
-                  state.energyWh = 0;
-                }
+                lastTs = nextTs;
+                lastWatts = nextWatts;
               }
-
-              if (usageDocs.length) {
-                try {
-                  await c.customerApplianceUsage.insertMany(usageDocs);
-                } catch {
-                  // ignora para não derrubar o job
-                }
-              }
-
-              docs.push({
-                customer_id: customer.id,
-                ts: nextTs,
-                watts: nextWatts,
-                euros: Number(euros.toFixed(6)),
-                temp_c: tempC,
-                is_estimated: true
-              });
             }
 
             if (docs.length) await c.customerTelemetry15m.insertMany(docs);
@@ -495,7 +564,7 @@ export function startTelemetryJob() {
       }, effectiveTickMs);
 
       // eslint-disable-next-line no-console
-      console.log(`Telemetria sintética contínua ativa (tick=${effectiveTickMs}ms, step=${SAMPLE_INTERVAL_MINUTES}min)`);
+      console.log(`Telemetria 15m ativa (tick=${effectiveTickMs}ms, step=${SAMPLE_INTERVAL_MINUTES}min)`);
     } catch {
       // não derruba o server
     }
