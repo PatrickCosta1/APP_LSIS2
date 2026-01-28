@@ -213,7 +213,6 @@ function Charts() {
   const [series, setSeries] = useState<ConsumptionSeriesResponse>({ range: 'semana', labels: [], values: [], lastUpdated: '' });
 
   const [power, setPower] = useState<PowerSuggestionResponse | null>(null);
-  const [powerModalOpen, setPowerModalOpen] = useState(false);
 
   const [eff, setEff] = useState<HourlyEfficiencyResponse | null>(null);
   const [elec, setElec] = useState<ElectricalHealthResponse | null>(null);
@@ -446,22 +445,6 @@ function Charts() {
     return `${v.toFixed(4).replace('.', ',')}€`;
   }
 
-
-  useEffect(() => {
-    if (!powerModalOpen) return;
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape') setPowerModalOpen(false);
-    }
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [powerModalOpen]);
-
-
-  const powerAlternatives = (power?.alternatives ?? []).slice().sort((a, b) => a.score - b.score);
-  const currentAlt = powerAlternatives.find((a) => Math.abs(a.kva - (power?.contractedKva ?? 0)) < 1e-6);
-  const bestAlt = powerAlternatives[0];
-  const savingsMonth = (typeof power?.savingsMonth === 'number' ? power.savingsMonth : null);
-
   const labels = series.labels.length
     ? series.labels
     : (range === 'dia' 
@@ -557,132 +540,6 @@ function Charts() {
         </div>
 
         <main className="content">
-
-
-          {powerModalOpen && (
-            <div
-              className="ana-modal-overlay"
-              role="dialog"
-              aria-modal="true"
-              aria-label="Simular poupança de potência"
-              onMouseDown={(e) => {
-                if (e.target === e.currentTarget) setPowerModalOpen(false);
-              }}
-            >
-              <div className="ana-modal">
-                <div className="ana-modal-header">
-                  <div className="ana-modal-title">Simulação de Poupança — Potência</div>
-                  <button className="ana-modal-close" type="button" aria-label="Fechar" onClick={() => setPowerModalOpen(false)}>
-                    ×
-                  </button>
-                </div>
-
-                <div className="ana-modal-subtitle">
-                  Baseado no seu histórico e previsão (quando disponível). Última leitura: <strong>{formatPtDateTime(power?.lastUpdated ?? '')}</strong>
-                </div>
-
-                <div className="ana-modal-grid">
-                  <div className="ana-modal-card">
-                    <div className="ana-modal-card-title">Resumo</div>
-                    <div className="ana-modal-kpis">
-                      <div className="ana-modal-kpi">
-                        <div className="ana-modal-kpi-label">Potência atual</div>
-                        <div className="ana-modal-kpi-value">{power?.contractedKva ? `${power.contractedKva.toFixed(1)} kVA` : '—'}</div>
-                      </div>
-                      <div className="ana-modal-kpi">
-                        <div className="ana-modal-kpi-label">Recomendação</div>
-                        <div className="ana-modal-kpi-value">{power?.suggestedIdealKva ? `${power.suggestedIdealKva.toFixed(1)} kVA` : '—'}</div>
-                      </div>
-                      <div className="ana-modal-kpi">
-                        <div className="ana-modal-kpi-label">Risco de exceder</div>
-                        <div className="ana-modal-kpi-value">{typeof power?.riskExceedPct === 'number' ? `${power.riskExceedPct.toFixed(1)}%` : '—'}</div>
-                      </div>
-                    </div>
-
-                    <div className="ana-modal-note">
-                      <strong>{power?.title ?? '—'}</strong> {power?.message ?? '—'}
-                    </div>
-
-                    <div className="ana-modal-pill-row">
-                      <span className="ana-modal-pill">Modelo: <strong>{power?.modelUsed === 'ai' ? 'IA' : 'Histórico'}</strong></span>
-                      <span className="ana-modal-pill">Pico anual: <strong>{power?.yearlyPeakKva ? `${power.yearlyPeakKva.toFixed(1)} kVA` : '—'}</strong></span>
-                      <span className="ana-modal-pill">Uso vs contratado: <strong>{typeof usagePctOfContracted === 'number' ? `${usagePctOfContracted}%` : '—'}</strong></span>
-                    </div>
-                  </div>
-
-                  <div className="ana-modal-card">
-                    <div className="ana-modal-card-title">Poupança (estimativa)</div>
-                    <div className="ana-modal-savings">
-                      <div className="ana-modal-savings-main">
-                        {savingsMonth === null ? '—' : `${Math.max(0, savingsMonth).toFixed(2)} € / mês`}
-                      </div>
-                      <div className="ana-modal-savings-sub">
-                        Estimativa no termo fixo da potência, comparando a opção recomendada com a sua potência atual.
-                      </div>
-                    </div>
-
-                    <div className="ana-modal-footnote">
-                      Nota: valores são aproximados. O termo fixo depende do comercializador/tarifa e pode não ser estritamente proporcional ao kVA.
-                    </div>
-                  </div>
-                </div>
-
-                <div className="ana-modal-table-wrap">
-                  <div className="ana-modal-card-title">Alternativas (todas)</div>
-                  <table className="ana-modal-table" aria-label="Tabela de alternativas de potência">
-                    <thead>
-                      <tr>
-                        <th>kVA</th>
-                        <th>Risco (%)</th>
-                        <th>Termo fixo/mês (€)</th>
-                        <th>Score</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {powerAlternatives.length ? (
-                        powerAlternatives.map((a) => {
-                          const isBest = bestAlt && a.kva === bestAlt.kva;
-                          const isCurrent = currentAlt && a.kva === currentAlt.kva;
-                          return (
-                            <tr key={a.kva} className={`${isBest ? 'best' : ''} ${isCurrent ? 'current' : ''}`.trim()}>
-                              <td>
-                                <span className="ana-modal-kva">{a.kva.toFixed(2)}</span>
-                                {isBest ? <span className="ana-modal-tag">Recomendado</span> : null}
-                                {isCurrent ? <span className="ana-modal-tag alt">Atual</span> : null}
-                              </td>
-                              <td>{a.riskExceedPct.toFixed(1)}</td>
-                              <td>{a.powerFeeMonth.toFixed(2)}</td>
-                              <td>{a.score.toFixed(2)}</td>
-                            </tr>
-                          );
-                        })
-                      ) : (
-                        <tr>
-                          <td colSpan={4} style={{ opacity: 0.75, padding: 10 }}>Sem dados suficientes para simular alternativas.</td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-
-                <div className="ana-modal-actions">
-                  <button className="ana-modal-secondary" type="button" onClick={() => setPowerModalOpen(false)}>
-                    Fechar
-                  </button>
-                  <button
-                    className="ana-modal-primary"
-                    type="button"
-                    onClick={() => {
-                      // por agora só fecha; futuramente pode levar para “Simulador de Preços”
-                      setPowerModalOpen(false);
-                    }}
-                  >
-                    Continuar
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
 
           <section className="ana-card" aria-label="Análise do consumo">
             <div className="ana-card-header">
@@ -891,12 +748,10 @@ function Charts() {
                   <button
                     className="ana-mini-cta"
                     type="button"
-                    onClick={() => setPowerModalOpen(true)}
-                    disabled={!power}
-                    aria-disabled={!power}
-                    title={!power ? 'Sem dados suficientes para simular' : 'Abrir simulação'}
+                    onClick={() => window.location.assign('/contrato')}
+                    title="Ir para a página do contrato"
                   >
-                    Simular Poupança
+                    Ver Contrato
                     <span className="ana-mini-cta-icon" aria-hidden="true">↗</span>
                   </button>
                 </div>

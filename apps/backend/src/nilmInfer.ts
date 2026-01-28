@@ -152,12 +152,32 @@ export function inferAppliancesFromAggregate(opts: {
   maxAppliances?: number;
 }): { appliances: InferredAppliance[]; sessions: InferredSession[] } {
   const points = (opts.points ?? []).filter((p) => p.ts instanceof Date && Number.isFinite(p.watts));
-  if (points.length < 16) return { appliances: [], sessions: [] };
+  if (points.length < 4) {
+    // Muito poucos pontos: devolve só base
+    const baseKwh = points.reduce((acc, p) => acc + Math.max(0, p.watts) / 1000 * 0.25, 0);
+    const baseCost = baseKwh * opts.priceEurPerKwh;
+    return {
+      appliances: [
+        {
+          id: 1,
+          name: 'Consumo base (stand-by)',
+          category: 'Base',
+          costEur: Number(baseCost.toFixed(2)),
+          energyKwh: Number(baseKwh.toFixed(2)),
+          sessions: 1,
+          confidence: 0.5
+        }
+      ],
+      sessions: []
+    };
+  }
 
   const wattsSeries = points.map((p) => p.watts);
   const baseline = clamp(quantile(wattsSeries, 0.1), 0, quantile(wattsSeries, 0.5));
 
-  const blocks = extractBlocks(points, baseline, 140);
+  // limiar dinâmico para captar variações em consumos baixos/medios
+  const threshold = clamp(baseline * 0.4 + 80, 40, 300);
+  const blocks = extractBlocks(points, baseline, threshold);
   if (!blocks.length) {
     // só stand-by
     const kwh = (baseline / 1000) * 0.25 * points.length;

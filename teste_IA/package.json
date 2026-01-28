@@ -1,0 +1,16 @@
+{
+  "name": "invoice-ai-test",
+  "version": "1.0.0",
+  "description": "AI model para extração de dados de faturas",
+  "main": "invoiceAI.js",
+  "type": "module",
+  "scripts": {
+    "test": "node test.js",
+    "test:with-image": "node testWithImage.js"
+  },
+  "dependencies": {
+    "tesseract.js": "^5.1.0",
+    "sharp": "^0.33.1",
+    "pdf-parse": "^1.1.1"
+  }
+}

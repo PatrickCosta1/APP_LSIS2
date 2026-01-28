@@ -2960,6 +2960,14 @@ app.get('/customers/:customerId/power/suggestion', async (req, res) => {
     1.15, 2.3, 3.45, 4.6, 5.75, 6.9, 10.35, 13.8, 17.25, 20.7, 27.6, 34.5, 41.4, 48.3, 55.2
   ].filter((v) => v >= 1 && v <= 60);
 
+  const pickStandardKvaAtOrAbove = (targetKva: number) => {
+    const sorted = standardKvaOptions.slice().sort((a, b) => a - b);
+    for (const v of sorted) {
+      if (v >= targetKva - 1e-9) return v;
+    }
+    return sorted[sorted.length - 1] ?? 60;
+  };
+
   const priceEurPerKwh = typeof customer.price_eur_per_kwh === 'number' ? customer.price_eur_per_kwh : RATE_EUR_PER_KWH;
   const dim = daysInUtcMonthFromIso(endIso);
   const since24h = new Date(end.getTime() - 24 * 60 * 60 * 1000);
@@ -3003,6 +3011,15 @@ app.get('/customers/:customerId/power/suggestion', async (req, res) => {
   const estimateFutureExceedProb = async (candidateKva: number) => {
     const capWatts = candidateKva * 1000 * 0.92;
 
+    // IMPORTANTE: para estimar risco, NÃO devemos “capar” previsões ao candidate kVA.
+    // Caso contrário o risco tende a ~0% mesmo quando o consumo real excede largamente.
+    const observedPeakWatts = Math.max(
+      Number(stats30.peakWatts ?? 0),
+      Number(peak365.peakWatts ?? 0),
+      Number(latestSample.watts ?? 0)
+    );
+    const hardCapWatts = Math.max(60_000, observedPeakWatts * 2);
+
     // Se tivermos modelo de consumo, simulamos até ao fim do mês para estimar risco futuro.
     if (aiModel) {
       try {
@@ -3029,7 +3046,7 @@ app.get('/customers/:customerId/power/suggestion', async (req, res) => {
           if (ts.getTime() >= monthEnd.getTime()) break;
           const feats = makeFeatures(ts, asCustomerProfile, lastWatts, latestSample.temp_c ?? undefined);
           const predictedRaw = predictNextWatts(aiModel, feats);
-          const predictedWatts = clampPredictionForCustomer(predictedRaw, { ...asCustomerProfile, contracted_power_kva: candidateKva });
+          const predictedWatts = Math.max(20, Math.min(hardCapWatts, predictedRaw));
           if (predictedWatts > capWatts) exceed += 1;
           total += 1;
           lastWatts = predictedWatts;
@@ -3055,13 +3072,19 @@ app.get('/customers/:customerId/power/suggestion', async (req, res) => {
 
   const riskWeight = customer.segment === 'industrial' ? 120 : customer.segment === 'sme' ? 85 : 55;
 
+  // Não faz sentido sugerir potência abaixo do pico real observado.
+  // Usamos o pico anual como mínimo (convertido para capWatts=0.92*kVA*1000).
+  const minAllowedKva = Number(peak365.peakWatts ?? 0) > 0 ? pickStandardKvaAtOrAbove((Number(peak365.peakWatts) / (1000 * 0.92)) * 1.03) : 1.15;
+
   const candidates = Array.from(
     new Set([
       ...standardKvaOptions,
       contractedKva,
       clampSuggestedPowerKva(suggestedKva)
     ].map((v) => round1(v)))
-  ).sort((a, b) => a - b);
+  )
+    .filter((v) => v >= minAllowedKva - 1e-9)
+    .sort((a, b) => a - b);
 
   const scoreCandidate = async (candidateKva: number) => {
     const exceedProb = clamp01(await estimateFutureExceedProb(candidateKva));
@@ -3079,12 +3102,12 @@ app.get('/customers/:customerId/power/suggestion', async (req, res) => {
   scored.sort((a, b) => a.score - b.score);
   const best = scored[0];
 
-  suggestedKva = round1(best?.candidateKva ?? suggestedKva);
+  suggestedKva = round1(Math.max(best?.candidateKva ?? suggestedKva, minAllowedKva));
 
   const ratio = contractedKva > 0 ? suggestedKva / contractedKva : 1;
   const status = ratio <= 0.85 ? 'sobredimensionado' : ratio >= 1.1 ? 'subdimensionado' : 'ok';
 
-  const current = await scoreCandidate(contractedKva || suggestedKva);
+  const current = await scoreCandidate(Math.max(1.15, contractedKva || suggestedKva));
   const savingsMonth = Number(((current.powerFeeMonth ?? 0) - (best.powerFeeMonth ?? 0)).toFixed(2));
   const riskExceedPct = Number(((best.exceedProb ?? 0) * 100).toFixed(1));
 
