@@ -340,6 +340,28 @@ export function startTelemetryJob() {
   const csvOverwrite = String(process.env.KYNEX_TELEMETRY_CSV_OVERWRITE ?? '').toLowerCase() === '1';
   const modelPathEnv = process.env.KYNEX_TELEMETRY_MODEL_PATH ?? path.join(process.cwd(), 'apps', 'backend', 'data', 'consumption_model_15m.json');
 
+  // Resolve CSV path: se começar com './', assume que é relativo à raiz do projeto
+  // Se for um nome simples (ex: meusDados1Ano.csv), tenta primeiro na raiz e depois na subpasta
+  const resolveCSVPath = (csvPath: string): string => {
+    if (!csvPath) return '';
+    
+    // Se for caminho absoluto ou relativo explícito, usa tal qual
+    if (csvPath.startsWith('/') || csvPath.startsWith('./') || csvPath.startsWith('../')) {
+      return csvPath;
+    }
+    
+    // Se for apenas nome de ficheiro, tenta na raiz do projeto (2 níveis acima em monorepo)
+    const rootPath = path.join(process.cwd(), '..', '..', csvPath);
+    if (fs.existsSync(rootPath)) {
+      return rootPath;
+    }
+    
+    // Se não encontrar, tenta na pasta atual
+    return csvPath;
+  };
+  
+  const resolvedCsvPath = resolveCSVPath(csvPathEnv);
+
   let slotModel: ConsumptionSlotModel | null = null;
   const loadOrTrainModel = () => {
     if (slotModel) return slotModel;
@@ -353,9 +375,9 @@ export function startTelemetryJob() {
       // ignore
     }
 
-    if (!csvPathEnv) return null;
+    if (!resolvedCsvPath) return null;
     try {
-      const rows = readTelemetry15mFromCsvFile(csvPathEnv);
+      const rows = readTelemetry15mFromCsvFile(resolvedCsvPath);
       if (!rows.length) return null;
       slotModel = trainSlotModelFromCsv(rows);
       try {
@@ -487,25 +509,18 @@ export function startTelemetryJob() {
       if (csvPathEnv && csvCustomerId) {
         try {
           // Valida se ficheiro existe
-          const fileExists = fs.existsSync(csvPathEnv);
+          const fileExists = fs.existsSync(resolvedCsvPath);
           // eslint-disable-next-line no-console
-          console.log(`CSV file check: ${csvPathEnv} -> exists=${fileExists}`);
+          console.log(`CSV file check: ${resolvedCsvPath} -> exists=${fileExists}`);
           
           if (!fileExists) {
             // eslint-disable-next-line no-console
-            console.error(`CSV file não encontrado em: ${csvPathEnv}`);
-            // Tenta com path relativo à raiz do projeto
-            const altPath = path.join(process.cwd(), csvPathEnv);
-            const altExists = fs.existsSync(altPath);
-            // eslint-disable-next-line no-console
-            console.log(`Tentando path alternativo: ${altPath} -> exists=${altExists}`);
-            if (!altExists) {
-              throw new Error(`CSV não encontrado: ${csvPathEnv}`);
-            }
+            console.error(`CSV file não encontrado em: ${resolvedCsvPath}`);
+            throw new Error(`CSV não encontrado: ${resolvedCsvPath}`);
           }
 
           await c.customerTelemetry15m.deleteMany({ customer_id: csvCustomerId });
-          const rows = readTelemetry15mFromCsvFile(csvPathEnv);
+          const rows = readTelemetry15mFromCsvFile(resolvedCsvPath);
           const customer = await c.customers.findOne(
             { id: csvCustomerId },
             { projection: { _id: 0, id: 1, price_eur_per_kwh: 1 } }
