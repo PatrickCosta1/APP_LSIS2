@@ -2096,7 +2096,7 @@ app.get('/customers/:customerId/security/kynex-node/candeeiro', async (_req, res
 
     // eslint-disable-next-line no-console
     console.log('[CANDEEIRO GET] Tentando HTTP request...');
-    const r = await shellyRequest('/relay/0', { timeoutMs: 5000 });
+    const r = await shellyRequest('/relay/0', { timeoutMs: 50000 });
     // eslint-disable-next-line no-console
     console.log('[CANDEEIRO GET] HTTP response:', { ok: r.ok, status: r.status, json: r.json });
 

@@ -25,6 +25,17 @@ Se estas variáveis estiverem definidas, o endpoint do candeeiro usa RPC via MQT
 - `SHELLY_MQTT_TIMEOUT_MS` (opcional; default: `2500`)
 - `SHELLY_MQTT_REJECT_UNAUTHORIZED` (opcional; default: `true`)
 
+
+### Exemplo HiveMQ Cloud (produção)
+
+```
+SHELLY_MQTT_BROKER=3885b212bedd4eebb03ddfd6e5eff3cc.s1.eu.hivemq.cloud
+SHELLY_MQTT_PORT=8883
+SHELLY_MQTT_TOPIC=shellyazplug-e4b3232ea858/rpc
+SHELLY_MQTT_USERNAME=kynex
+SHELLY_MQTT_PASSWORD=1a2b3c4dA
+```
+
 Fallback: se MQTT não estiver configurado, usa o modo HTTP local:
 - `SHELLY_BASE_URL` (opcional; default: `http://192.168.1.185`)
 
