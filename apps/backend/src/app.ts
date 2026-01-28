@@ -175,8 +175,11 @@ async function shellyRequest(path: string, opts?: { timeoutMs?: number }) {
   const base = getShellyBaseUrl();
   const url = `${base}${path.startsWith('/') ? '' : '/'}${path}`;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), Math.max(200, Math.min(8000, opts?.timeoutMs ?? 1800)));
+  const timeoutMs = Math.max(200, Math.min(8000, opts?.timeoutMs ?? 5000)); // Aumentar timeout padrão para 5s
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    // eslint-disable-next-line no-console
+    console.log(`[SHELLY] Fetching: ${url} (timeout: ${timeoutMs}ms)`);
     const res = await fetch(url, { signal: controller.signal });
     const text = await res.text();
     let json: any = null;
@@ -185,7 +188,13 @@ async function shellyRequest(path: string, opts?: { timeoutMs?: number }) {
     } catch {
       // ignore
     }
+    // eslint-disable-next-line no-console
+    console.log(`[SHELLY] Response: ${res.ok ? 'OK' : 'ERROR'} (${res.status})`);
     return { ok: res.ok, status: res.status, text, json };
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[SHELLY] Request failed:`, err instanceof Error ? err.message : String(err));
+    throw err;
   } finally {
     clearTimeout(timeout);
   }
@@ -2087,7 +2096,7 @@ app.get('/customers/:customerId/security/kynex-node/candeeiro', async (_req, res
 
     // eslint-disable-next-line no-console
     console.log('[CANDEEIRO GET] Tentando HTTP request...');
-    const r = await shellyRequest('/relay/0');
+    const r = await shellyRequest('/relay/0', { timeoutMs: 5000 });
     // eslint-disable-next-line no-console
     console.log('[CANDEEIRO GET] HTTP response:', { ok: r.ok, status: r.status, json: r.json });
 
@@ -2123,7 +2132,7 @@ app.post('/customers/:customerId/security/kynex-node/candeeiro', async (req, res
 
     // eslint-disable-next-line no-console
     console.log('[CANDEEIRO POST] Tentando HTTP request...');
-    const r = await shellyRequest(`/relay/0?turn=${encodeURIComponent(turn)}`, { timeoutMs: 2500 });
+    const r = await shellyRequest(`/relay/0?turn=${encodeURIComponent(turn)}`, { timeoutMs: 5000 });
     // eslint-disable-next-line no-console
     console.log('[CANDEEIRO POST] HTTP response:', { ok: r.ok, status: r.status, json: r.json });
 
