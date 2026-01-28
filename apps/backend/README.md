@@ -13,6 +13,21 @@ API Express em TypeScript com MongoDB.
 - `MONGODB_URI` (obrigatória)
 - `MONGODB_DB` (opcional)
 
+\#\#\# Shelly (candeeiro) — MQTT (HiveMQ)
+Se estas variáveis estiverem definidas, o endpoint do candeeiro usa RPC via MQTT (porta TLS 8883).
+
+- `SHELLY_MQTT_BROKER` (obrigatória; host do broker)
+- `SHELLY_MQTT_PORT` (opcional; default: `8883`)
+- `SHELLY_MQTT_USERNAME` (obrigatória)
+- `SHELLY_MQTT_PASSWORD` (obrigatória)
+- `SHELLY_MQTT_TOPIC` (obrigatória; tópico RPC, ex.: `shelly.../rpc`)
+- `SHELLY_MQTT_SRC` (opcional; default: `kynex-backend`)
+- `SHELLY_MQTT_TIMEOUT_MS` (opcional; default: `2500`)
+- `SHELLY_MQTT_REJECT_UNAUTHORIZED` (opcional; default: `true`)
+
+Fallback: se MQTT não estiver configurado, usa o modo HTTP local:
+- `SHELLY_BASE_URL` (opcional; default: `http://192.168.1.185`)
+
 \#\#\# Telemetria 15m (CSV / modelo)
 - `KYNEX_SIM_TICK_MS` (opcional; default: `900000` = 15 min)
 - `KYNEX_TELEMETRY_CSV_PATH` (opcional; path para CSV 15m real, ex.: `meusDados1Ano.csv`)

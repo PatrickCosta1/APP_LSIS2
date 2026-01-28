@@ -16,6 +16,7 @@ import { buildAssistantBaseContext, buildAssistantEnvelope } from './assistantCo
 import { inferAppliancesFromAggregate } from './nilmInfer';
 import { extractInvoiceFromFile, newInvoiceId } from './invoiceEngine';
 import { compareWithErseTariffs } from './tariffComparison';
+import { isShellyMqttConfigured, shellySwitchGetStatus, shellySwitchSet } from './shellyMqtt';
 
 const app = express();
 
@@ -2060,10 +2061,15 @@ app.get('/customers/:customerId/security/kynex-node', async (req, res) => {
 // Controlo manual (teste) - Shelly no Wi-Fi: candeeiro
 app.get('/customers/:customerId/security/kynex-node/candeeiro', async (_req, res) => {
   try {
+    if (isShellyMqttConfigured()) {
+      const st = await shellySwitchGetStatus();
+      return res.json({ device: 'candeeiro', state: st.on ? 'on' : 'off', ack: st.ack, mode: 'mqtt' });
+    }
+
     const r = await shellyRequest('/relay/0');
     if (!r.ok) return res.status(502).json({ message: 'SHELLY_UNAVAILABLE', status: r.status });
     const isOn = Boolean(r.json?.ison ?? r.json?.isOn ?? r.json?.state);
-    return res.json({ device: 'candeeiro', state: isOn ? 'on' : 'off' });
+    return res.json({ device: 'candeeiro', state: isOn ? 'on' : 'off', mode: 'http' });
   } catch {
     return res.status(502).json({ message: 'SHELLY_UNAVAILABLE' });
   }
@@ -2075,12 +2081,17 @@ app.post('/customers/:customerId/security/kynex-node/candeeiro', async (req, res
   if (turn !== 'on' && turn !== 'off') return res.status(400).json({ message: 'turn deve ser on|off' });
 
   try {
+    if (isShellyMqttConfigured()) {
+      const st = await shellySwitchSet(turn === 'on');
+      return res.json({ device: 'candeeiro', state: st.on ? 'on' : 'off', ack: st.ack, mode: 'mqtt' });
+    }
+
     const r = await shellyRequest(`/relay/0?turn=${encodeURIComponent(turn)}`, { timeoutMs: 2500 });
     if (!r.ok) return res.status(502).json({ message: 'SHELLY_UNAVAILABLE', status: r.status });
 
     // alguns firmwares devolvem JSON; se não, assumimos o estado pedido
     const isOn = typeof r.json?.ison === 'boolean' ? r.json.ison : turn === 'on';
-    return res.json({ device: 'candeeiro', state: isOn ? 'on' : 'off' });
+    return res.json({ device: 'candeeiro', state: isOn ? 'on' : 'off', mode: 'http' });
   } catch {
     return res.status(502).json({ message: 'SHELLY_UNAVAILABLE' });
   }
