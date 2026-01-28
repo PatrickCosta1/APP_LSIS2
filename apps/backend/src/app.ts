@@ -250,7 +250,7 @@ app.get('/telemetry/day', async (_req, res) => {
 app.get('/telemetry/range', async (req, res) => {
   const c = await collections();
 
-  const { from, to, bucket = '15m' } = req.query as { from?: string; to?: string; bucket?: string };
+  const { from, to, bucket = '15m', customerId } = req.query as { from?: string; to?: string; bucket?: string; customerId?: string };
   const end = to ? new Date(to) : new Date();
   const start = from ? new Date(from) : new Date(Date.now() - 24 * 60 * 60 * 1000);
 
@@ -258,8 +258,21 @@ app.get('/telemetry/range', async (req, res) => {
     return res.status(400).json({ message: 'from/to inválidos' });
   }
 
-  const coll = bucket === '15m' ? c.telemetry15m : c.samples;
-  const rows = await coll
+  if (bucket === '15m') {
+    const resolvedCustomerId = String(customerId ?? process.env.KYNEX_TELEMETRY_CSV_CUSTOMER_ID ?? '').trim();
+    if (!resolvedCustomerId) {
+      return res.status(400).json({ message: 'customerId é obrigatório quando bucket=15m' });
+    }
+
+    const rows = await c.customerTelemetry15m
+      .find({ customer_id: resolvedCustomerId, ts: { $gte: start, $lte: end } }, { projection: { ts: 1, watts: 1, euros: 1 } })
+      .sort({ ts: 1 })
+      .toArray();
+
+    return res.json(rows.map((r) => ({ ts: r.ts.toISOString(), watts: r.watts, euros: r.euros })));
+  }
+
+  const rows = await c.samples
     .find({ ts: { $gte: start, $lte: end } }, { projection: { ts: 1, watts: 1, euros: 1 } })
     .sort({ ts: 1 })
     .toArray();

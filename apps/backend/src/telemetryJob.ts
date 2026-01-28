@@ -1,4 +1,4 @@
-import { getCollections, initDb } from './db';
+import { getCollections, initDb, type Collections } from './db';
 import fs from 'node:fs';
 import path from 'node:path';
 import { generateWatts15mFromModel, readTelemetry15mFromCsvFile, trainSlotModelFromCsv, type ConsumptionSlotModel } from './telemetryFromCsv';
@@ -58,6 +58,15 @@ function randn() {
 function floorToInterval(d: Date) {
   const m = Math.floor(d.getUTCMinutes() / SAMPLE_INTERVAL_MINUTES) * SAMPLE_INTERVAL_MINUTES;
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), d.getUTCHours(), m, 0, 0));
+}
+
+function nextIntervalTime(d: Date) {
+  const floored = floorToInterval(d);
+  // se a data atual está após o último intervalo completo, retorna o próximo intervalo
+  if (floored.getTime() < d.getTime()) {
+    return new Date(floored.getTime() + SAMPLE_INTERVAL_MS);
+  }
+  return floored;
 }
 
 function hash32(s: string) {
@@ -361,7 +370,6 @@ export function startTelemetryJob() {
     }
   };
 
-  let interval: NodeJS.Timeout | null = null;
   let stopped = false;
   let inFlight = false;
 
@@ -378,6 +386,94 @@ export function startTelemetryJob() {
       price_eur_per_kwh: Number(doc?.price_eur_per_kwh ?? 0.2)
     };
   };
+
+  const doGenerateTelemetry = async (c: Collections) => {
+    const customerDocs = await c.customers
+      .find(
+        {},
+        {
+          projection: {
+            _id: 0,
+            id: 1,
+            segment: 1,
+            contracted_power_kva: 1,
+            home_area_m2: 1,
+            household_size: 1,
+            has_solar: 1,
+            ev_count: 1,
+            price_eur_per_kwh: 1
+          }
+        }
+      )
+      .toArray();
+
+    const customers = customerDocs.map(normalizeCustomer).filter((x: CustomerRow) => x.id.length > 0);
+    if (!customers.length) return;
+
+    const ids = customers.map((x: CustomerRow) => x.id);
+    const latestRows = await c.customerTelemetry15m
+      .aggregate([
+        { $match: { customer_id: { $in: ids } } },
+        { $sort: { customer_id: 1, ts: -1 } },
+        { $group: { _id: '$customer_id', ts: { $first: '$ts' }, watts: { $first: '$watts' } } }
+      ])
+      .toArray();
+
+    const latestByCustomer = new Map<string, { ts: Date; watts: number }>();
+    for (const row of latestRows as any[]) {
+      const id = String(row?._id ?? '');
+      const ts = row?.ts instanceof Date ? row.ts : row?.ts ? new Date(row.ts) : null;
+      const watts = Number(row?.watts);
+      if (id.length > 0 && ts && Number.isFinite(watts)) latestByCustomer.set(id, { ts, watts });
+    }
+
+    const nowAligned = floorToInterval(new Date()); // última quinzena completa
+    const nextExpected = nextIntervalTime(new Date()); // próximo intervalo a gerar
+
+    const docs = [] as Array<{
+      customer_id: string;
+      ts: Date;
+      watts: number;
+      euros: number;
+      temp_c: number;
+      is_estimated: boolean;
+    }>;
+
+    for (const customer of customers) {
+      const latest = latestByCustomer.get(customer.id);
+      let nextTs = latest ? new Date(latest.ts.getTime() + SAMPLE_INTERVAL_MS) : nowAligned;
+      let lastWatts = latest ? latest.watts : 420;
+
+      // preenche até ao intervalo mais próximo do tempo actual (nunca no futuro, mas até ao próximo intervalo esperado)
+      while (nextTs.getTime() <= nextExpected.getTime()) {
+        const model = loadOrTrainModel();
+        const nextWatts = model ? generateWatts15mFromModel(model, nextTs, lastWatts) : simulateNextWatts(customer, nextTs, lastWatts);
+        const kwh = (nextWatts / 1000) * SAMPLE_INTERVAL_HOURS;
+        const euros = kwh * (customer.price_eur_per_kwh ?? 0.2);
+        const tempC = simulateTempC(nextTs);
+
+        docs.push({
+          customer_id: customer.id,
+          ts: nextTs,
+          watts: nextWatts,
+          euros: Number(euros.toFixed(6)),
+          temp_c: tempC,
+          is_estimated: true
+        });
+
+        lastWatts = nextWatts;
+        nextTs = new Date(nextTs.getTime() + SAMPLE_INTERVAL_MS);
+      }
+    }
+
+    if (docs.length) {
+      await c.customerTelemetry15m.insertMany(docs).catch(() => {
+        // Duplicates ignorados
+      });
+    }
+  };
+
+  let interval: NodeJS.Timeout | null = null;
 
   const start = async () => {
     try {
@@ -426,96 +522,16 @@ export function startTelemetryJob() {
         if (stopped || inFlight) return;
         inFlight = true;
 
-        void (async () => {
-          try {
-            const customerDocs = await c.customers
-              .find(
-                {},
-                {
-                  projection: {
-                    _id: 0,
-                    id: 1,
-                    segment: 1,
-                    contracted_power_kva: 1,
-                    home_area_m2: 1,
-                    household_size: 1,
-                    has_solar: 1,
-                    ev_count: 1,
-                    price_eur_per_kwh: 1
-                  }
-                }
-              )
-              .toArray();
-
-            const customers = customerDocs.map(normalizeCustomer).filter((x) => x.id.length > 0);
-            if (!customers.length) return;
-
-            const ids = customers.map((x) => x.id);
-            const latestRows = await c.customerTelemetry15m
-              .aggregate([
-                { $match: { customer_id: { $in: ids } } },
-                { $sort: { customer_id: 1, ts: -1 } },
-                { $group: { _id: '$customer_id', ts: { $first: '$ts' }, watts: { $first: '$watts' } } }
-              ])
-              .toArray();
-
-            const latestByCustomer = new Map<string, { ts: Date; watts: number }>();
-            for (const row of latestRows as any[]) {
-              const id = String(row?._id ?? '');
-              const ts = row?.ts instanceof Date ? row.ts : row?.ts ? new Date(row.ts) : null;
-              const watts = Number(row?.watts);
-              if (id.length > 0 && ts && Number.isFinite(watts)) latestByCustomer.set(id, { ts, watts });
-            }
-
-            const nowAligned = floorToInterval(new Date()); // última quinzena completa
-
-            const docs = [] as Array<{
-              customer_id: string;
-              ts: Date;
-              watts: number;
-              euros: number;
-              temp_c: number;
-              is_estimated: boolean;
-            }>;
-
-            for (const customer of customers) {
-              const latest = latestByCustomer.get(customer.id);
-              let nextTs = latest ? new Date(latest.ts.getTime() + SAMPLE_INTERVAL_MS) : nowAligned;
-              let lastWatts = latest ? latest.watts : 420;
-
-              // preenche apenas até ao último intervalo completo (never futuro)
-              while (nextTs.getTime() <= nowAligned.getTime()) {
-                const model = loadOrTrainModel();
-                const nextWatts = model ? generateWatts15mFromModel(model, nextTs, lastWatts) : simulateNextWatts(customer, nextTs, lastWatts);
-                const kwh = (nextWatts / 1000) * SAMPLE_INTERVAL_HOURS;
-                const euros = kwh * (customer.price_eur_per_kwh ?? 0.2);
-                const tempC = simulateTempC(nextTs);
-
-                docs.push({
-                  customer_id: customer.id,
-                  ts: nextTs,
-                  watts: nextWatts,
-                  euros: Number(euros.toFixed(6)),
-                  temp_c: tempC,
-                  is_estimated: true
-                });
-
-                lastWatts = nextWatts;
-                nextTs = new Date(nextTs.getTime() + SAMPLE_INTERVAL_MS);
-              }
-            }
-
-            if (docs.length) await c.customerTelemetry15m.insertMany(docs);
-          } catch {
-            // não derruba o server
-          } finally {
-            inFlight = false;
-          }
-        })();
+        void doGenerateTelemetry(c).finally(() => {
+          inFlight = false;
+        });
       }, effectiveTickMs);
 
-      // eslint-disable-next-line no-console
-      console.log(`Telemetria 15m ativa (tick=${effectiveTickMs}ms, step=${SAMPLE_INTERVAL_MINUTES}min)`);
+      // Executa imediatamente logo após inicializar (para preencher gaps)
+      void doGenerateTelemetry(c).then(() => {
+        // eslint-disable-next-line no-console
+        console.log(`Telemetria 15m ativa (tick=${effectiveTickMs}ms, step=${SAMPLE_INTERVAL_MINUTES}min)`);
+      });
     } catch {
       // não derruba o server
     }

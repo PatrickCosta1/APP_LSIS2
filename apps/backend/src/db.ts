@@ -113,7 +113,6 @@ export type CustomerInvoiceDoc = {
 
 export type Collections = {
   samples: Collection<{ ts: Date; watts: number; euros: number }>;
-  telemetry15m: Collection<{ ts: Date; watts: number; euros: number }>;
   telemetryDaily: Collection<{ day: string; kwh: number; euros: number; peak_watts: number }>;
   nilmEvents: Collection<{ id: number; customer_id?: string; appliance_id?: number; label: string | null; status: string; confidence: number; watts: number; duration_min: number; created_at: Date }>;
   appliances: Collection<{ id: number; name: string; category: string; standby_watts: number; efficiency_score: number; annual_cost: number; created_at: Date }>;
@@ -181,7 +180,6 @@ export function getDb() {
 export function getCollections(db: Db = getDb()): Collections {
   return {
     samples: db.collection('samples'),
-    telemetry15m: db.collection('telemetry_15m'),
     telemetryDaily: db.collection('telemetry_daily'),
     nilmEvents: db.collection('nilm_events'),
     appliances: db.collection('appliances'),
@@ -221,7 +219,6 @@ async function ensureIndexesAndSeed(db: Db) {
 
   await Promise.all([
     c.samples.createIndex({ ts: 1 }),
-    c.telemetry15m.createIndex({ ts: 1 }),
     c.telemetryDaily.createIndex({ day: 1 }),
     c.nilmEvents.createIndex({ id: 1 }, { unique: true }),
     c.appliances.createIndex({ id: 1 }, { unique: true }),
@@ -274,7 +271,8 @@ async function ensureIndexesAndSeed(db: Db) {
   const now = Date.now();
   const oneHour = 60 * 60 * 1000;
 
-  const latestAgg = await c.telemetry15m.find({}, { projection: { ts: 1 } }).sort({ ts: -1 }).limit(1).toArray();
+  // Mantemos apenas seed mínimo para endpoints legados (samples/telemetry_daily). A telemetria 15m real vive em customer_telemetry_15m.
+  const latestAgg = await c.samples.find({}, { projection: { ts: 1 } }).sort({ ts: -1 }).limit(1).toArray();
   const latestTs = latestAgg[0]?.ts;
 
   if (latestTs && latestTs.getTime() > Date.now() - oneHour) {
@@ -284,7 +282,6 @@ async function ensureIndexesAndSeed(db: Db) {
 
   await Promise.all([
     c.samples.deleteMany({}),
-    c.telemetry15m.deleteMany({}),
     c.telemetryDaily.deleteMany({}),
     c.nilmEvents.deleteMany({}),
     c.appliances.deleteMany({}),
@@ -296,7 +293,6 @@ async function ensureIndexesAndSeed(db: Db) {
 
   const rate = 0.2;
   const samples = [] as Array<{ ts: Date; watts: number; euros: number }>;
-  const telemetry15m = [] as Array<{ ts: Date; watts: number; euros: number }>;
 
   for (let i = 0; i < 96; i += 1) {
     const ts = new Date(now - (95 - i) * 15 * 60 * 1000);
@@ -305,11 +301,11 @@ async function ensureIndexesAndSeed(db: Db) {
     const watts = Math.round(base + spike + Math.random() * 50);
     const euros = ((watts / 1000) * rate) / 4;
     samples.push({ ts, watts, euros });
-    telemetry15m.push({ ts, watts, euros });
   }
 
   await c.samples.insertMany(samples);
-  await c.telemetry15m.insertMany(telemetry15m);
+
+  // Evita criar/usar a coleção legacy telemetry_15m.
 
   await c.telemetryDaily.insertOne({
     day: new Date(now).toISOString().slice(0, 10),
