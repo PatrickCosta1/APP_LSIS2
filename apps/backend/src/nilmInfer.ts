@@ -220,16 +220,20 @@ export function inferAppliancesFromAggregate(opts: {
   }
 
   const sessions: InferredSession[] = [];
-  const appliances: InferredAppliance[] = [];
+  const appliancesById = new Map<
+    number,
+    { id: number; name: string; category: string | null; costEur: number; energyKwh: number; sessions: number; confidence: number }
+  >();
 
   for (const [clusterId, st] of clusterStats.entries()) {
     const meanWatts = st.meanWatts;
     const durationMin = st.durationMin;
-
-    const signature = `${Math.round(meanWatts / 10) * 10}-${Math.round(durationMin / 15) * 15}`;
-    const id = (hash32(signature) % 900000) + 1000;
-
     const label = labelFromSignature(meanWatts, durationMin);
+
+    // ID estável: baseado no rótulo (nome+categoria), evitando 404 quando o k-means muda ligeiramente
+    // entre janelas (7d vs 30d) ou execuções.
+    const labelKey = `${label.name}|${label.category ?? ''}`;
+    const id = (hash32(labelKey) % 900000) + 1000;
 
     let totalWh = 0;
     for (const b of st.blocks) {
@@ -248,21 +252,35 @@ export function inferAppliancesFromAggregate(opts: {
     const kwh = totalWh / 1000;
     const costEur = kwh * opts.priceEurPerKwh;
 
-    appliances.push({
-      id,
-      name: label.name,
-      category: label.category,
-      costEur: Number(costEur.toFixed(2)),
-      energyKwh: Number(kwh.toFixed(2)),
-      sessions: st.blocks.length,
-      confidence: Number(clamp(0.65 + st.blocks.length / 40, 0.65, 0.92).toFixed(2))
-    });
+    const prev = appliancesById.get(id);
+    const conf = Number(clamp(0.65 + st.blocks.length / 40, 0.65, 0.92).toFixed(2));
+    if (!prev) {
+      appliancesById.set(id, {
+        id,
+        name: label.name,
+        category: label.category,
+        costEur: Number(costEur.toFixed(2)),
+        energyKwh: Number(kwh.toFixed(2)),
+        sessions: st.blocks.length,
+        confidence: conf
+      });
+    } else {
+      appliancesById.set(id, {
+        id,
+        name: prev.name,
+        category: prev.category,
+        costEur: Number((prev.costEur + costEur).toFixed(2)),
+        energyKwh: Number((prev.energyKwh + kwh).toFixed(2)),
+        sessions: prev.sessions + st.blocks.length,
+        confidence: Number(Math.max(prev.confidence, conf).toFixed(2))
+      });
+    }
   }
 
   // Stand-by como categoria base (energia ~ baseline)
   const baseKwh = (baseline / 1000) * 0.25 * points.length;
   const baseCost = baseKwh * opts.priceEurPerKwh;
-  appliances.push({
+  appliancesById.set(1, {
     id: 1,
     name: 'Consumo base (stand-by)',
     category: 'Base',
@@ -272,6 +290,7 @@ export function inferAppliancesFromAggregate(opts: {
     confidence: 0.7
   });
 
+  const appliances = Array.from(appliancesById.values());
   appliances.sort((a, b) => b.costEur - a.costEur);
   return { appliances: appliances.slice(0, (opts.maxAppliances ?? 6) + 1), sessions };
 }

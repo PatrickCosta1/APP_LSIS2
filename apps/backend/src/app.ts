@@ -1703,10 +1703,29 @@ app.get('/customers/:customerId/appliances/:applianceId/weekly', async (req, res
     maxAppliances: 6
   });
 
-  const appliance = inferred.appliances.find((a) => a.id === applianceId);
-  if (!appliance) return res.status(404).json({ message: 'Equipamento não encontrado' });
+  let appliance = inferred.appliances.find((a) => a.id === applianceId) ?? null;
+  let sessions = inferred.sessions.filter((s) => s.applianceId === applianceId);
 
-  const sessions = inferred.sessions.filter((s) => s.applianceId === applianceId);
+  // Se o equipamento não aparecer nesta janela (ex.: não foi usado nos últimos 7 dias),
+  // ainda assim devolvemos 200 com dados a zero, usando meta inferida numa janela maior.
+  if (!appliance) {
+    const fallbackStart = addUtcDays(toExclusive, -Math.max(30, windowDays));
+    const tel30 = await c.customerTelemetry15m
+      .find({ customer_id: customerId, ts: { $gte: fallbackStart, $lt: toExclusive } }, { projection: { _id: 0, ts: 1, watts: 1 } })
+      .sort({ ts: 1 })
+      .toArray();
+
+    const inferred30 = inferAppliancesFromAggregate({
+      points: (tel30 as any[]).map((r) => ({ ts: new Date(r.ts), watts: Number(r.watts ?? 0) })),
+      priceEurPerKwh: price,
+      maxAppliances: 10
+    });
+
+    appliance = inferred30.appliances.find((a) => a.id === applianceId) ?? null;
+    sessions = [];
+  }
+
+  if (!appliance) return res.status(404).json({ message: 'Equipamento não encontrado' });
   const totalCostEur = inferred.appliances.reduce((acc, a) => acc + a.costEur, 0);
 
   const dailyByDay = new Map<string, { energyWh: number; costEur: number }>();
