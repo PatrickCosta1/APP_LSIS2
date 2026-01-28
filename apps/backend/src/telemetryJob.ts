@@ -479,9 +479,31 @@ export function startTelemetryJob() {
       await initDb();
       const c = getCollections();
 
+      // Log de diagnóstico das variáveis de ambiente
+      // eslint-disable-next-line no-console
+      console.log('TELEMETRIA DEBUG:', { csvPathEnv: csvPathEnv ? 'SET' : 'EMPTY', csvCustomerId: csvCustomerId ? 'SET' : 'EMPTY', cwd: process.cwd() });
+
       // Importa sempre o CSV para o customerId padrão ao iniciar, se existir CSV e customerId.
       if (csvPathEnv && csvCustomerId) {
         try {
+          // Valida se ficheiro existe
+          const fileExists = fs.existsSync(csvPathEnv);
+          // eslint-disable-next-line no-console
+          console.log(`CSV file check: ${csvPathEnv} -> exists=${fileExists}`);
+          
+          if (!fileExists) {
+            // eslint-disable-next-line no-console
+            console.error(`CSV file não encontrado em: ${csvPathEnv}`);
+            // Tenta com path relativo à raiz do projeto
+            const altPath = path.join(process.cwd(), csvPathEnv);
+            const altExists = fs.existsSync(altPath);
+            // eslint-disable-next-line no-console
+            console.log(`Tentando path alternativo: ${altPath} -> exists=${altExists}`);
+            if (!altExists) {
+              throw new Error(`CSV não encontrado: ${csvPathEnv}`);
+            }
+          }
+
           await c.customerTelemetry15m.deleteMany({ customer_id: csvCustomerId });
           const rows = readTelemetry15mFromCsvFile(csvPathEnv);
           const customer = await c.customers.findOne(
@@ -507,14 +529,18 @@ export function startTelemetryJob() {
           if (docs.length) {
             await c.customerTelemetry15m.insertMany(docs, { ordered: false });
             // eslint-disable-next-line no-console
-            console.log(`Importado CSV 15m para customer_id=${csvCustomerId} (${docs.length} pontos)`);
+            console.log(`✅ Importado CSV 15m para customer_id=${csvCustomerId} (${docs.length} pontos)`);
           }
 
           // treina/carrega modelo baseado no CSV
           loadOrTrainModel();
-        } catch {
-          // ignore
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.error(`❌ ERRO ao importar CSV (${csvPathEnv}):`, err instanceof Error ? err.message : String(err));
         }
+      } else {
+        // eslint-disable-next-line no-console
+        console.warn('⚠️ CSV não será importado: csvPathEnv=' + csvPathEnv + ' csvCustomerId=' + csvCustomerId);
       }
 
       interval = setInterval(() => {
