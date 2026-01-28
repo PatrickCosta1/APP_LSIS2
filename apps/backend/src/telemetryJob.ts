@@ -386,7 +386,6 @@ export function startTelemetryJob() {
       price_eur_per_kwh: Number(doc?.price_eur_per_kwh ?? 0.2)
     };
   };
-
   const doGenerateTelemetry = async (c: Collections) => {
     const customerDocs = await c.customers
       .find(
