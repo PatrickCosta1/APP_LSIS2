@@ -2163,14 +2163,92 @@ app.get('/customers/:customerId/security/kynex-node', async (req, res) => {
 });
 
 // Controlo manual (teste) - Shelly no Wi-Fi: candeeiro
+function getShellyTopic(which: 1 | 2): string | null {
+  const direct = String(process.env[`SHELLY_MQTT_TOPIC_${which}`] ?? '').trim();
+  if (direct) return direct;
+  if (which === 1) {
+    const legacy = String(process.env.SHELLY_MQTT_TOPIC ?? '').trim();
+    return legacy || null;
+  }
+  return null;
+}
+
+function getTomadaLabel(which: 1 | 2) {
+  return `tomada ${which}`;
+}
+
+app.get('/customers/:customerId/security/kynex-node/tomada/:which', async (req, res) => {
+  const whichRaw = String(req.params.which ?? '').trim();
+  const whichNum = Number(whichRaw);
+  if (whichNum !== 1 && whichNum !== 2) return res.status(400).json({ message: 'which deve ser 1|2' });
+
+  const which = whichNum as 1 | 2;
+  const device = getTomadaLabel(which);
+  const topic = getShellyTopic(which);
+  if (!topic) return res.status(501).json({ message: 'SHELLY_TOPIC_NOT_CONFIGURED', device });
+
+  try {
+    const mqttConfigured = isShellyMqttConfigured({ topic });
+    // eslint-disable-next-line no-console
+    console.log(`[TOMADA ${which} GET] MQTT configured:`, mqttConfigured);
+
+    if (!mqttConfigured) return res.status(501).json({ message: 'SHELLY_MQTT_NOT_CONFIGURED', device });
+
+    const st = await shellySwitchGetStatus({ topic });
+    // eslint-disable-next-line no-console
+    console.log(`[TOMADA ${which} GET] MQTT status:`, st);
+    return res.json({ device, state: st.on ? 'on' : 'off', ack: st.ack, mode: 'mqtt' });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[TOMADA ${which} GET] Error:`, err instanceof Error ? err.message : String(err));
+    return res.status(502).json({ message: 'SHELLY_UNAVAILABLE', device, error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+app.post('/customers/:customerId/security/kynex-node/tomada/:which', async (req, res) => {
+  const whichRaw = String(req.params.which ?? '').trim();
+  const whichNum = Number(whichRaw);
+  if (whichNum !== 1 && whichNum !== 2) return res.status(400).json({ message: 'which deve ser 1|2' });
+
+  const which = whichNum as 1 | 2;
+  const device = getTomadaLabel(which);
+  const topic = getShellyTopic(which);
+  if (!topic) return res.status(501).json({ message: 'SHELLY_TOPIC_NOT_CONFIGURED', device });
+
+  const turnRaw = (typeof req.query.turn === 'string' ? req.query.turn : undefined) ?? (req.body?.turn as string | undefined);
+  const turn = String(turnRaw ?? '').trim().toLowerCase();
+  if (turn !== 'on' && turn !== 'off') return res.status(400).json({ message: 'turn deve ser on|off' });
+
+  try {
+    // eslint-disable-next-line no-console
+    console.log(`[TOMADA ${which} POST] turn requested:`, turn);
+
+    const mqttConfigured = isShellyMqttConfigured({ topic });
+    // eslint-disable-next-line no-console
+    console.log(`[TOMADA ${which} POST] MQTT configured:`, mqttConfigured);
+
+    if (!mqttConfigured) return res.status(501).json({ message: 'SHELLY_MQTT_NOT_CONFIGURED', device });
+
+    const st = await shellySwitchSet(turn === 'on', { topic });
+    // eslint-disable-next-line no-console
+    console.log(`[TOMADA ${which} POST] MQTT set result:`, st);
+    return res.json({ device, state: st.on ? 'on' : 'off', ack: st.ack, mode: 'mqtt' });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(`[TOMADA ${which} POST] Error:`, err instanceof Error ? err.message : String(err));
+    return res.status(502).json({ message: 'SHELLY_UNAVAILABLE', device, error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
 app.get('/customers/:customerId/security/kynex-node/candeeiro', async (_req, res) => {
   try {
-    const mqttConfigured = isShellyMqttConfigured();
+    const topic = getShellyTopic(1);
+    const mqttConfigured = topic ? isShellyMqttConfigured({ topic }) : false;
     // eslint-disable-next-line no-console
     console.log('[CANDEEIRO GET] MQTT configured:', mqttConfigured);
 
     if (mqttConfigured) {
-      const st = await shellySwitchGetStatus();
+      const st = await shellySwitchGetStatus({ topic: topic ?? undefined });
       // eslint-disable-next-line no-console
       console.log('[CANDEEIRO GET] MQTT status:', st);
       return res.json({ device: 'candeeiro', state: st.on ? 'on' : 'off', ack: st.ack, mode: 'mqtt' });
@@ -2201,12 +2279,13 @@ app.post('/customers/:customerId/security/kynex-node/candeeiro', async (req, res
     // eslint-disable-next-line no-console
     console.log('[CANDEEIRO POST] turn requested:', turn);
 
-    const mqttConfigured = isShellyMqttConfigured();
+    const topic = getShellyTopic(1);
+    const mqttConfigured = topic ? isShellyMqttConfigured({ topic }) : false;
     // eslint-disable-next-line no-console
     console.log('[CANDEEIRO POST] MQTT configured:', mqttConfigured);
 
     if (mqttConfigured) {
-      const st = await shellySwitchSet(turn === 'on');
+      const st = await shellySwitchSet(turn === 'on', { topic: topic ?? undefined });
       // eslint-disable-next-line no-console
       console.log('[CANDEEIRO POST] MQTT set result:', st);
       return res.json({ device: 'candeeiro', state: st.on ? 'on' : 'off', ack: st.ack, mode: 'mqtt' });

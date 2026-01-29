@@ -39,6 +39,8 @@ type ThirdPartiesResponse = {
   items: ThirdParty[];
 };
 
+type PlugWhich = 1 | 2;
+
 type TabKey = 'node' | 'third';
 
 type NavItem = {
@@ -111,9 +113,13 @@ function Security() {
   const [node, setNode] = useState<KynexNodeResponse | null>(null);
   const [third, setThird] = useState<ThirdPartiesResponse | null>(null);
 
-  const [lampState, setLampState] = useState<'on' | 'off' | null>(null);
-  const [lampBusy, setLampBusy] = useState(false);
-  const [lampError, setLampError] = useState<string | null>(null);
+  const [plug1State, setPlug1State] = useState<'on' | 'off' | null>(null);
+  const [plug1Busy, setPlug1Busy] = useState(false);
+  const [plug1Error, setPlug1Error] = useState<string | null>(null);
+
+  const [plug2State, setPlug2State] = useState<'on' | 'off' | null>(null);
+  const [plug2Busy, setPlug2Busy] = useState(false);
+  const [plug2Error, setPlug2Error] = useState<string | null>(null);
 
   const [addOpen, setAddOpen] = useState(false);
   const [thirdName, setThirdName] = useState('');
@@ -209,18 +215,30 @@ function Security() {
         if (!cancelled) setNode(null);
       }
 
-      // Estado do candeeiro (Shelly via backend proxy)
-      try {
-        const res = await fetch(`${apiBase}/customers/${customerId}/security/kynex-node/candeeiro`, { headers });
-        if (!res.ok) throw new Error('candeeiro');
-        const json = (await res.json()) as { state?: 'on' | 'off' };
-        if (!cancelled) {
-          if (json?.state === 'on' || json?.state === 'off') setLampState(json.state);
-          setLampError(null);
+      // Estado das tomadas (Shelly via backend proxy)
+      async function loadPlug(which: PlugWhich) {
+        try {
+          const res = await fetch(`${apiBase}/customers/${customerId}/security/kynex-node/tomada/${which}`, { headers });
+          if (!res.ok) throw new Error(`tomada-${which}`);
+          const json = (await res.json()) as { state?: 'on' | 'off' };
+
+          if (cancelled) return;
+          if (which === 1) {
+            if (json?.state === 'on' || json?.state === 'off') setPlug1State(json.state);
+            setPlug1Error(null);
+          } else {
+            if (json?.state === 'on' || json?.state === 'off') setPlug2State(json.state);
+            setPlug2Error(null);
+          }
+        } catch {
+          if (cancelled) return;
+          if (which === 1) setPlug1Error('Offline');
+          else setPlug2Error('Offline');
         }
-      } catch {
-        if (!cancelled) setLampError('Offline');
       }
+
+      await loadPlug(1);
+      await loadPlug(2);
 
       try {
         const res = await fetch(`${apiBase}/customers/${customerId}/security/third-parties`, { headers });
@@ -240,17 +258,25 @@ function Security() {
     };
   }, [apiBase, customerId]);
 
-  async function setLamp(turn: 'on' | 'off') {
-    if (!apiBase || !customerId || lampBusy) return;
+  async function setPlug(which: PlugWhich, turn: 'on' | 'off') {
+    if (!apiBase || !customerId) return;
+    if (which === 1 && plug1Busy) return;
+    if (which === 2 && plug2Busy) return;
 
-    setLampBusy(true);
-    setLampError(null);
-    // otimista (a UI responde já)
-    setLampState(turn);
+    if (which === 1) {
+      setPlug1Busy(true);
+      setPlug1Error(null);
+      setPlug1State(turn);
+    } else {
+      setPlug2Busy(true);
+      setPlug2Error(null);
+      setPlug2State(turn);
+    }
 
     try {
       const token = localStorage.getItem('kynex:authToken');
-      const res = await fetch(`${apiBase}/customers/${customerId}/security/kynex-node/candeeiro?turn=${encodeURIComponent(turn)}`,
+      const res = await fetch(
+        `${apiBase}/customers/${customerId}/security/kynex-node/tomada/${which}?turn=${encodeURIComponent(turn)}`,
         {
           method: 'POST',
           headers: {
@@ -260,11 +286,16 @@ function Security() {
       );
       if (!res.ok) throw new Error('toggle');
       const json = (await res.json()) as { state?: 'on' | 'off' };
-      if (json?.state === 'on' || json?.state === 'off') setLampState(json.state);
+      if (json?.state === 'on' || json?.state === 'off') {
+        if (which === 1) setPlug1State(json.state);
+        else setPlug2State(json.state);
+      }
     } catch {
-      setLampError('Erro ao comunicar com o candeeiro');
+      if (which === 1) setPlug1Error('Erro ao comunicar com a tomada 1');
+      else setPlug2Error('Erro ao comunicar com a tomada 2');
     } finally {
-      setLampBusy(false);
+      if (which === 1) setPlug1Busy(false);
+      else setPlug2Busy(false);
     }
   }
 
@@ -391,24 +422,44 @@ function Security() {
                 </div>
 
                 <div className="sec-devices" aria-label="Dispositivos">
-                  <div className="sec-device sec-device-manual" aria-label="Candeeiro">
-                    <div className="sec-device-name" title="Candeeiro">Candeeiro</div>
+                  <div className="sec-device sec-device-manual" aria-label="Tomada 1">
+                    <div className="sec-device-name" title="Tomada 1">Tomada 1</div>
 
                     <div className="sec-device-bottom">
-                      <div className={`sec-device-state ${lampState === 'on' ? 'on' : 'off'}`}>{lampState === 'on' ? 'ON' : 'OFF'}</div>
+                      <div className={`sec-device-state ${plug1State === 'on' ? 'on' : 'off'}`}>{plug1State === 'on' ? 'ON' : 'OFF'}</div>
                       <button
-                        className={`sec-switch ${lampState === 'on' ? 'on' : 'off'}`}
+                        className={`sec-switch ${plug1State === 'on' ? 'on' : 'off'}`}
                         type="button"
-                        onClick={() => setLamp(lampState === 'on' ? 'off' : 'on')}
-                        disabled={lampBusy}
-                        aria-label={lampState === 'on' ? 'Desligar candeeiro' : 'Ligar candeeiro'}
+                        onClick={() => setPlug(1, plug1State === 'on' ? 'off' : 'on')}
+                        disabled={plug1Busy}
+                        aria-label={plug1State === 'on' ? 'Desligar tomada 1' : 'Ligar tomada 1'}
                       >
-                        {lampBusy ? 'A ligar…' : lampState === 'on' ? 'Desligar' : 'Ligar'}
+                        {plug1Busy ? 'A atualizar…' : plug1State === 'on' ? 'Desligar' : 'Ligar'}
                       </button>
                     </div>
 
-                    {lampError ? <div className="sec-device-error">{lampError}</div> : null}
-                    <div className="sec-device-hint">Shelly em Wi-Fi (relay 0)</div>
+                    {plug1Error ? <div className="sec-device-error">{plug1Error}</div> : null}
+                    <div className="sec-device-hint">Shelly via MQTT</div>
+                  </div>
+
+                  <div className="sec-device sec-device-manual" aria-label="Tomada 2">
+                    <div className="sec-device-name" title="Tomada 2">Tomada 2</div>
+
+                    <div className="sec-device-bottom">
+                      <div className={`sec-device-state ${plug2State === 'on' ? 'on' : 'off'}`}>{plug2State === 'on' ? 'ON' : 'OFF'}</div>
+                      <button
+                        className={`sec-switch ${plug2State === 'on' ? 'on' : 'off'}`}
+                        type="button"
+                        onClick={() => setPlug(2, plug2State === 'on' ? 'off' : 'on')}
+                        disabled={plug2Busy}
+                        aria-label={plug2State === 'on' ? 'Desligar tomada 2' : 'Ligar tomada 2'}
+                      >
+                        {plug2Busy ? 'A atualizar…' : plug2State === 'on' ? 'Desligar' : 'Ligar'}
+                      </button>
+                    </div>
+
+                    {plug2Error ? <div className="sec-device-error">{plug2Error}</div> : null}
+                    <div className="sec-device-hint">Shelly via MQTT</div>
                   </div>
                 </div>
               </article>

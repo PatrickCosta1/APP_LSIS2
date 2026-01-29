@@ -18,11 +18,11 @@ function envBool(name: string, def: boolean) {
   return v === '1' || v === 'true' || v === 'yes' || v === 'y' || v === 'on';
 }
 
-function getShellyMqttConfig(): ShellyMqttConfig | null {
+function getShellyMqttConfig(topicOverride?: string): ShellyMqttConfig | null {
   const broker = String(process.env.SHELLY_MQTT_BROKER ?? '').trim();
   const username = String(process.env.SHELLY_MQTT_USERNAME ?? '').trim();
   const password = String(process.env.SHELLY_MQTT_PASSWORD ?? '').trim();
-  const topic = String(process.env.SHELLY_MQTT_TOPIC ?? '').trim();
+  const topic = String(topicOverride ?? process.env.SHELLY_MQTT_TOPIC ?? '').trim();
   if (!broker || !username || !password || !topic) return null;
 
   const portRaw = Number(process.env.SHELLY_MQTT_PORT ?? 8883);
@@ -61,8 +61,8 @@ function pickOnValue(payload: any): boolean | null {
   return null;
 }
 
-async function shellyRpc(method: string, params: Record<string, any>) {
-  const cfg = getShellyMqttConfig();
+async function shellyRpc(method: string, params: Record<string, any>, opts?: { topic?: string }) {
+  const cfg = getShellyMqttConfig(opts?.topic);
   if (!cfg) {
     const err: any = new Error('SHELLY_MQTT_NOT_CONFIGURED');
     err.code = 'SHELLY_MQTT_NOT_CONFIGURED';
@@ -158,10 +158,10 @@ async function shellyRpc(method: string, params: Record<string, any>) {
   });
 }
 
-export async function shellySwitchSet(on: boolean): Promise<{ on: boolean; ack: boolean }>
+export async function shellySwitchSet(on: boolean, opts?: { topic?: string }): Promise<{ on: boolean; ack: boolean }>
 {
   try {
-    const resp = await shellyRpc('Switch.Set', { id: 0, on });
+    const resp = await shellyRpc('Switch.Set', { id: 0, on }, opts);
     const inferred = pickOnValue(resp);
     return { on: inferred ?? on, ack: true };
   } catch (e: any) {
@@ -171,13 +171,13 @@ export async function shellySwitchSet(on: boolean): Promise<{ on: boolean; ack: 
   }
 }
 
-export async function shellySwitchGetStatus(): Promise<{ on: boolean; ack: boolean }>
+export async function shellySwitchGetStatus(opts?: { topic?: string }): Promise<{ on: boolean; ack: boolean }>
 {
-  const resp = await shellyRpc('Switch.GetStatus', { id: 0 });
+  const resp = await shellyRpc('Switch.GetStatus', { id: 0 }, opts);
   const inferred = pickOnValue(resp);
   return { on: inferred ?? false, ack: true };
 }
 
-export function isShellyMqttConfigured() {
-  return getShellyMqttConfig() != null;
+export function isShellyMqttConfigured(opts?: { topic?: string }) {
+  return getShellyMqttConfig(opts?.topic) != null;
 }
