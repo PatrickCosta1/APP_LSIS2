@@ -432,7 +432,7 @@ function Security() {
 
                 <div className="sec-devices" aria-label="Dispositivos">
                   <div className="sec-device sec-device-manual" aria-label="Prancha do cabelo">
-                    <div className="sec-device-name" title="Prancha do cabelo">Prancha do cabelo</div>
+                    <div className="sec-device-name" title="Prancha do cabelo">Aquecedor</div>
 
                     <div className="sec-device-bottom">
                       <div className={`sec-device-state ${plug1State === 'on' ? 'on' : 'off'}`}>{plug1State === 'on' ? 'ON' : 'OFF'}</div>
@@ -448,11 +448,11 @@ function Security() {
                     </div>
 
                     {plug1Error ? <div className="sec-device-error">{plug1Error}</div> : null}
-                    <div className="sec-device-hint">Shelly via MQTT</div>
+                    <div className="sec-device-hint">Tomada Inteligente</div>
                   </div>
 
                   <div className="sec-device sec-device-manual" aria-label="Candeiro">
-                    <div className="sec-device-name" title="Candeiro">Candeiro</div>
+                    <div className="sec-device-name" title="Candeiro">Luz</div>
 
                     <div className="sec-device-bottom">
                       <div className={`sec-device-state ${plug2State === 'on' ? 'on' : 'off'}`}>{plug2State === 'on' ? 'ON' : 'OFF'}</div>
@@ -468,7 +468,7 @@ function Security() {
                     </div>
 
                     {plug2Error ? <div className="sec-device-error">{plug2Error}</div> : null}
-                    <div className="sec-device-hint">Shelly via MQTT</div>
+                    <div className="sec-device-hint">Tomada Inteligente</div>
                   </div>
                 </div>
               </article>
