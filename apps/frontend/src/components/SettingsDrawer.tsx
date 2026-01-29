@@ -14,6 +14,36 @@ type SettingsDrawerProps = {
   onUserUpdate?: (patch: Partial<DrawerUser>) => void;
 };
 
+function readStoredProfile(): Partial<DrawerUser> {
+  try {
+    let name: string | undefined;
+    let email: string | undefined;
+
+    const onboardRaw = localStorage.getItem('kynex:onboarding');
+    if (onboardRaw) {
+      const parsed = JSON.parse(onboardRaw) as { name?: string; email?: string };
+      if (typeof parsed?.name === 'string' && parsed.name.trim()) name = parsed.name.trim();
+      if (typeof parsed?.email === 'string' && parsed.email.trim()) email = parsed.email.trim();
+    }
+
+    if (!email) {
+      const registeredEmail = localStorage.getItem('kynex:registeredEmail');
+      if (typeof registeredEmail === 'string' && registeredEmail.trim()) email = registeredEmail.trim();
+    }
+
+    const photoUrlRaw = localStorage.getItem('kynex:profilePhotoUrl');
+    const photoUrl = typeof photoUrlRaw === 'string' && photoUrlRaw.trim() ? photoUrlRaw.trim() : null;
+
+    return {
+      name,
+      email,
+      photoUrl
+    };
+  } catch {
+    return {};
+  }
+}
+
 function safeInitials(name: string) {
   const cleaned = String(name ?? '').trim();
   if (!cleaned) return 'U';
@@ -77,7 +107,16 @@ export default function SettingsDrawer({ open, user, onClose, onUserUpdate }: Se
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [open, onClose]);
 
-  const initials = useMemo(() => safeInitials(user.name), [user.name]);
+  const effectiveUser = useMemo(() => {
+    const stored = open ? readStoredProfile() : {};
+    return {
+      name: (stored.name ?? user.name) || 'Cliente',
+      email: (stored.email ?? user.email) || '',
+      photoUrl: stored.photoUrl ?? user.photoUrl ?? null
+    } satisfies DrawerUser;
+  }, [open, user.name, user.email, user.photoUrl]);
+
+  const initials = useMemo(() => safeInitials(effectiveUser.name), [effectiveUser.name]);
 
   const [editName, setEditName] = useState<string>('');
   const [editEmail, setEditEmail] = useState<string>('');
@@ -88,11 +127,11 @@ export default function SettingsDrawer({ open, user, onClose, onUserUpdate }: Se
   useEffect(() => {
     if (!open) return;
     if (view !== 'profile') return;
-    setEditName(user.name ?? '');
-    setEditEmail(user.email ?? '');
-    setEditPhotoUrl(user.photoUrl ?? '');
+    setEditName(effectiveUser.name ?? '');
+    setEditEmail(effectiveUser.email ?? '');
+    setEditPhotoUrl(effectiveUser.photoUrl ?? '');
     setSaveMsg(null);
-  }, [open, view, user.name, user.email, user.photoUrl]);
+  }, [open, view, effectiveUser.name, effectiveUser.email, effectiveUser.photoUrl]);
 
   function goTo(path: string) {
     // Projeto não usa router; navegação simples.
@@ -123,7 +162,7 @@ export default function SettingsDrawer({ open, user, onClose, onUserUpdate }: Se
       // ignore
     }
 
-    onUserUpdate?.({ name: name || user.name, email: email || user.email, photoUrl: photoUrl || null });
+    onUserUpdate?.({ name: name || effectiveUser.name, email: email || effectiveUser.email, photoUrl: photoUrl || null });
     setSaveMsg('Perfil atualizado.');
   }
 
@@ -178,8 +217,8 @@ export default function SettingsDrawer({ open, user, onClose, onUserUpdate }: Se
                     )}
                   </div>
                   <div className="sd-user-text">
-                    <div className="sd-user-name">{user.name || 'Utilizador'}</div>
-                    <div className="sd-user-email">{user.email || '—'}</div>
+                    <div className="sd-user-name">{effectiveUser.name || 'Utilizador'}</div>
+                    <div className="sd-user-email">{effectiveUser.email || '—'}</div>
                   </div>
                   <div className="sd-right">
                     <IconChevron />

@@ -304,7 +304,16 @@ function Dashboard() {
         const json = (await res.json()) as CustomerNowResponse;
         if (!cancelled) {
           setNowStats(json);
-          if (json?.name) setCustomerName(json.name);
+          // Não sobrescreve o nome editado localmente (SettingsDrawer).
+          try {
+            const onboardRaw = localStorage.getItem('kynex:onboarding');
+            const onboard = onboardRaw ? (JSON.parse(onboardRaw) as { name?: string }) : undefined;
+            const localName = String(onboard?.name ?? '').trim();
+            if (localName) setCustomerName(localName);
+            else if (json?.name) setCustomerName(json.name);
+          } catch {
+            if (json?.name) setCustomerName(json.name);
+          }
           setIsApiOnline(true);
         }
       } catch {
