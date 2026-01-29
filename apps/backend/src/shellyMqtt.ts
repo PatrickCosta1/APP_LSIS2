@@ -82,6 +82,7 @@ async function shellyRpc(method: string, params: Record<string, any>, opts?: { t
       username: cfg.username,
       password: cfg.password,
       protocolVersion: 5,
+      connectTimeout: cfg.timeoutMs,
       clean: true,
       reconnectPeriod: 0,
       rejectUnauthorized: cfg.rejectUnauthorized
@@ -93,7 +94,6 @@ async function shellyRpc(method: string, params: Record<string, any>, opts?: { t
       done = true;
       clearTimeout(timeout);
       try {
-        client.removeAllListeners();
         client.end(true);
       } catch {
         // ignore
@@ -108,7 +108,10 @@ async function shellyRpc(method: string, params: Record<string, any>, opts?: { t
       finish(err);
     }, cfg.timeoutMs);
 
-    client.on('error', (e) => finish(e));
+    client.on('error', (e) => {
+      if (done) return;
+      finish(e);
+    });
 
     client.on('connect', () => {
       // Subscreve o tópico de comando (eco), o tópico de resposta (src/rpc) e eventos
@@ -173,9 +176,14 @@ export async function shellySwitchSet(on: boolean, opts?: { topic?: string }): P
 
 export async function shellySwitchGetStatus(opts?: { topic?: string }): Promise<{ on: boolean; ack: boolean }>
 {
-  const resp = await shellyRpc('Switch.GetStatus', { id: 0 }, opts);
-  const inferred = pickOnValue(resp);
-  return { on: inferred ?? false, ack: true };
+  try {
+    const resp = await shellyRpc('Switch.GetStatus', { id: 0 }, opts);
+    const inferred = pickOnValue(resp);
+    return { on: inferred ?? false, ack: true };
+  } catch (e: any) {
+    if (e?.code === 'SHELLY_MQTT_TIMEOUT') return { on: false, ack: false };
+    throw e;
+  }
 }
 
 export function isShellyMqttConfigured(opts?: { topic?: string }) {

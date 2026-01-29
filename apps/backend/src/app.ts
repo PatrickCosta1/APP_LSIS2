@@ -2177,6 +2177,18 @@ function getTomadaLabel(which: 1 | 2) {
   return `tomada ${which}`;
 }
 
+function shellyErrorPayload(device: string, err: unknown) {
+  const code = (err as any)?.code ? String((err as any).code) : undefined;
+  const message = err instanceof Error ? err.message : String(err);
+  return {
+    device,
+    state: 'unknown' as const,
+    ack: false,
+    mode: 'mqtt' as const,
+    error: { code, message }
+  };
+}
+
 app.get('/customers/:customerId/security/kynex-node/tomada/:which', async (req, res) => {
   const whichRaw = String(req.params.which ?? '').trim();
   const whichNum = Number(whichRaw);
@@ -2185,14 +2197,14 @@ app.get('/customers/:customerId/security/kynex-node/tomada/:which', async (req, 
   const which = whichNum as 1 | 2;
   const device = getTomadaLabel(which);
   const topic = getShellyTopic(which);
-  if (!topic) return res.status(501).json({ message: 'SHELLY_TOPIC_NOT_CONFIGURED', device });
+  if (!topic) return res.json({ ...shellyErrorPayload(device, { code: 'SHELLY_TOPIC_NOT_CONFIGURED' }), mode: 'mqtt' });
 
   try {
     const mqttConfigured = isShellyMqttConfigured({ topic });
     // eslint-disable-next-line no-console
     console.log(`[TOMADA ${which} GET] MQTT configured:`, mqttConfigured);
 
-    if (!mqttConfigured) return res.status(501).json({ message: 'SHELLY_MQTT_NOT_CONFIGURED', device });
+    if (!mqttConfigured) return res.json({ ...shellyErrorPayload(device, { code: 'SHELLY_MQTT_NOT_CONFIGURED' }), mode: 'mqtt' });
 
     const st = await shellySwitchGetStatus({ topic });
     // eslint-disable-next-line no-console
@@ -2201,7 +2213,7 @@ app.get('/customers/:customerId/security/kynex-node/tomada/:which', async (req, 
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error(`[TOMADA ${which} GET] Error:`, err instanceof Error ? err.message : String(err));
-    return res.status(502).json({ message: 'SHELLY_UNAVAILABLE', device, error: err instanceof Error ? err.message : String(err) });
+    return res.json(shellyErrorPayload(device, err));
   }
 });
 
@@ -2213,7 +2225,7 @@ app.post('/customers/:customerId/security/kynex-node/tomada/:which', async (req,
   const which = whichNum as 1 | 2;
   const device = getTomadaLabel(which);
   const topic = getShellyTopic(which);
-  if (!topic) return res.status(501).json({ message: 'SHELLY_TOPIC_NOT_CONFIGURED', device });
+  if (!topic) return res.json({ ...shellyErrorPayload(device, { code: 'SHELLY_TOPIC_NOT_CONFIGURED' }), mode: 'mqtt' });
 
   const turnRaw = (typeof req.query.turn === 'string' ? req.query.turn : undefined) ?? (req.body?.turn as string | undefined);
   const turn = String(turnRaw ?? '').trim().toLowerCase();
@@ -2227,7 +2239,7 @@ app.post('/customers/:customerId/security/kynex-node/tomada/:which', async (req,
     // eslint-disable-next-line no-console
     console.log(`[TOMADA ${which} POST] MQTT configured:`, mqttConfigured);
 
-    if (!mqttConfigured) return res.status(501).json({ message: 'SHELLY_MQTT_NOT_CONFIGURED', device });
+    if (!mqttConfigured) return res.json({ ...shellyErrorPayload(device, { code: 'SHELLY_MQTT_NOT_CONFIGURED' }), mode: 'mqtt' });
 
     const st = await shellySwitchSet(turn === 'on', { topic });
     // eslint-disable-next-line no-console
@@ -2236,7 +2248,7 @@ app.post('/customers/:customerId/security/kynex-node/tomada/:which', async (req,
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error(`[TOMADA ${which} POST] Error:`, err instanceof Error ? err.message : String(err));
-    return res.status(502).json({ message: 'SHELLY_UNAVAILABLE', device, error: err instanceof Error ? err.message : String(err) });
+    return res.json(shellyErrorPayload(device, err));
   }
 });
 

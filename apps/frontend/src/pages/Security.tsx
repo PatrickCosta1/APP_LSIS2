@@ -220,15 +220,24 @@ function Security() {
         try {
           const res = await fetch(`${apiBase}/customers/${customerId}/security/kynex-node/tomada/${which}`, { headers });
           if (!res.ok) throw new Error(`tomada-${which}`);
-          const json = (await res.json()) as { state?: 'on' | 'off' };
+          const json = (await res.json()) as {
+            state?: 'on' | 'off' | 'unknown';
+            ack?: boolean;
+            error?: { code?: string; message?: string };
+          };
 
           if (cancelled) return;
+
+          const state = json?.state;
+          const hasKnownState = state === 'on' || state === 'off';
+          const isOnline = hasKnownState && json?.ack !== false;
+
           if (which === 1) {
-            if (json?.state === 'on' || json?.state === 'off') setPlug1State(json.state);
-            setPlug1Error(null);
+            if (state === 'on' || state === 'off') setPlug1State(state);
+            setPlug1Error(isOnline ? null : 'Offline');
           } else {
-            if (json?.state === 'on' || json?.state === 'off') setPlug2State(json.state);
-            setPlug2Error(null);
+            if (state === 'on' || state === 'off') setPlug2State(state);
+            setPlug2Error(isOnline ? null : 'Offline');
           }
         } catch {
           if (cancelled) return;
