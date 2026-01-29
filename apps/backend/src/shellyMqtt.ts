@@ -111,7 +111,13 @@ async function shellyRpc(method: string, params: Record<string, any>) {
     client.on('error', (e) => finish(e));
 
     client.on('connect', () => {
-      client.subscribe(cfg.topic, { qos: 1 }, (subErr) => {
+      // Subscreve o tópico de comando (eco), o tópico de resposta (src/rpc) e eventos
+      const topics = [
+        cfg.topic, // comando (eco)
+        `${cfg.src}/rpc`, // resposta do Shelly
+        `${cfg.topic.replace(/\/rpc$/, '')}/events/rpc` // eventos
+      ];
+      client.subscribe(topics, { qos: 1 }, (subErr) => {
         if (subErr) return finish(subErr);
         client.publish(cfg.topic, JSON.stringify(payload), { qos: 1 }, (pubErr) => {
           if (pubErr) return finish(pubErr);
@@ -119,7 +125,7 @@ async function shellyRpc(method: string, params: Record<string, any>) {
       });
     });
 
-    client.on('message', (_topic, message) => {
+    client.on('message', (topic, message) => {
       let json: any;
       try {
         json = JSON.parse(message.toString('utf8'));
@@ -128,12 +134,12 @@ async function shellyRpc(method: string, params: Record<string, any>) {
         return;
       }
 
-      console.log('[SHELLY][MQTT] Mensagem recebida:', { id: json?.id, esperado: id, json });
+      console.log('[SHELLY][MQTT] Mensagem recebida:', { topic, id: json?.id, esperado: id, json });
 
       if (json?.id !== id) return;
 
       // Ignora o eco do próprio pedido (normalmente vem com method+params mas sem result)
-      if (json?.result == null && json?.error == null) {
+      if (topic === cfg.topic && json?.result == null && json?.error == null) {
         console.log('[SHELLY][MQTT] Eco do pedido ignorado:', json);
         return;
       }
