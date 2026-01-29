@@ -505,11 +505,65 @@ app.get('/customers/:customerId/telemetry/now', async (req, res) => {
   const eurosLast24h = kwhLast24h * price;
   const monthToDateEuros = monthToDateKwh * price;
 
-  // Previsão mensal simples: usa a média diária do último dia e projeta para o mês.
-  // (1 tick = +15 min, então isto evolui com o tempo simulado.)
+  // Previsão mensal (refinada): consumo já realizado + projeção para dias restantes.
+  // Base: média diária recente (últimos N dias completos), com robustez (trim) e faixa (P10/P90).
   const dim = daysInUtcMonthFromIso(endIso);
-  const forecastMonthKwh = kwhLast24h * dim;
+  const monthStartDay = startOfUtcMonthFromIso(endIso);
+  const nextMonthStart = startOfNextUtcMonth(end);
+  const endDay = startOfUtcDay(end);
+
+  const MS_PER_DAY = 24 * 60 * 60 * 1000;
+  const remainingDays = Math.max(0, (nextMonthStart.getTime() - end.getTime()) / MS_PER_DAY);
+
+  const lookbackDays = 7;
+  const historyStartRaw = addUtcDays(endDay, -lookbackDays);
+  const historyStart = historyStartRaw < monthStartDay ? monthStartDay : historyStartRaw;
+
+  const dailyAgg = await c.customerTelemetry15m
+    .aggregate([
+      { $match: { customer_id: customerId, ts: { $gte: historyStart, $lt: endDay } } },
+      {
+        $group: {
+          _id: { $dateToString: { format: '%Y-%m-%d', date: '$ts', timezone: 'UTC' } },
+          sumWatts: { $sum: '$watts' }
+        }
+      },
+      { $sort: { _id: 1 } }
+    ])
+    .toArray();
+
+  const dailyKwhs = dailyAgg
+    .map((r: any) => sumKwhFromSumWatts(Number(r?.sumWatts ?? 0)))
+    .filter((x: number) => Number.isFinite(x) && x >= 0);
+
+  const forecastBasisDays = dailyKwhs.length;
+  let avgDailyKwh = forecastBasisDays ? dailyKwhs.reduce((a, b) => a + b, 0) / forecastBasisDays : kwhLast24h;
+
+  // Trim simples para reduzir impacto de outliers (picos/quebras ocasionais)
+  if (forecastBasisDays >= 5) {
+    const s = dailyKwhs.slice().sort((a, b) => a - b);
+    const trimmed = s.slice(1, -1);
+    avgDailyKwh = trimmed.reduce((a, b) => a + b, 0) / Math.max(1, trimmed.length);
+  }
+
+  const sortedKwh = dailyKwhs.slice().sort((a, b) => a - b);
+  const pickQ = (p: number) => {
+    if (!sortedKwh.length) return avgDailyKwh;
+    const idx = Math.floor((sortedKwh.length - 1) * p);
+    return sortedKwh[Math.max(0, Math.min(sortedKwh.length - 1, idx))];
+  };
+  const q10 = pickQ(0.1);
+  const q90 = pickQ(0.9);
+
+  let forecastMonthKwh = monthToDateKwh + avgDailyKwh * remainingDays;
+  forecastMonthKwh = Math.max(monthToDateKwh, forecastMonthKwh);
+
+  const forecastMonthKwhLow = Math.max(monthToDateKwh, monthToDateKwh + q10 * remainingDays);
+  const forecastMonthKwhHigh = Math.max(forecastMonthKwhLow, monthToDateKwh + q90 * remainingDays);
+
   const forecastMonthEuros = forecastMonthKwh * price;
+  const forecastMonthEurosLow = forecastMonthKwhLow * price;
+  const forecastMonthEurosHigh = forecastMonthKwhHigh * price;
 
   const avg1hAgg = await c.customerTelemetry15m
     .aggregate([
@@ -557,6 +611,24 @@ app.get('/customers/:customerId/telemetry/now', async (req, res) => {
       ? Number((customer as any).contracted_power_kva)
       : 6.9;
 
+  // Delta vs mês anterior: consumo até hoje vs mesmo período no mês anterior
+  const lastMonthStart = addUtcDays(monthStart, -dim);
+  const lastMonthEnd = monthStart;
+  const lastMonthSameDayEnd = new Date(lastMonthEnd.getTime() + (end.getTime() - monthStart.getTime()));
+
+  const lastMonthPeriodAgg = await c.customerTelemetry15m
+    .aggregate([
+      { $match: { customer_id: customerId, ts: { $gte: lastMonthStart, $lt: lastMonthSameDayEnd } } },
+      { $group: { _id: null, sumWatts: { $sum: '$watts' } } }
+    ])
+    .toArray();
+  const lastMonthKwh = sumKwhFromSumWatts(Number(lastMonthPeriodAgg[0]?.sumWatts ?? 0));
+  const lastMonthEuros = lastMonthKwh * price;
+  const deltaPctVsLastMonth = lastMonthEuros > 0 ? ((monthToDateEuros / lastMonthEuros) - 1) * 100 : 0;
+
+  // Delta vs pago no mês anterior: usado mês anterior vs previsto este mês
+  const deltaPctVsForecast = forecastMonthEuros > 0 ? ((lastMonthEuros / forecastMonthEuros) - 1) * 100 : 0;
+
   return res.json({
     customerId: customer.id,
     name: customer.name,
@@ -570,9 +642,19 @@ app.get('/customers/:customerId/telemetry/now', async (req, res) => {
     monthToDateEuros: Number(monthToDateEuros.toFixed(2)),
     forecastMonthKwh: Number(forecastMonthKwh.toFixed(2)),
     forecastMonthEuros: Number(forecastMonthEuros.toFixed(2)),
+    forecastMonthKwhLow: Number(forecastMonthKwhLow.toFixed(2)),
+    forecastMonthKwhHigh: Number(forecastMonthKwhHigh.toFixed(2)),
+    forecastMonthEurosLow: Number(forecastMonthEurosLow.toFixed(2)),
+    forecastMonthEurosHigh: Number(forecastMonthEurosHigh.toFixed(2)),
+    forecastMethod: 'recent_daily_avg_trim_p10_p90',
+    forecastAvgDailyKwh: Number(avgDailyKwh.toFixed(2)),
+    forecastBasisDays,
+    forecastRemainingDays: Number(remainingDays.toFixed(2)),
     similarKwhLast24h: Number(similarKwhLast24h.toFixed(2)),
     similarDeltaPct: Number(similarDeltaPct.toFixed(1)),
-    priceEurPerKwh: Number(price.toFixed(4))
+    priceEurPerKwh: Number(price.toFixed(4)),
+    deltaPctVsLastMonth: Number(deltaPctVsLastMonth.toFixed(0)),
+    deltaPctVsForecast: Number(deltaPctVsForecast.toFixed(0))
   });
 });
 

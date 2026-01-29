@@ -23,6 +23,16 @@ type CustomerNowResponse = {
   monthToDateEuros: number;
   forecastMonthKwh: number;
   forecastMonthEuros: number;
+  forecastMonthKwhLow?: number;
+  forecastMonthKwhHigh?: number;
+  forecastMonthEurosLow?: number;
+  forecastMonthEurosHigh?: number;
+  forecastMethod?: string;
+  forecastAvgDailyKwh?: number;
+  forecastBasisDays?: number;
+  forecastRemainingDays?: number;
+  deltaPctVsLastMonth?: number;
+  deltaPctVsForecast?: number;
   similarKwhLast24h: number;
   similarDeltaPct: number;
   priceEurPerKwh: number;
@@ -585,12 +595,16 @@ function Dashboard() {
             <div className="stat-card glass">
               <p className="stat-title">Consumo mensal até ao momento</p>
               <p className="stat-value">{nowStats ? `${nowStats.monthToDateEuros.toFixed(2)} €` : '—'}</p>
-              <p className="stat-delta negative">—</p>
+              <p className="stat-delta negative">
+                {nowStats ? (nowStats.deltaPctVsLastMonth != null ? (nowStats.deltaPctVsLastMonth > 0 ? '+' : '') + nowStats.deltaPctVsLastMonth + '%' : '—') : '—'}
+              </p>
             </div>
             <div className="stat-card glass">
               <p className="stat-title">Consumo mensal previsto</p>
               <p className="stat-value">{nowStats ? `${nowStats.forecastMonthEuros.toFixed(2)} €` : '—'}</p>
-              <p className="stat-delta positive">—</p>
+              <p className="stat-delta positive">
+                {nowStats ? (nowStats.deltaPctVsForecast != null ? (nowStats.deltaPctVsForecast > 0 ? '+' : '') + nowStats.deltaPctVsForecast + '%' : '—') : '—'}
+              </p>
             </div>
           </section>
         </main>
