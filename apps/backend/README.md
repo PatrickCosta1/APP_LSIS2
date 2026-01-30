@@ -66,6 +66,19 @@ Para ativar o chat com LLM:
 - `GET /customers/:customerId/appliances/:applianceId/weekly?days=7`
 - `GET /customers/:customerId/opendata/national`
 
+### NILM (fingerprints + feedback loop)
+- Worker assíncrono: calcula sessões NILM e atualiza fingerprints por cliente.
+	- `KYNEX_NILM_ENABLED=0` desliga o worker
+	- `KYNEX_NILM_TICK_MS` intervalo do worker (default: 10 min)
+- Feedback (rótulo por sessão):
+	- `POST /customers/:customerId/nilm/sessions/:sessionId/label` com `{ "label": "..." }` (ou `{ "label": null }`)
+
+### Forecast mensal (mais regressoras)
+O `GET /customers/:customerId/telemetry/now` passa a tentar um modelo diário com lag + sazonalidade + IPMA.
+- `forecastMethod` indica o método efetivo
+- `forecastWeatherOk` indica se IPMA foi usado
+- Campos novos (opcionais para UI): `forecastMonthBillEuros*` incluem termo fixo diário
+
 ### Chat
 - `GET /customers/:customerId/chat?conversationId=...&limit=50`
 - `POST /customers/:customerId/chat` com `{ "message": "...", "conversationId"?: "..." }`

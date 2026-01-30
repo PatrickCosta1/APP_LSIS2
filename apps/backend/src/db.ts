@@ -111,6 +111,45 @@ export type CustomerInvoiceDoc = {
   };
 };
 
+export type CustomerNilmSessionDoc = {
+  id: string;
+  customer_id: string;
+  start_ts: Date;
+  end_ts: Date;
+  features: {
+    duration_min: number;
+    mean_watts: number;
+    peak_watts: number;
+    energy_wh: number;
+    start_step_watts: number;
+    start_hour_utc: number;
+    start_dow: number;
+  };
+  fingerprint_id: string | null;
+  inferred_name: string;
+  inferred_category: string | null;
+  confidence: number;
+  label: string | null;
+  created_at: Date;
+  updated_at: Date;
+};
+
+export type CustomerNilmFingerprintDoc = {
+  id: string;
+  customer_id: string;
+  mean_watts: number;
+  duration_min: number;
+  peak_watts: number;
+  start_step_watts: number;
+  sessions: number;
+  avg_sessions_per_day: number;
+  label: string | null;
+  category: string | null;
+  label_confidence: number;
+  created_at: Date;
+  updated_at: Date;
+};
+
 export type Collections = {
   samples: Collection<{ ts: Date; watts: number; euros: number }>;
   telemetryDaily: Collection<{ day: string; kwh: number; euros: number; peak_watts: number }>;
@@ -140,6 +179,9 @@ export type Collections = {
 
   users: Collection<UserDoc>;
   authSessions: Collection<AuthSessionDoc>;
+
+  customerNilmSessions: Collection<CustomerNilmSessionDoc>;
+  customerNilmFingerprints: Collection<CustomerNilmFingerprintDoc>;
 };
 
 let mongoClient: MongoClient | null = null;
@@ -204,7 +246,10 @@ export function getCollections(db: Db = getDb()): Collections {
     eredesOpenDataLatest: db.collection('eredes_open_data_latest'),
     eredesOpenDataCache: db.collection('eredes_open_data_cache'),
     users: db.collection('users'),
-    authSessions: db.collection('auth_sessions')
+    authSessions: db.collection('auth_sessions'),
+
+    customerNilmSessions: db.collection('customer_nilm_sessions'),
+    customerNilmFingerprints: db.collection('customer_nilm_fingerprints')
   };
 }
 
@@ -264,7 +309,15 @@ async function ensureIndexesAndSeed(db: Db) {
     c.erseTariffImports.createIndex({ id: 1 }, { unique: true }),
     c.erseTariffImports.createIndex({ fetched_at: -1 }),
     c.customerInvoices.createIndex({ id: 1 }, { unique: true }),
-    c.customerInvoices.createIndex({ customer_id: 1, uploaded_at: -1 })
+    c.customerInvoices.createIndex({ customer_id: 1, uploaded_at: -1 }),
+
+    c.customerNilmSessions.createIndex({ customer_id: 1, id: 1 }, { unique: true }),
+    c.customerNilmSessions.createIndex({ customer_id: 1, start_ts: -1 }),
+    c.customerNilmSessions.createIndex({ customer_id: 1, fingerprint_id: 1, start_ts: -1 }),
+    c.customerNilmSessions.createIndex({ customer_id: 1, label: 1, updated_at: -1 }),
+    c.customerNilmFingerprints.createIndex({ customer_id: 1, id: 1 }, { unique: true }),
+    c.customerNilmFingerprints.createIndex({ customer_id: 1, updated_at: -1 }),
+    c.customerNilmFingerprints.createIndex({ customer_id: 1, label: 1, updated_at: -1 })
   ]);
 
   // Seed dos dados globais (não dos clientes). Clientes novos continuam a começar sem telemetria.

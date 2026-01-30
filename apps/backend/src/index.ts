@@ -5,6 +5,7 @@ import { startAiRetrainJob } from './aiTrainer';
 import { startTelemetryJob } from './telemetryJob';
 import { startEredesOpenDataJob } from './openDataJob';
 import { startErseTariffsJob } from './erseTariffsJob';
+import { startNilmJob } from './nilmJob';
 
 const port = process.env.PORT || 4100;
 
@@ -23,4 +24,7 @@ app.listen(port, () => {
 
   // Importação diária de tarifários ERSE (configurável via KYNEX_ERSE_TARIFF_ZIP_URL e KYNEX_ERSE_TICK_MS)
   startErseTariffsJob();
+
+  // NILM + fingerprints por cliente (configurável via KYNEX_NILM_TICK_MS; desligar com KYNEX_NILM_ENABLED=0)
+  if (String(process.env.KYNEX_NILM_ENABLED ?? '1') !== '0') startNilmJob();
 });

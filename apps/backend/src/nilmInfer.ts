@@ -137,11 +137,11 @@ function labelFromSignature(meanWatts: number, durationMin: number) {
   const w = meanWatts;
   const d = durationMin;
 
-  if (w >= 1200 && d <= 30) return { name: 'Pico rápido (chaleira/microondas)', category: 'Cozinha' };
-  if (w >= 700 && d >= 45 && d <= 180) return { name: 'Aquecimento de água (termo)', category: 'Água quente' };
-  if (w >= 350 && w <= 950 && d >= 60) return { name: 'Ciclo longo (lavagem)', category: 'Lavandaria' };
-  if (w >= 200 && w <= 1200 && d >= 120) return { name: 'Climatização (AC/aquecimento)', category: 'Climatização' };
-  if (w >= 60 && w <= 220 && d <= 60) return { name: 'Ciclo curto (frigorífico)', category: 'Cozinha' };
+  if (w >= 1200 && d <= 30) return { name: 'Microondas', category: 'Cozinha' };
+  if (w >= 700 && d >= 45 && d <= 180) return { name: 'Aquecimento de água', category: 'Água quente' };
+  if (w >= 350 && w <= 950 && d >= 60) return { name: 'Lavagem', category: 'Lavandaria' };
+  if (w >= 200 && w <= 1200 && d >= 120) return { name: 'Climatização', category: 'Climatização' };
+  if (w >= 60 && w <= 220 && d <= 60) return { name: 'Frigorífico', category: 'Cozinha' };
 
   return { name: 'Equipamento (inferido)', category: null };
 }

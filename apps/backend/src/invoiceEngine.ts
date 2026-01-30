@@ -119,6 +119,54 @@ function findPowerKva(text: string) {
   return null;
 }
 
+function findPeriodDays(text: string) {
+  // Captura "durante 30 dias" / "30 dias" em contexto de faturação/potência.
+  const m = text.match(/\b(\d{1,2})\s*dias?\b/i);
+  if (!m) return null;
+  const n = Number(m[1]);
+  if (Number.isFinite(n) && n >= 1 && n <= 62) return n;
+  return null;
+}
+
+function findTotalKwh(text: string) {
+  const patterns = [
+    /consumo[^0-9]{0,40}(\d{1,5})\s*kwh\b/i,
+    /consumo\s*de\s*energia[^0-9]{0,60}(\d{1,5})\s*kwh\b/i,
+    /\btotal\b[^0-9]{0,40}(\d{1,5})\s*kwh\b/i,
+    /(\d{1,5})\s*kwh\b[^\n]{0,40}(?:total|consumo)/i,
+  ];
+
+  for (const re of patterns) {
+    const m = text.match(re);
+    if (!m) continue;
+    const n = Number(m[1]);
+    if (Number.isFinite(n) && n >= 1 && n <= 20000) return n;
+  }
+  return null;
+}
+
+function findLastMoneyAfterLabel(text: string, labelRe: RegExp, opts?: { maxChars?: number; rejectValues?: number[] }) {
+  const maxChars = Math.max(60, Math.min(600, opts?.maxChars ?? 260));
+  const reject = new Set<number>((opts?.rejectValues ?? []).filter((x) => Number.isFinite(x)));
+
+  const m = text.match(labelRe);
+  if (!m || m.index == null) return null;
+
+  const start = m.index;
+  const slice = text.slice(start, start + maxChars);
+  const money = Array.from(slice.matchAll(MONEY_RE))
+    .map((mm) => toMoneyFromMatch(String(mm[1]), String(mm[2])))
+    .filter((n) => Number.isFinite(n)) as number[];
+
+  // Escolhe o último valor plausível (normalmente o total € está no fim do trecho)
+  for (let i = money.length - 1; i >= 0; i -= 1) {
+    const v = money[i];
+    if (reject.has(Number(v.toFixed(4)))) continue;
+    if (v >= 0.01 && v <= 5000) return v;
+  }
+  return null;
+}
+
 function pickUnitPrices(text: string) {
   const debug: any = { allCandidates: [] };
 
@@ -288,6 +336,9 @@ export async function extractInvoiceFromFile(opts: {
 
   const potenciaKva = findPowerKva(normalizedText);
 
+  const periodDays = findPeriodDays(normalizedText);
+  const totalKwh = findTotalKwh(normalizedText);
+
   const termoEnergia =
     findByLabelMoney(normalizedText, [
       'termo\\s*de\\s*energia',
@@ -297,29 +348,62 @@ export async function extractInvoiceFromFile(opts: {
       'eletricidade\\s*\\(s\\/iva\\)'
     ]) ?? null;
 
-  const termoPotenciaCandidate = findByLabelMoney(normalizedText, [
-    'termo\\s*de\\s*pot[eê]ncia',
-    'potência\\s*contratada[^k][^v][^a]'
-  ]) ?? null;
-  
+  const termoEnergiaAltReduced = findByLabelMoney(normalizedText, ['taxa\\s*reduzida']) ?? null;
+  const termoEnergiaAltNormal = findByLabelMoney(normalizedText, ['taxa\\s*normal']) ?? null;
+  const termoEnergiaFinal =
+    termoEnergia ??
+    (typeof termoEnergiaAltReduced === 'number' && typeof termoEnergiaAltNormal === 'number'
+      ? Number((termoEnergiaAltReduced + termoEnergiaAltNormal).toFixed(2))
+      : null);
+
+  // Termo de potência: não pode capturar o valor em kVA (ex: "6,9 kVA") como se fosse €.
+  // Pegamos o ÚLTIMO valor monetário numa janela após o label.
+  const rejectKva = typeof potenciaKva === 'number' && Number.isFinite(potenciaKva) ? [Number(potenciaKva.toFixed(2)), Number(potenciaKva.toFixed(1))] : [];
+  const termoPotenciaCandidate =
+    findLastMoneyAfterLabel(normalizedText, /termo\s*de\s*pot[eê]ncia/i, { rejectValues: rejectKva }) ??
+    findLastMoneyAfterLabel(normalizedText, /potência\s*contratada/i, { rejectValues: rejectKva }) ??
+    null;
+
   const termoPotencia =
-    typeof termoPotenciaCandidate === 'number' &&
-    termoPotenciaCandidate >= 0.01 &&
-    termoPotenciaCandidate <= 50
+    typeof termoPotenciaCandidate === 'number' && termoPotenciaCandidate >= 0.01 && termoPotenciaCandidate <= 200
       ? termoPotenciaCandidate
       : null;
 
   const priceResult = pickUnitPrices(normalizedText);
+
+  // Se não houver taxa diária explícita, inferir a partir do termo de potência e nº de dias.
+  const inferredFixedDaily =
+    !priceResult.fixedDaily && typeof termoPotencia === 'number' && Number.isFinite(termoPotencia) && typeof periodDays === 'number' && periodDays > 0
+      ? Number((termoPotencia / periodDays).toFixed(4))
+      : null;
+
+  // Se não houver preço unitário explícito, inferir como preço médio de energia (sem potência) = termoEnergia / kWh.
+  const inferredPriceKwh =
+    !priceResult.priceKwh && typeof termoEnergiaFinal === 'number' && Number.isFinite(termoEnergiaFinal) && typeof totalKwh === 'number' && totalKwh > 0
+      ? Number((termoEnergiaFinal / totalKwh).toFixed(4))
+      : null;
+
+  if (inferredFixedDaily) {
+    (priceResult.debug as any).fixedDailyMethod = (priceResult.debug as any).fixedDailyMethod ?? 'inferred-termoPotencia/days';
+    (priceResult.debug as any).allCandidates = (priceResult.debug as any).allCandidates ?? [];
+    (priceResult.debug as any).allCandidates.push({ value: inferredFixedDaily, context: 'inferred-fixedDaily' });
+  }
+
+  if (inferredPriceKwh) {
+    (priceResult.debug as any).priceKwhMethod = (priceResult.debug as any).priceKwhMethod ?? 'inferred-termoEnergia/kwh';
+    (priceResult.debug as any).allCandidates = (priceResult.debug as any).allCandidates ?? [];
+    (priceResult.debug as any).allCandidates.push({ value: inferredPriceKwh, context: 'inferred-priceKwh' });
+  }
 
   return {
     extractedText: normalizedText,
     utilityGuess,
     valorPagarEur: valorPagar,
     potenciaContratadaKva: potenciaKva,
-    termoEnergiaEur: termoEnergia,
+    termoEnergiaEur: termoEnergiaFinal,
     termoPotenciaEur: termoPotencia,
-    priceKwhEur: priceResult.priceKwh,
-    fixedDailyFeeEur: priceResult.fixedDaily,
+    priceKwhEur: priceResult.priceKwh ?? inferredPriceKwh,
+    fixedDailyFeeEur: priceResult.fixedDaily ?? inferredFixedDaily,
     debug: {
       usedOcr,
       detectionDetails: priceResult.debug

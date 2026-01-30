@@ -57,7 +57,7 @@
   -webkit-appearance: none;
   -moz-appearance: none;
   border: 1px solid rgba(141, 224, 255, 0.42);
-  background: rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.10);
   color: rgba(255, 255, 255, 0.92);
   font-weight: 800;
   border-radius: 12px;
@@ -75,7 +75,7 @@
 }
 
 .eq-month select:focus {
-  background: rgba(255, 255, 255, 0.10);
+  background: rgb(48, 63, 54);
   border-color: rgba(141, 224, 255, 0.70);
   box-shadow: 0 0 0 3px rgba(141, 224, 255, 0.20), 0 10px 18px rgba(0, 0, 0, 0.18);
 }

@@ -515,7 +515,7 @@ function Security() {
                         className="sec-input"
                         value={thirdName}
                         onChange={(e) => setThirdName(e.target.value)}
-                        placeholder="Nome (ex.: Avó Maria)"
+                        placeholder="Nome"
                         aria-label="Nome do terceiro"
                       />
                       <div className="sec-add-actions">

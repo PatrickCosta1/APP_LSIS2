@@ -14,9 +14,11 @@ import { getEredesNationalContext } from './openDataContext';
 import { llmImproveText } from './llm/assistantText';
 import { buildAssistantBaseContext, buildAssistantEnvelope } from './assistantContext';
 import { inferAppliancesFromAggregate } from './nilmInfer';
+import { extractNilmSessions15m, inferFromFingerprints, type CustomerNilmFingerprintDoc } from './nilmService';
 import { extractInvoiceFromFile, newInvoiceId } from './invoiceEngine';
 import { compareWithErseTariffs } from './tariffComparison';
 import { isShellyMqttConfigured, shellySwitchGetStatus, shellySwitchSet } from './shellyMqtt';
+import { forecastMonth } from './forecastService';
 
 const app = express();
 
@@ -127,6 +129,23 @@ function startOfUtcWeekMonday(d: Date) {
 
 function sumKwhFromSumWatts(sumWatts: number) {
   return (sumWatts / 1000) * SAMPLE_INTERVAL_HOURS;
+}
+
+async function readDailyKwhFromTelemetry(customerId: string, start: Date, endExclusive: Date) {
+  const c = await collections();
+  const rows = await c.customerTelemetry15m
+    .aggregate([
+      { $match: { customer_id: customerId, ts: { $gte: start, $lt: endExclusive } } },
+      {
+        $group: {
+          _id: { $dateToString: { format: '%Y-%m-%d', date: '$ts', timezone: 'UTC' } },
+          sumWatts: { $sum: '$watts' }
+        }
+      },
+      { $sort: { _id: 1 } }
+    ])
+    .toArray();
+  return rows.map((r: any) => ({ day: String(r._id), kwh: sumKwhFromSumWatts(Number(r?.sumWatts ?? 0)) }));
 }
 
 function startOfUtcMonthFromIso(iso: string) {
@@ -269,8 +288,14 @@ app.get('/telemetry/range', async (req, res) => {
 
   if (bucket === '15m') {
     const resolvedCustomerId = String(customerId ?? process.env.KYNEX_TELEMETRY_CSV_CUSTOMER_ID ?? '').trim();
+
+    // Compatibilidade: quando não há customerId (ex.: testes/seed), usa o dataset legacy.
     if (!resolvedCustomerId) {
-      return res.status(400).json({ message: 'customerId é obrigatório quando bucket=15m' });
+      const rows = await c.samples
+        .find({ ts: { $gte: start, $lte: end } }, { projection: { ts: 1, watts: 1, euros: 1 } })
+        .sort({ ts: 1 })
+        .toArray();
+      return res.json(rows.map((r) => ({ ts: r.ts.toISOString(), watts: r.watts, euros: r.euros })));
     }
 
     const rows = await c.customerTelemetry15m
@@ -463,7 +488,7 @@ app.get('/customers/:customerId/telemetry/now', async (req, res) => {
 
   const customer = await c.customers.findOne(
     { id: customerId },
-    { projection: { _id: 0, id: 1, name: 1, segment: 1, home_area_m2: 1, price_eur_per_kwh: 1, contracted_power_kva: 1 } }
+    { projection: { _id: 0, id: 1, name: 1, segment: 1, city: 1, home_area_m2: 1, price_eur_per_kwh: 1, fixed_daily_fee_eur: 1, contracted_power_kva: 1 } }
   );
   if (!customer) return res.status(404).json({ message: 'Cliente não encontrado' });
 
@@ -565,6 +590,44 @@ app.get('/customers/:customerId/telemetry/now', async (req, res) => {
   const forecastMonthEurosLow = forecastMonthKwhLow * price;
   const forecastMonthEurosHigh = forecastMonthKwhHigh * price;
 
+  // Previsão mensal (Service Layer): usa histórico, sazonalidade e IPMA (quando disponível).
+  // Mantém compatibilidade: os campos *Euros continuam a ser energia * preço (sem termo fixo),
+  // e adicionamos *BillEuros incluindo termo fixo diário.
+  let improved: Awaited<ReturnType<typeof forecastMonth>> | null = null;
+  try {
+    improved = await forecastMonth({
+      customerId,
+      end,
+      city: typeof (customer as any).city === 'string' ? String((customer as any).city) : null,
+      monthToDateKwh,
+      priceEurPerKwh: price,
+      fixedDailyFeeEur:
+        typeof (customer as any).fixed_daily_fee_eur === 'number' && Number.isFinite((customer as any).fixed_daily_fee_eur)
+          ? Number((customer as any).fixed_daily_fee_eur)
+          : 0,
+      readDailyKwh: readDailyKwhFromTelemetry
+    });
+  } catch {
+    improved = null;
+  }
+
+  const outForecastMonthKwh = improved?.forecastMonthKwh ?? Number(forecastMonthKwh.toFixed(2));
+  const outForecastMonthKwhLow = improved?.lowKwh ?? Number(forecastMonthKwhLow.toFixed(2));
+  const outForecastMonthKwhHigh = improved?.highKwh ?? Number(forecastMonthKwhHigh.toFixed(2));
+  const outForecastMonthEuros = Number((outForecastMonthKwh * price).toFixed(2));
+  const outForecastMonthEurosLow = Number((outForecastMonthKwhLow * price).toFixed(2));
+  const outForecastMonthEurosHigh = Number((outForecastMonthKwhHigh * price).toFixed(2));
+  const outForecastMethod = improved?.method ?? 'recent_daily_avg_trim_p10_p90';
+  const outForecastWeatherOk = improved ? Boolean(improved.ipmaOk) : false;
+  const fixedDailyFee =
+    typeof (customer as any).fixed_daily_fee_eur === 'number' && Number.isFinite((customer as any).fixed_daily_fee_eur)
+      ? Number((customer as any).fixed_daily_fee_eur)
+      : 0;
+  const billFixedEur = fixedDailyFee * dim;
+  const outForecastMonthBillEuros = Number((outForecastMonthKwh * price + billFixedEur).toFixed(2));
+  const outForecastMonthBillEurosLow = Number((outForecastMonthKwhLow * price + billFixedEur).toFixed(2));
+  const outForecastMonthBillEurosHigh = Number((outForecastMonthKwhHigh * price + billFixedEur).toFixed(2));
+
   const avg1hAgg = await c.customerTelemetry15m
     .aggregate([
       { $match: { customer_id: customerId, ts: { $gte: since1h, $lte: end } } },
@@ -640,13 +703,17 @@ app.get('/customers/:customerId/telemetry/now', async (req, res) => {
     eurosLast24h: Number(eurosLast24h.toFixed(2)),
     monthToDateKwh: Number(monthToDateKwh.toFixed(2)),
     monthToDateEuros: Number(monthToDateEuros.toFixed(2)),
-    forecastMonthKwh: Number(forecastMonthKwh.toFixed(2)),
-    forecastMonthEuros: Number(forecastMonthEuros.toFixed(2)),
-    forecastMonthKwhLow: Number(forecastMonthKwhLow.toFixed(2)),
-    forecastMonthKwhHigh: Number(forecastMonthKwhHigh.toFixed(2)),
-    forecastMonthEurosLow: Number(forecastMonthEurosLow.toFixed(2)),
-    forecastMonthEurosHigh: Number(forecastMonthEurosHigh.toFixed(2)),
-    forecastMethod: 'recent_daily_avg_trim_p10_p90',
+    forecastMonthKwh: outForecastMonthKwh,
+    forecastMonthEuros: outForecastMonthEuros,
+    forecastMonthKwhLow: outForecastMonthKwhLow,
+    forecastMonthKwhHigh: outForecastMonthKwhHigh,
+    forecastMonthEurosLow: outForecastMonthEurosLow,
+    forecastMonthEurosHigh: outForecastMonthEurosHigh,
+    forecastMethod: outForecastMethod,
+    forecastWeatherOk: outForecastWeatherOk,
+    forecastMonthBillEuros: outForecastMonthBillEuros,
+    forecastMonthBillEurosLow: outForecastMonthBillEurosLow,
+    forecastMonthBillEurosHigh: outForecastMonthBillEurosHigh,
     forecastAvgDailyKwh: Number(avgDailyKwh.toFixed(2)),
     forecastBasisDays,
     forecastRemainingDays: Number(remainingDays.toFixed(2)),
@@ -1681,13 +1748,109 @@ app.get('/customers/:customerId/appliances/summary', async (req, res) => {
     .sort({ ts: 1 })
     .toArray();
 
-  const inferred = inferAppliancesFromAggregate({
-    points: (telRows as any[]).map((r) => ({ ts: new Date(r.ts), watts: Number(r.watts ?? 0) })),
-    priceEurPerKwh: typeof (customer as any)?.price_eur_per_kwh === 'number' ? Number((customer as any).price_eur_per_kwh) : 0.2,
-    maxAppliances: 6
-  });
+  const points = (telRows as any[]).map((r) => ({ ts: new Date(r.ts), watts: Number(r.watts ?? 0) }));
+  const priceEurPerKwh = typeof (customer as any)?.price_eur_per_kwh === 'number' ? Number((customer as any).price_eur_per_kwh) : 0.2;
 
-  const itemsRaw = inferred.appliances.map((a) => ({
+  let inferred:
+    | {
+        appliances: Array<{ id: number; name: string; category: string | null; costEur: number; energyKwh: number; sessions: number; confidence: number }>;
+        sessions: Array<any>;
+      }
+    | null = null;
+
+  try {
+    const fpRows = await c.customerNilmFingerprints
+      .find({ customer_id: customerId }, { projection: { _id: 0 } })
+      .sort({ updated_at: -1 })
+      .limit(250)
+      .toArray();
+
+    const labelRows = await c.customerNilmSessions
+      .find({ customer_id: customerId, label: { $ne: null } }, { projection: { _id: 0, id: 1, label: 1 } })
+      .sort({ updated_at: -1 })
+      .limit(600)
+      .toArray();
+
+    const labelsBySessionId = new Map<string, string | null>();
+    for (const r of labelRows as any[]) labelsBySessionId.set(String(r.id), r.label ? String(r.label) : null);
+
+    const { baselineWatts, sessions } = extractNilmSessions15m(points);
+    const baselineKwh = (Math.max(0, baselineWatts) * points.length * 0.25) / 1000;
+
+    inferred = inferFromFingerprints({
+      customerId,
+      sessions,
+      priceEurPerKwh,
+      knownFingerprints: (fpRows as any[]) as CustomerNilmFingerprintDoc[],
+      maxAppliances: 6,
+      userLabelsBySessionId: labelsBySessionId,
+      baselineKwh
+    });
+
+    // Best-effort persistência (mantém applianceIds estáveis entre /summary e /weekly)
+    const now = new Date();
+    if ((inferred as any)?.updatedFingerprints?.length) {
+      c.customerNilmFingerprints
+        .bulkWrite(
+          (inferred as any).updatedFingerprints.map((fp: any) => ({
+            updateOne: {
+              filter: { customer_id: customerId, id: fp.id },
+              update: { $set: fp, $setOnInsert: { created_at: fp.created_at ?? now } },
+              upsert: true
+            }
+          })),
+          { ordered: false }
+        )
+        .catch(() => null);
+    }
+
+    if ((inferred as any)?.sessions?.length) {
+      c.customerNilmSessions
+        .bulkWrite(
+          (inferred as any).sessions.slice(0, 800).map((s: any) => ({
+            updateOne: {
+              filter: { customer_id: customerId, id: s.sessionId },
+              update: {
+                $set: {
+                  id: s.sessionId,
+                  customer_id: customerId,
+                  start_ts: s.startTs,
+                  end_ts: s.endTs,
+                  features: {
+                    duration_min: s.durationMin,
+                    mean_watts: s.meanWatts,
+                    peak_watts: s.peakWatts,
+                    energy_wh: s.energyWh,
+                    start_step_watts: s.startStepWatts,
+                    start_hour_utc: s.startTs.getUTCHours(),
+                    start_dow: (s.startTs.getUTCDay() + 6) % 7
+                  },
+                  fingerprint_id: s.fingerprintId,
+                  inferred_name: s.inferredLabel,
+                  inferred_category: null,
+                  confidence: s.confidence,
+                  label: s.userLabel,
+                  updated_at: now
+                },
+                $setOnInsert: { created_at: now }
+              },
+              upsert: true
+            }
+          })),
+          { ordered: false }
+        )
+        .catch(() => null);
+    }
+  } catch {
+    inferred = null;
+  }
+
+  const inferredFinal = (inferred ?? (inferAppliancesFromAggregate({ points, priceEurPerKwh, maxAppliances: 6 }) as any)) as {
+    appliances: Array<{ id: number; name: string; category: string | null; costEur: number; energyKwh: number; sessions: number; confidence: number }>;
+    sessions: Array<any>;
+  };
+
+  const itemsRaw = inferredFinal.appliances.map((a) => ({
     id: a.id,
     name: a.name,
     category: a.category,
@@ -1739,7 +1902,8 @@ app.get('/customers/:customerId/appliances/summary', async (req, res) => {
     includeTopAppliances30d: false
   });
 
-  const improvedSuggestion = await llmImproveText({
+  const improvedSuggestion = await Promise.race([
+    llmImproveText({
     kind: 'appliances_summary_suggestion',
     customer: baseContext.customer,
     context: buildAssistantEnvelope({
@@ -1754,7 +1918,9 @@ app.get('/customers/:customerId/appliances/summary', async (req, res) => {
     }),
     draft: suggestion,
     maxTokens: 140
-  });
+    }),
+    new Promise<string | null>((resolve) => setTimeout(() => resolve(null), 1200))
+    ]);
   if (improvedSuggestion) suggestion = improvedSuggestion;
 
   return res.json({
@@ -1767,6 +1933,35 @@ app.get('/customers/:customerId/appliances/summary', async (req, res) => {
     suggestion,
     estimatedSavingsMonthEur
   });
+});
+
+app.post('/customers/:customerId/nilm/sessions/:sessionId/label', async (req, res) => {
+  const { customerId, sessionId } = req.params;
+  if (!/^[a-f0-9]{8,64}$/i.test(sessionId)) return res.status(400).json({ message: 'sessionId inválido' });
+
+  const schema = z.object({ label: z.string().max(80).nullable().optional() });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ errors: parsed.error.flatten().fieldErrors });
+
+  const rawLabel = typeof parsed.data.label === 'string' ? parsed.data.label.trim() : null;
+  const label = rawLabel ? rawLabel : null;
+
+  const c = await collections();
+  const existing = await c.customerNilmSessions.findOne({ customer_id: customerId, id: sessionId }, { projection: { _id: 0, id: 1 } });
+  if (!existing) return res.status(404).json({ message: 'Sessão NILM não encontrada (aguarde o worker ou reabra a janela de tempo)' });
+
+  const now = new Date();
+  await c.customerNilmSessions.updateOne(
+    { customer_id: customerId, id: sessionId },
+    {
+      $set: {
+        label,
+        updated_at: now
+      }
+    }
+  );
+
+  return res.json({ ok: true, sessionId, label });
 });
 
 app.get('/customers/:customerId/appliances/:applianceId/weekly', async (req, res) => {
@@ -1802,14 +1997,78 @@ app.get('/customers/:customerId/appliances/:applianceId/weekly', async (req, res
     .then((r: any) => (typeof r?.price_eur_per_kwh === 'number' && Number.isFinite(r.price_eur_per_kwh) ? Number(r.price_eur_per_kwh) : 0.2))
     .catch(() => 0.2);
 
-  const inferred = inferAppliancesFromAggregate({
-    points: (telRows as any[]).map((r) => ({ ts: new Date(r.ts), watts: Number(r.watts ?? 0) })),
-    priceEurPerKwh: price,
-    maxAppliances: 6
-  });
+  const points = (telRows as any[]).map((r) => ({ ts: new Date(r.ts), watts: Number(r.watts ?? 0) }));
 
-  let appliance = inferred.appliances.find((a) => a.id === applianceId) ?? null;
-  let sessions = inferred.sessions.filter((s) => s.applianceId === applianceId);
+  // Stand-by (id=1): modela como baselineWatts distribuído por dia.
+  if (applianceId === 1) {
+    const { baselineWatts } = extractNilmSessions15m(points);
+    const baselineKwhPerDay = (Math.max(0, baselineWatts) * 24) / 1000;
+    const daily = Array.from({ length: windowDays }, (_, i) => {
+      const day = toDayKeyUtc(addUtcDays(start, i));
+      const kwh = baselineKwhPerDay;
+      return { day, kwh: Number(kwh.toFixed(3)), costEur: Number((kwh * price).toFixed(2)) };
+    });
+
+    const thisTotalKwh = daily.reduce((acc, x) => acc + x.kwh, 0);
+    const thisTotalCostEur = daily.reduce((acc, x) => acc + x.costEur, 0);
+
+    return res.json({
+      customerId,
+      applianceId: 1,
+      name: 'Consumo base (stand-by)',
+      lastUpdated: end.toISOString(),
+      days: windowDays,
+      totalKwh: Number(thisTotalKwh.toFixed(3)),
+      totalCostEur: Number(thisTotalCostEur.toFixed(2)),
+      sharePct: 0,
+      daily,
+      tip: 'Stand-by é o consumo de base da casa. Para reduzir: desligue regletas à noite, retire carregadores e reveja equipamentos sempre ligados.'
+    });
+  }
+
+  let inferred:
+    | {
+        appliances: Array<{ id: number; name: string; category: string | null; costEur: number; energyKwh: number; sessions: number; confidence: number }>;
+        sessions: Array<any>;
+      }
+    | null = null;
+
+  try {
+    const fpRows = await c.customerNilmFingerprints
+      .find({ customer_id: customerId }, { projection: { _id: 0 } })
+      .sort({ updated_at: -1 })
+      .limit(250)
+      .toArray();
+
+    const labelRows = await c.customerNilmSessions
+      .find({ customer_id: customerId, label: { $ne: null } }, { projection: { _id: 0, id: 1, label: 1 } })
+      .sort({ updated_at: -1 })
+      .limit(600)
+      .toArray();
+
+    const labelsBySessionId = new Map<string, string | null>();
+    for (const r of labelRows as any[]) labelsBySessionId.set(String(r.id), r.label ? String(r.label) : null);
+
+    const { sessions } = extractNilmSessions15m(points);
+    inferred = inferFromFingerprints({
+      customerId,
+      sessions,
+      priceEurPerKwh: price,
+      knownFingerprints: (fpRows as any[]) as CustomerNilmFingerprintDoc[],
+      maxAppliances: 10,
+      userLabelsBySessionId: labelsBySessionId
+    });
+  } catch {
+    inferred = null;
+  }
+
+  const inferredFinal = (inferred ?? (inferAppliancesFromAggregate({ points, priceEurPerKwh: price, maxAppliances: 6 }) as any)) as {
+    appliances: Array<{ id: number; name: string; category: string | null; costEur: number; energyKwh: number; sessions: number; confidence: number }>;
+    sessions: Array<any>;
+  };
+
+  let appliance = inferredFinal.appliances.find((a) => a.id === applianceId) ?? null;
+  let sessions = inferredFinal.sessions.filter((s) => s.applianceId === applianceId);
 
   // Se o equipamento não aparecer nesta janela (ex.: não foi usado nos últimos 7 dias),
   // ainda assim devolvemos 200 com dados a zero, usando meta inferida numa janela maior.
@@ -1820,18 +2079,45 @@ app.get('/customers/:customerId/appliances/:applianceId/weekly', async (req, res
       .sort({ ts: 1 })
       .toArray();
 
-    const inferred30 = inferAppliancesFromAggregate({
-      points: (tel30 as any[]).map((r) => ({ ts: new Date(r.ts), watts: Number(r.watts ?? 0) })),
-      priceEurPerKwh: price,
-      maxAppliances: 10
-    });
+    const points30 = (tel30 as any[]).map((r) => ({ ts: new Date(r.ts), watts: Number(r.watts ?? 0) }));
 
-    appliance = inferred30.appliances.find((a) => a.id === applianceId) ?? null;
-    sessions = [];
+    let inferred30:
+      | {
+          appliances: Array<{ id: number; name: string; category: string | null; costEur: number; energyKwh: number; sessions: number; confidence: number }>;
+          sessions: Array<any>;
+        }
+      | null = null;
+
+    try {
+      const fpRows = await c.customerNilmFingerprints
+        .find({ customer_id: customerId }, { projection: { _id: 0 } })
+        .sort({ updated_at: -1 })
+        .limit(250)
+        .toArray();
+
+      const { sessions } = extractNilmSessions15m(points30);
+      inferred30 = inferFromFingerprints({
+        customerId,
+        sessions,
+        priceEurPerKwh: price,
+        knownFingerprints: (fpRows as any[]) as CustomerNilmFingerprintDoc[],
+        maxAppliances: 12
+      });
+    } catch {
+      inferred30 = null;
+    }
+
+    const inferred30Final = (inferred30 ?? (inferAppliancesFromAggregate({ points: points30, priceEurPerKwh: price, maxAppliances: 10 }) as any)) as {
+      appliances: Array<{ id: number; name: string; category: string | null; costEur: number; energyKwh: number; sessions: number; confidence: number }>;
+      sessions: Array<any>;
+    };
+
+    appliance = inferred30Final.appliances.find((a: any) => a.id === applianceId) ?? null;
+    sessions = inferred30Final.sessions.filter((s: any) => s.applianceId === applianceId);
   }
 
   if (!appliance) return res.status(404).json({ message: 'Equipamento não encontrado' });
-  const totalCostEur = inferred.appliances.reduce((acc, a) => acc + a.costEur, 0);
+  const totalCostEur = inferredFinal.appliances.reduce((acc, a) => acc + a.costEur, 0);
 
   const dailyByDay = new Map<string, { energyWh: number; costEur: number }>();
   for (const s of sessions) {
@@ -1995,30 +2281,33 @@ app.get('/customers/:customerId/appliances/:applianceId/weekly', async (req, res
     includeTopAppliances30d: false
   });
 
-  const improvedTip = await llmImproveText({
-    kind: 'appliance_weekly_tip',
-    customer: baseContext.customer,
-    context: buildAssistantEnvelope({
-      base: baseContext,
-      extra: {
-        appliance: { id: applianceId, name: appliance.name, category: appliance.category ?? null, standbyWatts },
-        windowDays,
-        totals: {
-          totalKwh: Number(thisTotalKwh.toFixed(3)),
-          totalCostEur: Number(thisTotalCostEur.toFixed(2)),
-          sharePct: Number(sharePct.toFixed(1))
-        },
-        usage: {
-          dominantHourUtc: dominantHour,
-          offpeakPct: Number((offPct * 100).toFixed(0)),
-          peakPct: Number((peakPct * 100).toFixed(0))
-        },
-        daily: daily.map((d) => ({ day: d.day, kwh: d.kwh }))
-      }
+  const improvedTip = await Promise.race([
+    llmImproveText({
+      kind: 'appliance_weekly_tip',
+      customer: baseContext.customer,
+      context: buildAssistantEnvelope({
+        base: baseContext,
+        extra: {
+          appliance: { id: applianceId, name: appliance.name, category: appliance.category ?? null, standbyWatts },
+          windowDays,
+          totals: {
+            totalKwh: Number(thisTotalKwh.toFixed(3)),
+            totalCostEur: Number(thisTotalCostEur.toFixed(2)),
+            sharePct: Number(sharePct.toFixed(1))
+          },
+          usage: {
+            dominantHourUtc: dominantHour,
+            offpeakPct: Number((offPct * 100).toFixed(0)),
+            peakPct: Number((peakPct * 100).toFixed(0))
+          },
+          daily: daily.map((d) => ({ day: d.day, kwh: d.kwh }))
+        }
+      }),
+      draft: tip,
+      maxTokens: 120
     }),
-    draft: tip,
-    maxTokens: 120
-  });
+    new Promise<string | null>((resolve) => setTimeout(() => resolve(null), 1200))
+  ]);
   if (improvedTip) tip = improvedTip;
 
   return res.json({
