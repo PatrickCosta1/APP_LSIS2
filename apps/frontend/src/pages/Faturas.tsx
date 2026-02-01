@@ -84,8 +84,9 @@ export default function Faturas() {
   const [contractHintVisible, setContractHintVisible] = useState(false);
 
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
-  const [pendingFile, setPendingFile] = useState<File | null>(null);
-  const [pendingPreviewUrl, setPendingPreviewUrl] = useState<string | null>(null);
+  const [pendingItems, setPendingItems] = useState<
+    Array<{ id: string; file: File; kind: 'image' | 'pdf' | 'other'; previewUrl: string | null }>
+  >([]);
   const [cameraMode, setCameraMode] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
 
@@ -103,13 +104,43 @@ export default function Faturas() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
 
-  const pendingKind = useMemo(() => {
-    if (!pendingFile) return null;
-    const type = pendingFile.type || '';
-    if (type.startsWith('image/')) return 'image' as const;
-    if (type === 'application/pdf' || pendingFile.name.toLowerCase().endsWith('.pdf')) return 'pdf' as const;
-    return 'other' as const;
-  }, [pendingFile]);
+  const pendingCount = pendingItems.length;
+
+  const pickKind = (file: File): 'image' | 'pdf' | 'other' => {
+    const type = file.type || '';
+    if (type.startsWith('image/')) return 'image';
+    if (type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) return 'pdf';
+    return 'other';
+  };
+
+  const newPendingId = () => `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+
+  const addPickedFiles = (files: File[]) => {
+    if (!files.length) return;
+    setPendingItems((prev) => {
+      const next = [...prev];
+      for (const f of files) {
+        const kind = pickKind(f);
+        const previewUrl = kind === 'image' ? URL.createObjectURL(f) : null;
+        next.push({ id: newPendingId(), file: f, kind, previewUrl });
+      }
+      return next;
+    });
+  };
+
+  const removePendingItem = (id: string) => {
+    setPendingItems((prev) => {
+      const found = prev.find((p) => p.id === id);
+      if (found?.previewUrl) {
+        try {
+          URL.revokeObjectURL(found.previewUrl);
+        } catch {
+          // ignore
+        }
+      }
+      return prev.filter((p) => p.id !== id);
+    });
+  };
 
   const canLiveCamera = useMemo(() => {
     try {
@@ -245,20 +276,20 @@ export default function Faturas() {
     stopCamera();
     setCameraMode(false);
     setCameraError(null);
-    setPendingFile(null);
+    setPendingItems((prev) => {
+      for (const p of prev) {
+        if (p.previewUrl) {
+          try {
+            URL.revokeObjectURL(p.previewUrl);
+          } catch {
+            // ignore
+          }
+        }
+      }
+      return [];
+    });
     setUploadModalOpen(false);
   };
-
-  useEffect(() => {
-    if (!pendingPreviewUrl) return;
-    return () => {
-      try {
-        URL.revokeObjectURL(pendingPreviewUrl);
-      } catch {
-        // ignore
-      }
-    };
-  }, [pendingPreviewUrl]);
 
   useEffect(() => {
     if (!viewerUrl) return;
@@ -288,31 +319,27 @@ export default function Faturas() {
       stopCamera();
       setCameraMode(false);
       setCameraError(null);
-      setPendingFile(null);
-      if (pendingPreviewUrl) setPendingPreviewUrl(null);
+      setPendingItems((prev) => {
+        for (const p of prev) {
+          if (p.previewUrl) {
+            try {
+              URL.revokeObjectURL(p.previewUrl);
+            } catch {
+              // ignore
+            }
+          }
+        }
+        return [];
+      });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uploadModalOpen]);
 
   const handleUploadClick = () => {
     setUploadModalOpen(true);
-    setPendingFile(null);
+    setPendingItems([]);
     setCameraMode(false);
     setCameraError(null);
-    if (pendingPreviewUrl) setPendingPreviewUrl(null);
-  };
-
-  const onPickedFile = (file: File) => {
-    if (pendingPreviewUrl) {
-      try {
-        URL.revokeObjectURL(pendingPreviewUrl);
-      } catch {
-        // ignore
-      }
-    }
-    setPendingFile(file);
-    if (file.type.startsWith('image/')) setPendingPreviewUrl(URL.createObjectURL(file));
-    else setPendingPreviewUrl(null);
   };
 
   const startCamera = async () => {
@@ -359,14 +386,16 @@ export default function Faturas() {
 
     const stamp = new Date().toISOString().slice(0, 10);
     const file = new File([blob], `fatura_${stamp}.jpg`, { type: 'image/jpeg' });
+    addPickedFiles([file]);
+  };
+
+  const finishCamera = () => {
     stopCamera();
     setCameraMode(false);
-    onPickedFile(file);
   };
 
   const confirmUpload = async () => {
-    const file = pendingFile;
-    if (!file) return;
+    if (!pendingItems.length) return;
     if (!apiBase || !customerId) return;
 
     try {
@@ -374,7 +403,9 @@ export default function Faturas() {
       const token = localStorage.getItem('kynex:authToken');
 
       const form = new FormData();
-      form.append('file', file);
+      for (const item of pendingItems) {
+        form.append('files', item.file);
+      }
 
       const res = await fetch(`${apiBase}/customers/${customerId}/invoices`, {
         method: 'POST',
@@ -634,11 +665,12 @@ export default function Faturas() {
                   ref={fileInputRef}
                   type="file"
                   accept=".pdf,image/*"
+                  multiple
                   style={{ display: 'none' }}
                   onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (!file) return;
-                    onPickedFile(file);
+                    const files = Array.from(e.target.files ?? []);
+                    if (!files.length) return;
+                    addPickedFiles(files);
                     e.currentTarget.value = '';
                   }}
                 />
@@ -648,16 +680,17 @@ export default function Faturas() {
                   type="file"
                   accept="image/*"
                   capture="environment"
+                  multiple
                   style={{ display: 'none' }}
                   onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (!file) return;
-                    onPickedFile(file);
+                    const files = Array.from(e.target.files ?? []);
+                    if (!files.length) return;
+                    addPickedFiles(files);
                     e.currentTarget.value = '';
                   }}
                 />
 
-                {!pendingFile && !cameraMode && (
+                {!pendingCount && !cameraMode && (
                   <div className="invoice-upload-actions">
                     <button type="button" className="invoice-upload-btn primary" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
                       <IconDocument />
@@ -683,9 +716,23 @@ export default function Faturas() {
                   <div className="invoice-camera">
                     <video ref={videoRef} className="invoice-camera-video" playsInline muted />
                     <canvas ref={canvasRef} style={{ display: 'none' }} />
+                    {pendingCount > 0 && (
+                      <div style={{ marginTop: 10, color: 'rgba(255,255,255,0.75)', fontSize: 13, textAlign: 'center' }}>
+                        Capturadas: {pendingCount}
+                      </div>
+                    )}
                     <div className="invoice-upload-footer">
                       <button type="button" className="invoice-upload-footer-btn" onClick={() => (!uploading ? closeUploadModal() : undefined)} disabled={uploading}>
                         Cancelar
+                      </button>
+                      <button
+                        type="button"
+                        className="invoice-upload-footer-btn"
+                        onClick={finishCamera}
+                        disabled={uploading}
+                        title={pendingCount ? 'Voltar ao preview' : 'Sair da câmara'}
+                      >
+                        Concluir
                       </button>
                       <button type="button" className="invoice-upload-footer-btn primary" onClick={captureFromCamera} disabled={uploading}>
                         Capturar
@@ -695,33 +742,84 @@ export default function Faturas() {
                   </div>
                 )}
 
-                {pendingFile && !cameraMode && (
+                {pendingCount > 0 && !cameraMode && (
                   <div className="invoice-upload-preview">
-                    {pendingKind === 'image' && pendingPreviewUrl && (
-                      <img className="invoice-preview-img" src={pendingPreviewUrl} alt="Pré-visualização da fatura" />
-                    )}
-                    {pendingKind !== 'image' && (
-                      <div className="invoice-preview-file">
-                        <div className="invoice-preview-file-icon">
-                          <IconDocument />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10 }}>
+                      <div style={{ fontWeight: 800, fontSize: 14 }}>Anexos ({pendingCount})</div>
+                      <button
+                        type="button"
+                        className="invoice-upload-footer-btn"
+                        style={{ padding: '6px 10px' }}
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={uploading}
+                      >
+                        Adicionar mais
+                      </button>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
+                      {pendingItems.map((p) => (
+                        <div
+                          key={p.id}
+                          style={{
+                            border: '1px solid rgba(255,255,255,0.12)',
+                            borderRadius: 12,
+                            overflow: 'hidden',
+                            background: 'rgba(255,255,255,0.04)'
+                          }}
+                        >
+                          <div style={{ position: 'relative' }}>
+                            {p.kind === 'image' && p.previewUrl ? (
+                              <img
+                                src={p.previewUrl}
+                                alt={p.file.name}
+                                style={{ width: '100%', height: 120, objectFit: 'cover', display: 'block' }}
+                              />
+                            ) : (
+                              <div style={{ height: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.9 }}>
+                                <IconDocument />
+                              </div>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => removePendingItem(p.id)}
+                              disabled={uploading}
+                              aria-label="Remover anexo"
+                              title="Remover"
+                              style={{
+                                position: 'absolute',
+                                top: 8,
+                                right: 8,
+                                width: 28,
+                                height: 28,
+                                borderRadius: 999,
+                                border: '1px solid rgba(255,255,255,0.22)',
+                                background: 'rgba(0,0,0,0.45)',
+                                color: '#fff',
+                                cursor: 'pointer',
+                                fontWeight: 800,
+                                lineHeight: '26px'
+                              }}
+                            >
+                              ×
+                            </button>
+                          </div>
+                          <div style={{ padding: '8px 10px', fontSize: 12, opacity: 0.85 }} title={p.file.name}>
+                            {p.file.name}
+                          </div>
                         </div>
-                        <div className="invoice-preview-file-name" title={pendingFile.name}>
-                          {pendingFile.name}
-                        </div>
-                      </div>
-                    )}
+                      ))}
+                    </div>
+
                     <div className="invoice-upload-footer">
                       <button type="button" className="invoice-upload-footer-btn" onClick={() => (!uploading ? closeUploadModal() : undefined)} disabled={uploading}>
                         Cancelar
-                      </button>
-                      <button type="button" className="invoice-upload-footer-btn" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
-                        Trocar
                       </button>
                       <button
                         type="button"
                         className="invoice-upload-footer-btn primary"
                         onClick={confirmUpload}
-                        disabled={uploading || !apiBase || !customerId}
+                        disabled={uploading || !apiBase || !customerId || pendingCount === 0}
                         title={!apiBase || !customerId ? 'Sem ligação ao servidor' : undefined}
                       >
                         {uploading ? 'A enviar…' : 'Confirmar'}

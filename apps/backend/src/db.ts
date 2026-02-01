@@ -90,6 +90,9 @@ export type CustomerInvoiceDoc = {
   // Bytes do ficheiro original (PDF/Imagem). Pode não existir em faturas antigas.
   file_bytes?: Buffer;
 
+  // Opcional: múltiplos anexos (ex: várias fotos para páginas diferentes)
+  files?: Array<{ filename: string; mime_type: string; size_bytes: number; file_bytes: Buffer }>;
+
   // Flag leve para UI (evita carregar file_bytes só para listar)
   file_present?: boolean;
 
@@ -100,6 +103,7 @@ export type CustomerInvoiceDoc = {
 
   // Campos relevantes (o que o utilizador pediu)
   valor_pagar_eur?: number;
+  consumption_kwh_period?: number;
   potencia_contratada_kva?: number;
   termo_energia_eur?: number;
   termo_potencia_eur?: number;

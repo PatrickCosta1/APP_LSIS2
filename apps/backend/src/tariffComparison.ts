@@ -38,6 +38,49 @@ function round2(n: number) {
   return Math.round(n * 100) / 100;
 }
 
+function normalizeProviderName(raw: unknown) {
+  const s = String(raw ?? '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ');
+  if (!s) return '';
+  // Códigos/abreviações comuns no dataset
+  if (s === 'gold') return 'goldenergy';
+  if (s === 'edpc') return 'edp';
+  if (s.includes('iberdrola')) return 'iberdrola';
+  if (s.includes('endesa')) return 'endesa';
+  if (s.includes('gold')) return 'goldenergy';
+  if (s.includes('su') && s.includes('eletric')) return 'su eletricidade';
+  if (s.includes('edp')) return 'edp';
+  return s;
+}
+
+function providerDisplayName(raw: unknown) {
+  const n = normalizeProviderName(raw);
+  if (n === 'endesa') return 'Endesa';
+  if (n === 'iberdrola') return 'Iberdrola';
+  if (n === 'goldenergy') return 'Goldenergy';
+  if (n === 'edp') return 'EDP';
+  if (n === 'su eletricidade') return 'SU Eletricidade';
+  return String(raw ?? 'Desconhecido').trim() || 'Desconhecido';
+}
+
+function fixMojibake(raw: unknown) {
+  const s = String(raw ?? '').trim();
+  if (!s) return '';
+  // Se vier com "Ã"/"Â" etc, provavelmente UTF-8 lido como latin1
+  if (/[ÃÂ]/.test(s)) {
+    try {
+      return Buffer.from(s, 'latin1').toString('utf8');
+    } catch {
+      return s;
+    }
+  }
+  return s;
+}
+
 /**
  * Estima o consumo anual em kWh baseado em dados de telemetria.
  * 
@@ -229,12 +272,16 @@ export async function compareWithErseTariffs(opts: {
     )
     .toArray();
 
+  // Filtrar para apenas os comercializadores pedidos
+  const allowedProviders = new Set(['endesa', 'iberdrola', 'goldenergy', 'edp', 'su eletricidade']);
+  const filteredTariffs = tariffs.filter((t: any) => allowedProviders.has(normalizeProviderName(t?.comercializador)));
+
   const minPrice = Number(process.env.KYNEX_ERSE_MIN_PRICE ?? 0.01);
   
-  const ranked = tariffs
+  const ranked = filteredTariffs
     .map((t: any) => {
-      const comercializador = String(t.comercializador ?? 'Desconhecido').trim() || 'Desconhecido';
-      const nomeProposta = String(t.nome_proposta ?? 'Proposta').trim() || 'Proposta';
+      const comercializador = providerDisplayName(t.comercializador);
+      const nomeProposta = fixMojibake(t.nome_proposta) || 'Proposta';
 
       const kwhEur = toNumberPt(t.price_kwh_eur);
       const fixedEur = toNumberPt(t.fixed_daily_fee_eur);
@@ -290,7 +337,7 @@ export async function compareWithErseTariffs(opts: {
       consumptionMethod: consumptionResult.method,
       telemetryPoints: consumptionResult.debugInfo?.points ?? 0,
       telemetryDays: consumptionResult.debugInfo?.distinctDays ?? 0,
-      tariffsFound: tariffs.length,
+      tariffsFound: filteredTariffs.length,
       currentPriceHasIva: currentPricesIncludeIva,
       ersePricesHaveIva: ersePricesIncludeIva,
     }

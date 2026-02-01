@@ -15,7 +15,7 @@ import { llmImproveText } from './llm/assistantText';
 import { buildAssistantBaseContext, buildAssistantEnvelope } from './assistantContext';
 import { inferAppliancesFromAggregate } from './nilmInfer';
 import { extractNilmSessions15m, inferFromFingerprints, type CustomerNilmFingerprintDoc } from './nilmService';
-import { extractInvoiceFromFile, newInvoiceId } from './invoiceEngine';
+import { extractInvoiceFromFile, extractInvoiceFromFiles, newInvoiceId } from './invoiceEngine';
 import { compareWithErseTariffs } from './tariffComparison';
 import { isShellyMqttConfigured, shellySwitchGetStatus, shellySwitchSet } from './shellyMqtt';
 import { forecastMonth } from './forecastService';
@@ -3020,13 +3020,14 @@ app.get('/customers/:customerId/invoices/:invoiceId/file', async (req, res) => {
         _id: 0,
         filename: 1,
         mime_type: 1,
-        file_bytes: 1
+        file_bytes: 1,
+        files: 1
       }
     }
   );
   if (!row) return res.status(404).json({ message: 'Fatura não encontrada' });
 
-  const raw = (row as any).file_bytes as any;
+  const raw = ((row as any).file_bytes ?? (row as any)?.files?.[0]?.file_bytes) as any;
   let bytes: Buffer | null = null;
 
   if (Buffer.isBuffer(raw)) {
@@ -3069,10 +3070,32 @@ app.get('/customers/:customerId/invoices/:invoiceId/file', async (req, res) => {
   return res.status(200).send(bytes);
 });
 
-app.post('/customers/:customerId/invoices', invoiceUpload.single('file'), async (req, res) => {
+app.post(
+  '/customers/:customerId/invoices',
+  invoiceUpload.fields([
+    { name: 'file', maxCount: 1 },
+    { name: 'files', maxCount: 10 }
+  ]),
+  async (req, res) => {
   const { customerId } = req.params;
-  const file = (req as any).file as { originalname: string; mimetype: string; buffer: Buffer; size: number } | undefined;
-  if (!file) return res.status(400).json({ message: 'Ficheiro em falta (campo multipart: file)' });
+
+  type MulterFile = { originalname: string; mimetype: string; buffer: Buffer; size: number; fieldname?: string };
+  const anyReq = req as any;
+
+  const collected: MulterFile[] = [];
+  if (anyReq?.file) collected.push(anyReq.file as MulterFile);
+  const fobj = anyReq?.files;
+  if (Array.isArray(fobj)) {
+    collected.push(...(fobj as MulterFile[]));
+  } else if (fobj && typeof fobj === 'object') {
+    const maybeFiles = ([] as MulterFile[])
+      .concat(Array.isArray((fobj as any).files) ? (fobj as any).files : [])
+      .concat(Array.isArray((fobj as any).file) ? (fobj as any).file : []);
+    collected.push(...maybeFiles);
+  }
+
+  const files = collected.filter((f) => f && Buffer.isBuffer(f.buffer) && f.buffer.length > 0);
+  if (!files.length) return res.status(400).json({ message: 'Ficheiro(s) em falta (campo multipart: files)' });
 
   const c = await collections();
   const customer = await c.customers.findOne(
@@ -3082,11 +3105,16 @@ app.post('/customers/:customerId/invoices', invoiceUpload.single('file'), async 
   if (!customer) return res.status(404).json({ message: 'Cliente não encontrado' });
 
 
-  const extracted = await extractInvoiceFromFile({
-    buffer: file.buffer,
-    filename: file.originalname,
-    mimeType: file.mimetype
-  });
+  const extracted =
+    files.length === 1
+      ? await extractInvoiceFromFile({
+          buffer: files[0].buffer,
+          filename: files[0].originalname,
+          mimeType: files[0].mimetype
+        })
+      : await extractInvoiceFromFiles({
+          files: files.map((f) => ({ buffer: f.buffer, filename: f.originalname, mimeType: f.mimetype }))
+        });
 
   // DEBUG: Printar todos os dados extraídos da fatura
   try {
@@ -3103,6 +3131,10 @@ app.post('/customers/:customerId/invoices', invoiceUpload.single('file'), async 
 
   const invoiceId = newInvoiceId();
   const uploadedAt = new Date();
+
+  const totalSizeBytes = files.reduce((acc, f) => acc + Number(f.size ?? 0), 0);
+  const storedFilename = files.length === 1 ? files[0].originalname : `Fatura (${files.length} anexos)`;
+  const storedMime = files.length === 1 ? files[0].mimetype : String(files[0].mimetype ?? 'application/octet-stream');
 
   const contractedPowerKva = extracted.potenciaContratadaKva ?? (customer as any).contracted_power_kva ?? null;
   const currentPriceKwh = extracted.priceKwhEur ?? (customer as any).price_eur_per_kwh ?? null;
@@ -3175,15 +3207,20 @@ app.post('/customers/:customerId/invoices', invoiceUpload.single('file'), async 
   await c.customerInvoices.insertOne({
     id: invoiceId,
     customer_id: customerId,
-    filename: file.originalname,
-    mime_type: file.mimetype,
-    size_bytes: file.size,
+    filename: storedFilename,
+    mime_type: storedMime,
+    size_bytes: totalSizeBytes,
     uploaded_at: uploadedAt,
-    file_bytes: file.buffer,
+    file_bytes: files[0].buffer,
     file_present: true,
+    files:
+      files.length > 1
+        ? files.map((f) => ({ filename: f.originalname, mime_type: f.mimetype, size_bytes: f.size, file_bytes: f.buffer }))
+        : undefined,
     utility_guess: extracted.utilityGuess ?? undefined,
     extracted_text: extractedText,
     valor_pagar_eur: extracted.valorPagarEur ?? undefined,
+    consumption_kwh_period: extracted.consumptionKwhPeriod ?? undefined,
     potencia_contratada_kva: extracted.potenciaContratadaKva ?? undefined,
     termo_energia_eur: extracted.termoEnergiaEur ?? undefined,
     termo_potencia_eur: extracted.termoPotenciaEur ?? undefined,
@@ -3195,9 +3232,11 @@ app.post('/customers/:customerId/invoices', invoiceUpload.single('file'), async 
   return res.status(201).json({
     id: invoiceId,
     uploadedAt: uploadedAt.toISOString(),
+    filesCount: files.length,
     customerUpdated: Object.keys(customerUpdates).length ? customerUpdates : null,
     extracted: {
       valorPagarEur: extracted.valorPagarEur,
+      consumptionKwhPeriod: extracted.consumptionKwhPeriod,
       potenciaContratadaKva: extracted.potenciaContratadaKva,
       termoEnergiaEur: extracted.termoEnergiaEur,
       termoPotenciaEur: extracted.termoPotenciaEur,
@@ -3207,7 +3246,8 @@ app.post('/customers/:customerId/invoices', invoiceUpload.single('file'), async 
     },
     analysis
   });
-});
+}
+);
 
 app.get('/customers/:customerId/market/offers', async (req, res) => {
   const { customerId } = req.params;

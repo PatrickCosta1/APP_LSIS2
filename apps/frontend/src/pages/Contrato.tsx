@@ -69,7 +69,8 @@ function formatPtDateTime(iso: string) {
     month: '2-digit',
     year: 'numeric',
     hour: '2-digit',
-    minute: '2-digit'
+    minute: '2-digit',
+    timeZone: 'Europe/Lisbon'
   }).format(d);
 }
 
@@ -105,6 +106,20 @@ function pickUtilityLogo(utility: string) {
   if (u.includes('edp')) return logoEdp;
   if (u.includes('su')) return logoSU;
   return logoImg;
+}
+
+function displayProviderName(raw: string) {
+  const s = String(raw ?? '').trim();
+  const u = s.toLowerCase();
+  if (!u) return '—';
+  if (u === 'gold') return 'Goldenergy';
+  if (u === 'edpc') return 'EDP';
+  if (u.includes('gold')) return 'Goldenergy';
+  if (u.includes('iberdrola')) return 'Iberdrola';
+  if (u.includes('endesa')) return 'Endesa';
+  if (u.includes('su')) return 'SU Eletricidade';
+  if (u.includes('edp')) return 'EDP';
+  return s;
 }
 
 export default function Contrato() {
@@ -390,7 +405,7 @@ export default function Contrato() {
                       </div>
                       {hasPositiveSavings ? (
                         <div className="market-best-offer">
-                          Melhor opção: <strong>{bestOffer.comercializador}</strong>
+                          Melhor opção: <strong>{displayProviderName(bestOffer.comercializador)}</strong>
                         </div>
                       ) : null}
                     </div>
@@ -404,7 +419,7 @@ export default function Contrato() {
                           return (
                             <div className="market-offer-row" key={`${o.comercializador}-${o.nome_proposta}-${idx}`}>
                               <div className="market-offer-main">
-                                <div className="market-offer-provider">{o.comercializador}</div>
+                                <div className="market-offer-provider">{displayProviderName(o.comercializador)}</div>
                                 <div className="market-offer-name">{o.nome_proposta}</div>
                               </div>
                               <div className={`market-offer-savings ${cls}`}>{s !== null ? `${fmtEurSigned0(s)} / ano` : '—'}</div>
