@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import logoImg from '../assets/images/logo2.png';
 import SettingsDrawer from '../components/SettingsDrawer';
 import './Faturas.css';
@@ -29,6 +29,15 @@ function IconDocument() {
       <line x1="16" y1="13" x2="8" y2="13" />
       <line x1="16" y1="17" x2="8" y2="17" />
       <line x1="10" y1="9" x2="8" y2="9" />
+    </svg>
+  );
+}
+
+function IconCamera() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h3l2-3h8l2 3h3a2 2 0 0 1 2 2z" />
+      <circle cx="12" cy="13" r="4" />
     </svg>
   );
 }
@@ -71,6 +80,26 @@ export default function Faturas() {
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [contractHintVisible, setContractHintVisible] = useState(false);
+
+  const [uploadModalOpen, setUploadModalOpen] = useState(false);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [pendingPreviewUrl, setPendingPreviewUrl] = useState<string | null>(null);
+  const [cameraMode, setCameraMode] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const cameraCaptureInputRef = useRef<HTMLInputElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
+
+  const pendingKind = useMemo(() => {
+    if (!pendingFile) return null;
+    const type = pendingFile.type || '';
+    if (type.startsWith('image/')) return 'image' as const;
+    if (type === 'application/pdf' || pendingFile.name.toLowerCase().endsWith('.pdf')) return 'pdf' as const;
+    return 'other' as const;
+  }, [pendingFile]);
 
   useEffect(() => {
     try {
@@ -171,52 +200,154 @@ export default function Faturas() {
     }
   }, [settingsOpen]);
 
-  const handleUploadClick = () => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.pdf,image/*';
-    input.onchange = async (e) => {
-      const file = (e.target as HTMLInputElement).files?.[0];
-      if (!file) return;
-      if (!apiBase || !customerId) return;
+  const stopCamera = () => {
+    const s = cameraStreamRef.current;
+    if (s) {
+      for (const track of s.getTracks()) track.stop();
+    }
+    cameraStreamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+  };
 
+  const closeUploadModal = () => {
+    stopCamera();
+    setCameraMode(false);
+    setCameraError(null);
+    setPendingFile(null);
+    setUploadModalOpen(false);
+  };
+
+  useEffect(() => {
+    if (!pendingPreviewUrl) return;
+    return () => {
       try {
-        setUploading(true);
-        const token = localStorage.getItem('kynex:authToken');
-
-        const form = new FormData();
-        form.append('file', file);
-
-        const res = await fetch(`${apiBase}/customers/${customerId}/invoices`, {
-          method: 'POST',
-          body: form,
-          headers: token ? { Authorization: `Bearer ${token}` } : undefined
-        });
-        if (!res.ok) throw new Error('upload');
-
-        // marca hint para a página Contrato
-        try {
-          localStorage.setItem('kynex:contractAnalysisHint', '1');
-          setContractHintVisible(true);
-        } catch {
-          // ignore
-        }
-
-        // recarrega lista
-        const listRes = await fetch(`${apiBase}/customers/${customerId}/invoices`, {
-          headers: token ? { Authorization: `Bearer ${token}` } : undefined
-        });
-        if (listRes.ok) {
-          const json = (await listRes.json()) as { items: Invoice[] };
-          setInvoices(Array.isArray(json.items) ? json.items : []);
-        }
-      } catch (err) {
-        console.error('Upload failed:', err);
-      } finally {
-        setUploading(false);
+        URL.revokeObjectURL(pendingPreviewUrl);
+      } catch {
+        // ignore
       }
     };
-    input.click();
+  }, [pendingPreviewUrl]);
+
+  useEffect(() => {
+    if (!uploadModalOpen) {
+      stopCamera();
+      setCameraMode(false);
+      setCameraError(null);
+      setPendingFile(null);
+      if (pendingPreviewUrl) setPendingPreviewUrl(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uploadModalOpen]);
+
+  const handleUploadClick = () => {
+    setUploadModalOpen(true);
+    setPendingFile(null);
+    setCameraMode(false);
+    setCameraError(null);
+    if (pendingPreviewUrl) setPendingPreviewUrl(null);
+  };
+
+  const onPickedFile = (file: File) => {
+    if (pendingPreviewUrl) {
+      try {
+        URL.revokeObjectURL(pendingPreviewUrl);
+      } catch {
+        // ignore
+      }
+    }
+    setPendingFile(file);
+    if (file.type.startsWith('image/')) setPendingPreviewUrl(URL.createObjectURL(file));
+    else setPendingPreviewUrl(null);
+  };
+
+  const startCamera = async () => {
+    setCameraError(null);
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setCameraError('O seu dispositivo/navegador não suporta acesso à câmara.');
+      cameraCaptureInputRef.current?.click();
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+      cameraStreamRef.current = stream;
+      setCameraMode(true);
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+    } catch (e) {
+      console.error('Camera error:', e);
+      setCameraError('Não foi possível aceder à câmara. Verifique permissões.');
+      cameraCaptureInputRef.current?.click();
+    }
+  };
+
+  const captureFromCamera = async () => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) return;
+
+    const w = Math.max(1, video.videoWidth || 0);
+    const h = Math.max(1, video.videoHeight || 0);
+    if (!w || !h) return;
+
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, w, h);
+
+    const blob: Blob | null = await new Promise((resolve) => canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.9));
+    if (!blob) return;
+
+    const stamp = new Date().toISOString().slice(0, 10);
+    const file = new File([blob], `fatura_${stamp}.jpg`, { type: 'image/jpeg' });
+    stopCamera();
+    setCameraMode(false);
+    onPickedFile(file);
+  };
+
+  const confirmUpload = async () => {
+    const file = pendingFile;
+    if (!file) return;
+    if (!apiBase || !customerId) return;
+
+    try {
+      setUploading(true);
+      const token = localStorage.getItem('kynex:authToken');
+
+      const form = new FormData();
+      form.append('file', file);
+
+      const res = await fetch(`${apiBase}/customers/${customerId}/invoices`, {
+        method: 'POST',
+        body: form,
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined
+      });
+      if (!res.ok) throw new Error('upload');
+
+      try {
+        localStorage.setItem('kynex:contractAnalysisHint', '1');
+        setContractHintVisible(true);
+      } catch {
+        // ignore
+      }
+
+      const listRes = await fetch(`${apiBase}/customers/${customerId}/invoices`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined
+      });
+      if (listRes.ok) {
+        const json = (await listRes.json()) as { items: Invoice[] };
+        setInvoices(Array.isArray(json.items) ? json.items : []);
+      }
+
+      setUploadModalOpen(false);
+    } catch (err) {
+      console.error('Upload failed:', err);
+    } finally {
+      setUploading(false);
+    }
   };
 
   const getStatusBadgeClass = (invoice: Invoice) => {
@@ -338,6 +469,108 @@ export default function Faturas() {
               <div className="upload-sub-text">{uploading ? 'A enviar…' : 'PDF ou Imagem'}</div>
             </div>
           </div>
+
+          {uploadModalOpen && (
+            <div className="invoice-upload-modal" role="dialog" aria-modal="true" aria-label="Carregar nova fatura">
+              <div className="invoice-upload-backdrop" onClick={() => (!uploading ? closeUploadModal() : undefined)} />
+              <div className="invoice-upload-card">
+                <div className="invoice-upload-title">Carregar nova fatura</div>
+                <div className="invoice-upload-subtitle">Escolha um PDF, uma imagem, ou tire uma foto agora.</div>
+
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".pdf,image/*"
+                  style={{ display: 'none' }}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    onPickedFile(file);
+                    e.currentTarget.value = '';
+                  }}
+                />
+
+                <input
+                  ref={cameraCaptureInputRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  style={{ display: 'none' }}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    onPickedFile(file);
+                    e.currentTarget.value = '';
+                  }}
+                />
+
+                {!pendingFile && !cameraMode && (
+                  <div className="invoice-upload-actions">
+                    <button type="button" className="invoice-upload-btn primary" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
+                      <IconDocument />
+                      <span>Escolher PDF/Imagem</span>
+                    </button>
+                    <button type="button" className="invoice-upload-btn" onClick={startCamera} disabled={uploading}>
+                      <IconCamera />
+                      <span>Tirar foto</span>
+                    </button>
+                    {cameraError && <div className="invoice-upload-error">{cameraError}</div>}
+                  </div>
+                )}
+
+                {cameraMode && (
+                  <div className="invoice-camera">
+                    <video ref={videoRef} className="invoice-camera-video" playsInline muted />
+                    <canvas ref={canvasRef} style={{ display: 'none' }} />
+                    <div className="invoice-upload-footer">
+                      <button type="button" className="invoice-upload-footer-btn" onClick={() => (!uploading ? closeUploadModal() : undefined)} disabled={uploading}>
+                        Cancelar
+                      </button>
+                      <button type="button" className="invoice-upload-footer-btn primary" onClick={captureFromCamera} disabled={uploading}>
+                        Capturar
+                      </button>
+                    </div>
+                    {cameraError && <div className="invoice-upload-error">{cameraError}</div>}
+                  </div>
+                )}
+
+                {pendingFile && !cameraMode && (
+                  <div className="invoice-upload-preview">
+                    {pendingKind === 'image' && pendingPreviewUrl && (
+                      <img className="invoice-preview-img" src={pendingPreviewUrl} alt="Pré-visualização da fatura" />
+                    )}
+                    {pendingKind !== 'image' && (
+                      <div className="invoice-preview-file">
+                        <div className="invoice-preview-file-icon">
+                          <IconDocument />
+                        </div>
+                        <div className="invoice-preview-file-name" title={pendingFile.name}>
+                          {pendingFile.name}
+                        </div>
+                      </div>
+                    )}
+                    <div className="invoice-upload-footer">
+                      <button type="button" className="invoice-upload-footer-btn" onClick={() => (!uploading ? closeUploadModal() : undefined)} disabled={uploading}>
+                        Cancelar
+                      </button>
+                      <button type="button" className="invoice-upload-footer-btn" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
+                        Trocar
+                      </button>
+                      <button
+                        type="button"
+                        className="invoice-upload-footer-btn primary"
+                        onClick={confirmUpload}
+                        disabled={uploading || !apiBase || !customerId}
+                        title={!apiBase || !customerId ? 'Sem ligação ao servidor' : undefined}
+                      >
+                        {uploading ? 'A enviar…' : 'Confirmar'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Lista de Histórico */}
           <div className="invoices-section">
