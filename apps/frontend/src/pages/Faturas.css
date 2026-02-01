@@ -592,3 +592,91 @@
   background: rgba(0, 0, 0, 0.25);
   object-fit: cover;
 }
+
+/* ===== Viewer ===== */
+.invoice-viewer-card {
+  position: relative;
+  width: min(860px, calc(100vw - 32px));
+  height: min(86vh, 720px);
+  background: rgba(18, 24, 36, 0.98);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 18px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
+}
+
+.invoice-viewer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.invoice-viewer-title {
+  color: #fff;
+  font-weight: 900;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.invoice-viewer-close {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.95);
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.invoice-viewer-loading {
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 13px;
+}
+
+.invoice-viewer-media {
+  width: 100%;
+  flex: 1;
+  object-fit: contain;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.invoice-viewer-iframe {
+  width: 100%;
+  flex: 1;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.invoice-viewer-text {
+  width: 100%;
+  flex: 1;
+  overflow: auto;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Permitir <a> no footer com estilo de botão */
+.invoice-upload-footer a.invoice-upload-footer-btn {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}

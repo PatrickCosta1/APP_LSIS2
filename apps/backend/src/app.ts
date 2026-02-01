@@ -2928,6 +2928,7 @@ app.get('/customers/:customerId/invoices', async (req, res) => {
           mime_type: 1,
           size_bytes: 1,
           uploaded_at: 1,
+          file_present: 1,
           utility_guess: 1,
           extracted_text: 1,
           valor_pagar_eur: 1,
@@ -2987,6 +2988,7 @@ app.get('/customers/:customerId/invoices/:invoiceId', async (req, res) => {
         mime_type: 1,
         size_bytes: 1,
         uploaded_at: 1,
+        file_present: 1,
         utility_guess: 1,
         extracted_text: 1,
         valor_pagar_eur: 1,
@@ -3005,6 +3007,66 @@ app.get('/customers/:customerId/invoices/:invoiceId', async (req, res) => {
     ...row,
     uploaded_at: row.uploaded_at.toISOString()
   });
+});
+
+app.get('/customers/:customerId/invoices/:invoiceId/file', async (req, res) => {
+  const { customerId, invoiceId } = req.params;
+  const c = await collections();
+
+  const row = await c.customerInvoices.findOne(
+    { customer_id: customerId, id: invoiceId },
+    {
+      projection: {
+        _id: 0,
+        filename: 1,
+        mime_type: 1,
+        file_bytes: 1
+      }
+    }
+  );
+  if (!row) return res.status(404).json({ message: 'Fatura não encontrada' });
+
+  const raw = (row as any).file_bytes as any;
+  let bytes: Buffer | null = null;
+
+  if (Buffer.isBuffer(raw)) {
+    bytes = raw;
+  } else if (raw && typeof raw === 'object') {
+    // mongodb Binary tem normalmente value(true) -> Buffer
+    if (typeof raw.value === 'function') {
+      try {
+        const v = raw.value(true);
+        if (Buffer.isBuffer(v)) bytes = v;
+      } catch {
+        // ignore
+      }
+    }
+
+    // fallback: algumas versões expõem .buffer
+    if (!bytes && Buffer.isBuffer(raw.buffer)) bytes = raw.buffer;
+
+    // typed arrays
+    if (!bytes && ArrayBuffer.isView(raw)) {
+      try {
+        bytes = Buffer.from(raw.buffer, raw.byteOffset, raw.byteLength);
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  if (!bytes || bytes.length === 0) {
+    return res.status(404).json({ message: 'Ficheiro da fatura não disponível' });
+  }
+
+  const filename = String((row as any).filename ?? 'fatura').replace(/[\r\n"]/g, '');
+  const mimeType = String((row as any).mime_type ?? 'application/octet-stream');
+
+  res.setHeader('Content-Type', mimeType);
+  res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+  res.setHeader('Cache-Control', 'private, max-age=0, no-store');
+  res.setHeader('Content-Length', String(bytes.length));
+  return res.status(200).send(bytes);
 });
 
 app.post('/customers/:customerId/invoices', invoiceUpload.single('file'), async (req, res) => {
@@ -3117,6 +3179,8 @@ app.post('/customers/:customerId/invoices', invoiceUpload.single('file'), async 
     mime_type: file.mimetype,
     size_bytes: file.size,
     uploaded_at: uploadedAt,
+    file_bytes: file.buffer,
+    file_present: true,
     utility_guess: extracted.utilityGuess ?? undefined,
     extracted_text: extractedText,
     valor_pagar_eur: extracted.valorPagarEur ?? undefined,

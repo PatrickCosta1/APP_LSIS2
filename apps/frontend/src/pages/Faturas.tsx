@@ -53,6 +53,8 @@ function IconBolt() {
 type Invoice = {
   id: string;
   filename: string;
+  mime_type?: string;
+  file_present?: boolean;
   uploaded_at: string;
   utility_guess?: string;
   valor_pagar_eur?: number;
@@ -86,6 +88,14 @@ export default function Faturas() {
   const [pendingPreviewUrl, setPendingPreviewUrl] = useState<string | null>(null);
   const [cameraMode, setCameraMode] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const [viewerLoading, setViewerLoading] = useState(false);
+  const [viewerError, setViewerError] = useState<string | null>(null);
+  const [viewerUrl, setViewerUrl] = useState<string | null>(null);
+  const [viewerKind, setViewerKind] = useState<'image' | 'pdf' | 'text' | 'other' | null>(null);
+  const [viewerTitle, setViewerTitle] = useState<string>('Fatura');
+  const [viewerText, setViewerText] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cameraCaptureInputRef = useRef<HTMLInputElement | null>(null);
@@ -251,6 +261,17 @@ export default function Faturas() {
   }, [pendingPreviewUrl]);
 
   useEffect(() => {
+    if (!viewerUrl) return;
+    return () => {
+      try {
+        URL.revokeObjectURL(viewerUrl);
+      } catch {
+        // ignore
+      }
+    };
+  }, [viewerUrl]);
+
+  useEffect(() => {
     if (!cameraMode) return;
     const stream = cameraStreamRef.current;
     const video = videoRef.current;
@@ -382,6 +403,103 @@ export default function Faturas() {
       console.error('Upload failed:', err);
     } finally {
       setUploading(false);
+    }
+  };
+
+  const closeViewer = () => {
+    setViewerOpen(false);
+    setViewerLoading(false);
+    setViewerError(null);
+    setViewerKind(null);
+    setViewerTitle('Fatura');
+    setViewerText(null);
+    if (viewerUrl) setViewerUrl(null);
+  };
+
+  const openInvoice = async (invoice: Invoice) => {
+    if (!apiBase || !customerId) return;
+    const token = localStorage.getItem('kynex:authToken');
+
+    setViewerOpen(true);
+    setViewerLoading(true);
+    setViewerError(null);
+    setViewerTitle(invoice.filename || 'Fatura');
+    setViewerKind(null);
+    setViewerText(null);
+    if (viewerUrl) setViewerUrl(null);
+
+    try {
+      if (invoice.file_present === false) {
+        const metaRes = await fetch(`${apiBase}/customers/${customerId}/invoices/${invoice.id}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined
+        });
+        if (metaRes.ok) {
+          const meta = (await metaRes.json()) as any;
+          const extractedText = typeof meta?.extracted_text === 'string' ? meta.extracted_text.trim() : '';
+          if (extractedText) {
+            const blob = new Blob([extractedText], { type: 'text/plain;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            setViewerUrl(url);
+            setViewerKind('text');
+            setViewerText(extractedText);
+            return;
+          }
+        }
+      }
+
+      const res = await fetch(`${apiBase}/customers/${customerId}/invoices/${invoice.id}/file`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined
+      });
+      if (!res.ok) {
+        let msg: string | null = null;
+        try {
+          const ct = (res.headers.get('content-type') || '').toLowerCase();
+          if (ct.includes('application/json')) {
+            const j = (await res.json()) as any;
+            if (j?.message) msg = String(j.message);
+          }
+        } catch {
+          // ignore
+        }
+
+        // Fallback para faturas antigas (sem ficheiro guardado): mostra texto extraído
+        if (res.status === 404) {
+          try {
+            const metaRes = await fetch(`${apiBase}/customers/${customerId}/invoices/${invoice.id}`, {
+              headers: token ? { Authorization: `Bearer ${token}` } : undefined
+            });
+            if (metaRes.ok) {
+              const meta = (await metaRes.json()) as any;
+              const extractedText = typeof meta?.extracted_text === 'string' ? meta.extracted_text.trim() : '';
+              if (extractedText) {
+                const blob = new Blob([extractedText], { type: 'text/plain;charset=utf-8' });
+                const url = URL.createObjectURL(blob);
+                setViewerUrl(url);
+                setViewerKind('text');
+                setViewerText(extractedText);
+                return;
+              }
+            }
+          } catch {
+            // ignore
+          }
+        }
+
+        throw new Error(msg || 'invoice-file');
+      }
+
+      const blob = await res.blob();
+      const ct = (res.headers.get('content-type') || invoice.mime_type || blob.type || '').toLowerCase();
+      const url = URL.createObjectURL(blob);
+      setViewerUrl(url);
+      if (ct.includes('pdf')) setViewerKind('pdf');
+      else if (ct.startsWith('image/')) setViewerKind('image');
+      else setViewerKind('other');
+    } catch (e) {
+      console.error('Error opening invoice:', e);
+      setViewerError('Não foi possível abrir esta fatura (pode ser uma fatura antiga sem ficheiro guardado).');
+    } finally {
+      setViewerLoading(false);
     }
   };
 
@@ -545,17 +663,18 @@ export default function Faturas() {
                       <IconDocument />
                       <span>Escolher PDF/Imagem</span>
                     </button>
-                    {canLiveCamera ? (
-                      <button type="button" className="invoice-upload-btn" onClick={startCamera} disabled={uploading}>
-                        <IconCamera />
-                        <span>Tirar foto</span>
-                      </button>
-                    ) : isLikelyMobile ? (
-                      <button type="button" className="invoice-upload-btn" onClick={() => cameraCaptureInputRef.current?.click()} disabled={uploading}>
-                        <IconCamera />
-                        <span>Tirar foto</span>
-                      </button>
-                    ) : null}
+                    <button
+                      type="button"
+                      className="invoice-upload-btn"
+                      onClick={() => {
+                        if (canLiveCamera) startCamera();
+                        else cameraCaptureInputRef.current?.click();
+                      }}
+                      disabled={uploading}
+                    >
+                      <IconCamera />
+                      <span>Tirar foto</span>
+                    </button>
                     {cameraError && <div className="invoice-upload-error">{cameraError}</div>}
                   </div>
                 )}
@@ -614,6 +733,50 @@ export default function Faturas() {
             </div>
           )}
 
+          {viewerOpen && (
+            <div className="invoice-upload-modal" role="dialog" aria-modal="true" aria-label="Ver fatura">
+              <div className="invoice-upload-backdrop" onClick={() => (!viewerLoading ? closeViewer() : undefined)} />
+              <div className="invoice-viewer-card">
+                <div className="invoice-viewer-header">
+                  <div className="invoice-viewer-title" title={viewerTitle}>{viewerTitle}</div>
+                  <button type="button" className="invoice-viewer-close" onClick={closeViewer} disabled={viewerLoading} aria-label="Fechar">
+                    ×
+                  </button>
+                </div>
+
+                {viewerLoading && <div className="invoice-viewer-loading">A abrir…</div>}
+                {!viewerLoading && viewerError && <div className="invoice-upload-error">{viewerError}</div>}
+
+                {!viewerLoading && !viewerError && viewerUrl && viewerKind === 'image' && (
+                  <img className="invoice-viewer-media" src={viewerUrl} alt={viewerTitle} />
+                )}
+
+                {!viewerLoading && !viewerError && viewerUrl && viewerKind === 'pdf' && (
+                  <iframe className="invoice-viewer-iframe" src={viewerUrl} title={viewerTitle} />
+                )}
+
+                {!viewerLoading && !viewerError && viewerKind === 'text' && (
+                  <pre className="invoice-viewer-text">{viewerText ?? ''}</pre>
+                )}
+
+                {!viewerLoading && !viewerError && viewerUrl && viewerKind === 'other' && (
+                  <div className="invoice-viewer-loading">Formato não suportado para preview.</div>
+                )}
+
+                <div className="invoice-upload-footer">
+                  <button type="button" className="invoice-upload-footer-btn" onClick={closeViewer} disabled={viewerLoading}>
+                    Fechar
+                  </button>
+                  {viewerUrl && (
+                    <a className="invoice-upload-footer-btn primary" href={viewerUrl} download={viewerTitle}>
+                      Download
+                    </a>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Lista de Histórico */}
           <div className="invoices-section">
             <div className="section-title">Recentes</div>
@@ -622,7 +785,9 @@ export default function Faturas() {
               {loading && <div className="invoice-item">A carregar…</div>}
               {!loading && invoices.length === 0 && <div className="invoice-item">Sem faturas ainda</div>}
               {!loading && invoices.map((invoice) => (
-                <div key={invoice.id} className="invoice-item">
+                <div key={invoice.id} className="invoice-item" role="button" tabIndex={0} onClick={() => openInvoice(invoice)} onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') openInvoice(invoice);
+                }}>
                   <div className="invoice-icon">
                     <IconBolt />
                   </div>

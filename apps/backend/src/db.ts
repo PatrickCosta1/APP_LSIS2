@@ -87,6 +87,12 @@ export type CustomerInvoiceDoc = {
   size_bytes: number;
   uploaded_at: Date;
 
+  // Bytes do ficheiro original (PDF/Imagem). Pode não existir em faturas antigas.
+  file_bytes?: Buffer;
+
+  // Flag leve para UI (evita carregar file_bytes só para listar)
+  file_present?: boolean;
+
   utility_guess?: string;
 
   // Texto extraído (quando existir) para debug/reprocessamento
