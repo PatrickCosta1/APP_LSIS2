@@ -101,6 +101,28 @@ export default function Faturas() {
     return 'other' as const;
   }, [pendingFile]);
 
+  const canLiveCamera = useMemo(() => {
+    try {
+      return Boolean((window as any).isSecureContext && navigator.mediaDevices?.getUserMedia);
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const isLikelyMobile = useMemo(() => {
+    try {
+      const uaMobile = Boolean((navigator as any).userAgentData?.mobile);
+      if (uaMobile) return true;
+      // fallback heuristics
+      const coarse = typeof window !== 'undefined' && typeof window.matchMedia === 'function' ? window.matchMedia('(pointer: coarse)').matches : false;
+      if (coarse) return true;
+      const ua = (navigator.userAgent || '').toLowerCase();
+      return /android|iphone|ipad|ipod|mobile/.test(ua);
+    } catch {
+      return false;
+    }
+  }, []);
+
   useEffect(() => {
     try {
       const id = localStorage.getItem('kynex:customerId');
@@ -229,6 +251,18 @@ export default function Faturas() {
   }, [pendingPreviewUrl]);
 
   useEffect(() => {
+    if (!cameraMode) return;
+    const stream = cameraStreamRef.current;
+    const video = videoRef.current;
+    if (!stream || !video) return;
+
+    if (video.srcObject !== stream) video.srcObject = stream;
+    void video.play().catch(() => {
+      // alguns browsers exigem nova interação do utilizador
+    });
+  }, [cameraMode]);
+
+  useEffect(() => {
     if (!uploadModalOpen) {
       stopCamera();
       setCameraMode(false);
@@ -264,7 +298,11 @@ export default function Faturas() {
     setCameraError(null);
     if (!navigator.mediaDevices?.getUserMedia) {
       setCameraError('O seu dispositivo/navegador não suporta acesso à câmara.');
-      cameraCaptureInputRef.current?.click();
+      return;
+    }
+
+    if (!(window as any).isSecureContext) {
+      setCameraError('A câmara só funciona em HTTPS.');
       return;
     }
 
@@ -272,14 +310,11 @@ export default function Faturas() {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
       cameraStreamRef.current = stream;
       setCameraMode(true);
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
     } catch (e) {
       console.error('Camera error:', e);
-      setCameraError('Não foi possível aceder à câmara. Verifique permissões.');
-      cameraCaptureInputRef.current?.click();
+      setCameraError('Não foi possível aceder à câmara. Verifique permissões no browser.');
+      // fallback apenas em mobile (input capture abre picker no desktop)
+      if (isLikelyMobile) cameraCaptureInputRef.current?.click();
     }
   };
 
@@ -510,10 +545,17 @@ export default function Faturas() {
                       <IconDocument />
                       <span>Escolher PDF/Imagem</span>
                     </button>
-                    <button type="button" className="invoice-upload-btn" onClick={startCamera} disabled={uploading}>
-                      <IconCamera />
-                      <span>Tirar foto</span>
-                    </button>
+                    {canLiveCamera ? (
+                      <button type="button" className="invoice-upload-btn" onClick={startCamera} disabled={uploading}>
+                        <IconCamera />
+                        <span>Tirar foto</span>
+                      </button>
+                    ) : isLikelyMobile ? (
+                      <button type="button" className="invoice-upload-btn" onClick={() => cameraCaptureInputRef.current?.click()} disabled={uploading}>
+                        <IconCamera />
+                        <span>Tirar foto</span>
+                      </button>
+                    ) : null}
                     {cameraError && <div className="invoice-upload-error">{cameraError}</div>}
                   </div>
                 )}
