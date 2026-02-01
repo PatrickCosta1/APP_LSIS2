@@ -60,20 +60,6 @@ function IconBack() {
   );
 }
 
-function formatPtDateTime(iso: string) {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '—';
-  return new Intl.DateTimeFormat('pt-PT', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZone: 'Europe/Lisbon'
-  }).format(d);
-}
-
 function fmtEur(val: number | null | undefined) {
   if (typeof val !== 'number') return '—';
   return val.toFixed(4) + '€';
@@ -244,7 +230,6 @@ export default function Contrato() {
   const tariff = contract?.current?.tariff ?? '—';
   const vazio = contract?.current?.price_vazio_eur_per_kwh ?? 0;
   const cheia = contract?.current?.price_cheia_eur_per_kwh ?? 0;
-  const lastUpdated = contract?.lastUpdated ?? '';
 
   const offpeakFrac = Math.max(0, Math.min(1, (contract?.offpeakPct ?? 0) / 100));
   const computedAvg = tariff.toLowerCase().includes('bi') ? vazio * offpeakFrac + cheia * (1 - offpeakFrac) : cheia;
@@ -259,7 +244,8 @@ export default function Contrato() {
   const biTotal = contract?.suggestion?.compare?.bihorario?.estimatedMonth?.total ?? null;
   const suggestedTariff = contract?.suggestion?.tariff ?? null;
 
-  const market = (contract?.marketComparison ?? null) || (latestInvoice?.analysis ?? null);
+  // IMPORTANTE: comparação deve ser estável e baseada na última fatura (não telemetria)
+  const market = latestInvoice?.analysis ?? null;
   const bestOffer = Array.isArray(market?.top) && market!.top.length > 0 ? market!.top[0] : null;
   const savingsYear = typeof market?.savings_year_eur === 'number' && Number.isFinite(market!.savings_year_eur) ? market!.savings_year_eur : null;
   const hasPositiveSavings = typeof bestOffer?.savings_year_eur === 'number' && bestOffer.savings_year_eur > 0.5;
@@ -302,9 +288,6 @@ export default function Contrato() {
 
         <main className="content contrato-content">
           <div className="contrato-page-title">O Meu Contrato</div>
-          <div className="contrato-subtitle">
-            Última atualização: {loading ? '...' : formatPtDateTime(lastUpdated)}
-          </div>
 
           {loading ? (
             <div className="contrato-loading">
@@ -358,19 +341,17 @@ export default function Contrato() {
                 </div>
               </div>
 
-              {/* Comparação de Mercado (ERSE) */}
+              {/* Comparação de Mercado */}
               <div className="ai-insights-header" style={{ marginTop: -8 }}>
                 <div className="ai-text">
-                  <div className="ai-title">Comparação de Mercado (ERSE)</div>
-                  <div className="ai-subtitle">Estimativa anual com base na sua telemetria e tarifários publicados.</div>
+                  <div className="ai-title">Comparação de Mercado</div>
+                  <div className="ai-subtitle">Comparação baseada na sua última fatura e nos preços de tarifa que definimos.</div>
                 </div>
               </div>
 
               <div className="contrato-current-card market-card" style={{ marginBottom: 28 }}>
                 <div className="current-card-header">
-                    <div className="provider-logo">
-                      <img src="https://floene.pt/img/2022/11/logo_erse-final.png" alt="ERSE" style={{ height: 32, width: 'auto', display: 'block', background: 'white', borderRadius: 4, padding: 2 }} />
-                    </div>
+                  <div className="provider-logo" aria-hidden="true"></div>
                   <div className="provider-info">
                     <div className="provider-name">Mercado</div>
                     <div className="provider-badge">Comparação</div>
@@ -379,21 +360,6 @@ export default function Contrato() {
 
                 {market ? (
                   <>
-                    <div className="current-card-grid market-metrics">
-                      <div className="info-item">
-                        <div className="info-content">
-                          <div className="info-label">Consumo estimado</div>
-                          <div className="info-value">{fmtKwhYear(market.consumption_kwh_year)}</div>
-                        </div>
-                      </div>
-                      <div className="info-item">
-                        <div className="info-content">
-                          <div className="info-label">Custo atual (estim.)</div>
-                          <div className="info-value">{fmtEur0(market.current_cost_year_eur)} / ano</div>
-                        </div>
-                      </div>
-                    </div>
-
                     <div className="current-price-highlight market-highlight">
                       <div className="price-label">Poupança potencial</div>
                       <div className={`price-value ${hasPositiveSavings ? 'positive' : hasNegativeSavings ? 'negative' : ''}`}>
@@ -411,15 +377,20 @@ export default function Contrato() {
                     </div>
 
                     {Array.isArray(market.top) && market.top.length > 0 ? (
-                      <div className="market-top-list" aria-label="Top ofertas (ERSE)">
+                      <div className="market-top-list" aria-label="Top ofertas">
                         {market.top.slice(0, 5).map((o, idx) => {
+                          const provider = displayProviderName(o.comercializador);
+                          const logo = pickUtilityLogo(provider);
                           const sRaw = typeof o.savings_year_eur === 'number' ? o.savings_year_eur : null;
                           const s = typeof sRaw === 'number' && Number.isFinite(sRaw) ? sRaw : null;
                           const cls = s !== null && s > 0.1 ? 'positive' : s !== null && s < -0.1 ? 'negative' : '';
                           return (
                             <div className="market-offer-row" key={`${o.comercializador}-${o.nome_proposta}-${idx}`}>
+                              <div className="market-offer-logo" aria-hidden="true">
+                                <img src={logo} alt="" />
+                              </div>
                               <div className="market-offer-main">
-                                <div className="market-offer-provider">{displayProviderName(o.comercializador)}</div>
+                                <div className="market-offer-provider">{provider}</div>
                                 <div className="market-offer-name">{o.nome_proposta}</div>
                               </div>
                               <div className={`market-offer-savings ${cls}`}>{s !== null ? `${fmtEurSigned0(s)} / ano` : '—'}</div>
@@ -428,11 +399,11 @@ export default function Contrato() {
                         })}
                       </div>
                     ) : (
-                      <div className="market-empty">Sem ofertas ERSE disponíveis para comparação.</div>
+                      <div className="market-empty">Sem ofertas disponíveis para comparação.</div>
                     )}
                   </>
                 ) : (
-                  <div className="market-empty">Carregue uma fatura e/ou aguarde telemetria suficiente para gerar a comparação.</div>
+                  <div className="market-empty">Carregue uma fatura para gerar a comparação.</div>
                 )}
               </div>
 

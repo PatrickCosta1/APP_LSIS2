@@ -16,7 +16,7 @@ import { buildAssistantBaseContext, buildAssistantEnvelope } from './assistantCo
 import { inferAppliancesFromAggregate } from './nilmInfer';
 import { extractNilmSessions15m, inferFromFingerprints, type CustomerNilmFingerprintDoc } from './nilmService';
 import { extractInvoiceFromFile, extractInvoiceFromFiles, newInvoiceId } from './invoiceEngine';
-import { compareWithErseTariffs } from './tariffComparison';
+import { compareWithPublicTariffs } from './tariffComparison';
 import { isShellyMqttConfigured, shellySwitchGetStatus, shellySwitchSet } from './shellyMqtt';
 import { forecastMonth } from './forecastService';
 
@@ -2795,7 +2795,7 @@ app.get('/customers/:customerId/contract/analysis', async (req, res) => {
     const currentFixedDailyFeeEur = typeof customer.fixed_daily_fee_eur === 'number' ? customer.fixed_daily_fee_eur : hasInvoice ? Number((latestInvoice[0] as any)?.fixed_daily_fee_eur ?? 0) : 0;
 
     if (contractedPowerKva > 0 && currentPriceKwhEur > 0) {
-      const cmp = await compareWithErseTariffs({
+      const cmp = await compareWithPublicTariffs({
         customerId,
         contractedPowerKva,
         currentPriceKwhEur,
@@ -3181,7 +3181,7 @@ app.post(
     typeof currentFixedDaily === 'number' &&
     Number.isFinite(currentFixedDaily)
   ) {
-    const cmp = await compareWithErseTariffs({
+    const cmp = await compareWithPublicTariffs({
       customerId,
       contractedPowerKva,
       currentPriceKwhEur: currentPriceKwh,
