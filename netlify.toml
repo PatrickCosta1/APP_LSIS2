@@ -4,6 +4,7 @@
 
 [build.environment]
   NODE_VERSION = "20"
+  VITE_API_BASE = "https://app-lsis2.onrender.com"
 
 # SPA fallback (Netlify também lê _redirects, isto é redundante mas útil)
 [[redirects]]

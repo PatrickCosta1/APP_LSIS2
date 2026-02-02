@@ -34,6 +34,10 @@ Monorepo académico com frontend React + TypeScript (Vite) e backend Express + T
 - Build local (gera `dist/`): `npm run build:frontend`
 - Em hosts tipo Netlify, o repositório já inclui `netlify.toml` na raiz com `publish = "apps/frontend/dist"`.
 
+## Frontend instalável no telemóvel (PWA)
+- O frontend está preparado para funcionar como PWA (instalável) quando publicado em HTTPS.
+- Em produção, define `VITE_API_BASE` (URL do backend no Render) no host do frontend e faz rebuild.
+
 ## Fluxo esperado
 - O Onboarding cria um cliente via `POST /ai/customers` e guarda o `customerId` em `localStorage` (`kynex:customerId`).
 - A Dashboard usa esse `customerId` para buscar dados reais:
