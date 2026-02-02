@@ -58,15 +58,21 @@ html, body, #root {
 
 @media (min-width: 768px) {
   :root {
-    --app-frame-max: 520px;
-    --app-pad-top: 14px;
-    --app-pad-bottom: 78px;
+    /* Tablet: dar mais largura e respirar melhor */
+    --app-frame-max: 900px;
+    --app-pad-x: 22px;
+    --app-pad-top: 16px;
+    --app-pad-bottom: 26px;
+  }
+
+  .app-shell {
+    padding: 28px 18px;
   }
 }
 
 @media (min-width: 1024px) {
   :root {
-    --app-frame-max: 560px;
+    --app-frame-max: 980px;
   }
 }
 

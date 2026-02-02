@@ -284,7 +284,7 @@ export default function Definicoes() {
                   <IconPlug />
                 </div>
                 <div className="device-info">
-                  <div className="device-name">Kynex Node</div>
+                  <div className="device-name">Aquecedor</div>
                   <div className="device-status">
                     <span className="status-indicator online"></span>
                     Online
@@ -296,7 +296,7 @@ export default function Definicoes() {
                   <IconPlug />
                 </div>
                 <div className="device-info">
-                  <div className="device-name">Kynex Plug (Frigorífico)</div>
+                  <div className="device-name">Luz</div>
                   <div className="device-status">
                     <span className="status-indicator online"></span>
                     Online

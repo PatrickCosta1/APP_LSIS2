@@ -247,9 +247,20 @@ export default function Contrato() {
   // IMPORTANTE: comparação deve ser estável e baseada na última fatura (não telemetria)
   const market = latestInvoice?.analysis ?? null;
   const bestOffer = Array.isArray(market?.top) && market!.top.length > 0 ? market!.top[0] : null;
+  // Mostrar poupança por mês
   const savingsYear = typeof market?.savings_year_eur === 'number' && Number.isFinite(market!.savings_year_eur) ? market!.savings_year_eur : null;
+  const savingsMonth = typeof savingsYear === 'number' ? savingsYear / 12 : null;
   const hasPositiveSavings = typeof bestOffer?.savings_year_eur === 'number' && bestOffer.savings_year_eur > 0.5;
   const hasNegativeSavings = typeof savingsYear === 'number' && savingsYear < -0.5;
+
+  function fmtEurSigned0Month(val: number | null | undefined) {
+    if (typeof val !== 'number' || !Number.isFinite(val)) return '—';
+    const abs = Math.abs(val);
+    const formatted = new Intl.NumberFormat('pt-PT', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(abs);
+    if (val > 0) return `-${formatted}`; // poupança: mostrar '-'
+    if (val < 0) return `+${formatted}`; // mais caro: mostrar '+'
+    return formatted;
+  }
 
   return (
     <div className="app-shell">
@@ -351,7 +362,7 @@ export default function Contrato() {
 
               <div className="contrato-current-card market-card" style={{ marginBottom: 28 }}>
                 <div className="current-card-header">
-                  <div className="provider-logo" aria-hidden="true"></div>
+                  <div aria-hidden="true"></div>
                   <div className="provider-info">
                     <div className="provider-name">Mercado</div>
                     <div className="provider-badge">Comparação</div>
@@ -364,9 +375,9 @@ export default function Contrato() {
                       <div className="price-label">Poupança potencial</div>
                       <div className={`price-value ${hasPositiveSavings ? 'positive' : hasNegativeSavings ? 'negative' : ''}`}>
                         {hasPositiveSavings
-                          ? `-${fmtEur0(savingsYear)} / ano`
+                          ? `-${fmtEur0(savingsMonth)} / mês`
                           : hasNegativeSavings
-                            ? `Mais caro +${fmtEur0(Math.abs(savingsYear!))} / ano`
+                            ? `Mais caro +${fmtEur0(Math.abs(savingsMonth!))} / mês`
                             : 'Sem diferença relevante'}
                       </div>
                       {hasPositiveSavings ? (
@@ -382,7 +393,7 @@ export default function Contrato() {
                           const provider = displayProviderName(o.comercializador);
                           const logo = pickUtilityLogo(provider);
                           const sRaw = typeof o.savings_year_eur === 'number' ? o.savings_year_eur : null;
-                          const s = typeof sRaw === 'number' && Number.isFinite(sRaw) ? sRaw : null;
+                          const s = typeof sRaw === 'number' && Number.isFinite(sRaw) ? sRaw / 12 : null;
                           const cls = s !== null && s > 0.1 ? 'positive' : s !== null && s < -0.1 ? 'negative' : '';
                           return (
                             <div className="market-offer-row" key={`${o.comercializador}-${o.nome_proposta}-${idx}`}>
@@ -393,7 +404,7 @@ export default function Contrato() {
                                 <div className="market-offer-provider">{provider}</div>
                                 <div className="market-offer-name">{o.nome_proposta}</div>
                               </div>
-                              <div className={`market-offer-savings ${cls}`}>{s !== null ? `${fmtEurSigned0(s)} / ano` : '—'}</div>
+                              <div className={`market-offer-savings ${cls}`}>{s !== null ? `${fmtEurSigned0Month(s)} / mês` : '—'}</div>
                             </div>
                           );
                         })}

@@ -433,40 +433,38 @@ type ProviderDef = {
 };
 
 function getPublicProviderCatalog(): ProviderDef[] {
-  // Queremos diferenças pequenas (“gaps” curtos) e realistas.
-  // Como os detalhes numéricos do artigo aparecem tipicamente em gráficos/imagens,
-  // usamos um catálogo estável com variações pequenas entre planos.
+  // Pequena diferenciação realista entre empresas (EDP/Endesa mais baixo, Iberdrola/Goldenergy um pouco acima)
   return [
     {
       comercializador: 'EDP',
       plans: [
-        { nomeProposta: 'E-Digital', priceKwhEur: 0.1490, fixedDailyOffsetEur: -0.0030 },
-        { nomeProposta: 'Online', priceKwhEur: 0.1510, fixedDailyOffsetEur: -0.0020 },
-        { nomeProposta: 'Casa', priceKwhEur: 0.1625, fixedDailyOffsetEur: -0.0010 }
+        { nomeProposta: 'E-Digital', priceKwhEur: 0.1345, fixedDailyOffsetEur: -0.0030 },
+        { nomeProposta: 'Online', priceKwhEur: 0.1360, fixedDailyOffsetEur: -0.0020 },
+        { nomeProposta: 'Casa', priceKwhEur: 0.1375, fixedDailyOffsetEur: -0.0010 }
       ]
     },
     {
       comercializador: 'Endesa',
       plans: [
-        { nomeProposta: 'Online', priceKwhEur: 0.1495, fixedDailyOffsetEur: -0.0025 },
-        { nomeProposta: 'e-Luz', priceKwhEur: 0.1512, fixedDailyOffsetEur: -0.0015 },
-        { nomeProposta: 'Simples', priceKwhEur: 0.1530, fixedDailyOffsetEur: -0.0010 }
+        { nomeProposta: 'Online', priceKwhEur: 0.1350, fixedDailyOffsetEur: -0.0025 },
+        { nomeProposta: 'e-Luz', priceKwhEur: 0.1368, fixedDailyOffsetEur: -0.0015 },
+        { nomeProposta: 'Simples', priceKwhEur: 0.1385, fixedDailyOffsetEur: -0.0010 }
       ]
     },
     {
       comercializador: 'Iberdrola',
       plans: [
-        { nomeProposta: 'Simples', priceKwhEur: 0.1550, fixedDailyOffsetEur: 0.0005 },
-        { nomeProposta: 'Online', priceKwhEur: 0.1570, fixedDailyOffsetEur: 0.0010 },
-        { nomeProposta: 'Digital', priceKwhEur: 0.1585, fixedDailyOffsetEur: 0.0015 }
+        { nomeProposta: 'Simples', priceKwhEur: 0.1405, fixedDailyOffsetEur: 0.0005 },
+        { nomeProposta: 'Online', priceKwhEur: 0.1420, fixedDailyOffsetEur: 0.0010 },
+        { nomeProposta: 'Digital', priceKwhEur: 0.1435, fixedDailyOffsetEur: 0.0015 }
       ]
     },
     {
       comercializador: 'Goldenergy',
       plans: [
-        { nomeProposta: 'Digital', priceKwhEur: 0.1565, fixedDailyOffsetEur: 0.0010 },
-        { nomeProposta: 'Online', priceKwhEur: 0.1580, fixedDailyOffsetEur: 0.0015 },
-        { nomeProposta: 'Simples', priceKwhEur: 0.1695, fixedDailyOffsetEur: 0.0020 }
+        { nomeProposta: 'Digital', priceKwhEur: 0.1415, fixedDailyOffsetEur: 0.0010 },
+        { nomeProposta: 'Online', priceKwhEur: 0.1430, fixedDailyOffsetEur: 0.0015 },
+        { nomeProposta: 'Simples', priceKwhEur: 0.1445, fixedDailyOffsetEur: 0.0020 }
       ]
     }
   ];
