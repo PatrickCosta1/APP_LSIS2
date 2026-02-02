@@ -201,6 +201,7 @@ function Charts() {
   const exportRef = useRef<HTMLDivElement | null>(null);
 
   const [assistantOpen, setAssistantOpen] = useState(false);
+  const [assistantPrefill, setAssistantPrefill] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [customerName, setCustomerName] = useState<string>('Cliente');
   const [userEmail, setUserEmail] = useState<string>('');
@@ -822,7 +823,19 @@ function Charts() {
             {insightCards.slice(0, 3).map((t) => (
               <article key={t.id} className="ana-insight-card" aria-label="Insight">
                 <div className="ana-insight-icon" aria-hidden="true">{t.icon || '✦'}</div>
-                <div className="ana-insight-text">{t.text}</div>
+                <div className="ana-insight-content">
+                  <div className="ana-insight-text">{t.text}</div>
+                  <button
+                    className="ana-insight-cta"
+                    type="button"
+                    onClick={() => {
+                      setAssistantPrefill(t.text);
+                      setAssistantOpen(true);
+                    }}
+                  >
+                    Falar com a IA
+                  </button>
+                </div>
               </article>
             ))}
           </section>
@@ -853,7 +866,16 @@ function Charts() {
         </div>
       </div>
 
-      <AssistantChatModal open={assistantOpen} onClose={() => setAssistantOpen(false)} apiBase={apiBase} customerId={customerId} />
+      <AssistantChatModal
+        open={assistantOpen}
+        onClose={() => {
+          setAssistantOpen(false);
+          setAssistantPrefill(null);
+        }}
+        apiBase={apiBase}
+        customerId={customerId}
+        prefillMessage={assistantPrefill}
+      />
     </div>
   );
 }

@@ -32,6 +32,7 @@ type Props = {
   onClose: () => void;
   apiBase?: string | null;
   customerId?: string | null;
+  prefillMessage?: string | null;
 };
 
 function safeGetLocalStorage(key: string) {
@@ -50,7 +51,13 @@ function safeSetLocalStorage(key: string, value: string) {
   }
 }
 
-export default function AssistantChatModal({ open, onClose, apiBase: apiBaseProp, customerId: customerIdProp }: Props) {
+export default function AssistantChatModal({
+  open,
+  onClose,
+  apiBase: apiBaseProp,
+  customerId: customerIdProp,
+  prefillMessage
+}: Props) {
   const [apiBase, setApiBase] = useState<string | null>(apiBaseProp ?? null);
   const [customerId, setCustomerId] = useState<string | null>(customerIdProp ?? null);
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -62,6 +69,8 @@ export default function AssistantChatModal({ open, onClose, apiBase: apiBaseProp
   const [planProgress, setPlanProgress] = useState<Record<string, Record<string, boolean>>>({});
 
   const listRef = useRef<HTMLDivElement | null>(null);
+
+  const prefillSentRef = useRef<string | null>(null);
 
   const convStorageKey = useMemo(() => {
     if (!customerId) return null;
@@ -185,6 +194,24 @@ export default function AssistantChatModal({ open, onClose, apiBase: apiBaseProp
       cancelled = true;
     };
   }, [open, apiBase, customerId, convStorageKey]);
+
+  useEffect(() => {
+    if (!open) {
+      prefillSentRef.current = null;
+      return;
+    }
+
+    const raw = typeof prefillMessage === 'string' ? prefillMessage.trim() : '';
+    if (!raw) return;
+    if (loading) return;
+    if (prefillSentRef.current === raw) return;
+
+    prefillSentRef.current = raw;
+    void send(
+      `Usa esta dica como contexto e dá-me passos concretos para aplicar no meu caso: "${raw}"`
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, prefillMessage, loading]);
 
   useEffect(() => {
     if (!open) return;
