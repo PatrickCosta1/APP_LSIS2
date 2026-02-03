@@ -428,20 +428,6 @@ export default function Contrato() {
               </div>
 
               <div className="contrato-current-card" style={{ marginTop: 12 }}>
-                <div className="current-card-grid">
-                  <div className="info-item">
-                    <div className="info-content">
-                      <div className="info-label">Simples (estim.)</div>
-                      <div className="info-value">{typeof simpleTotal === 'number' ? `${Math.round(simpleTotal)}€ / mês` : '—'}</div>
-                    </div>
-                  </div>
-                  <div className="info-item">
-                    <div className="info-content">
-                      <div className="info-label">Bi-horário (estim.)</div>
-                      <div className="info-value">{typeof biTotal === 'number' ? `${Math.round(biTotal)}€ / mês` : '—'}</div>
-                    </div>
-                  </div>
-                </div>
                 <div className="current-price-highlight">
                   <div className="price-label">Recomendação</div>
                   <div className="price-value">{suggestedTariff ? String(suggestedTariff) : '—'}</div>

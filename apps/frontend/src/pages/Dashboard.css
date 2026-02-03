@@ -783,4 +783,124 @@ html, body, #root {
     margin: 20px 0;
     box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
   }
+
+  .content {
+    gap: 14px;
+  }
+
+  .summary-card {
+    padding: 10px 16px;
+    border-radius: 18px;
+  }
+
+  .weather-row,
+  .weather-info {
+    font-size: 13px;
+  }
+
+  .weather-temp {
+    font-size: 16px;
+  }
+
+  .alert-badges {
+    font-size: 12px;
+  }
+
+  .summary-metrics {
+    gap: 10px;
+  }
+
+  .metric-value {
+    font-size: 19px;
+  }
+
+  .metric-label {
+    font-size: 11px;
+  }
+
+  .tab {
+    font-size: 13px;
+    padding: 10px 14px;
+  }
+
+  .hero-card {
+    padding: 14px 14px 8px;
+  }
+
+  .hero-title,
+  .hero-power {
+    font-size: 18px;
+  }
+
+  .hero-annotations {
+    font-size: 12px;
+  }
+
+  .annotation strong {
+    font-size: 14px;
+  }
+
+  .hero-house {
+    width: 320px;
+  }
+
+  .consumption-card {
+    padding: 16px;
+    border-radius: 24px;
+  }
+
+  .consumption-title {
+    font-size: 18px;
+  }
+
+  .seg-btn {
+    font-size: 12px;
+    padding: 7px 10px;
+  }
+
+  .bars {
+    gap: 10px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .summary-card {
+    padding: 12px 18px;
+  }
+
+  .metric-value {
+    font-size: 21px;
+  }
+
+  .metric-label {
+    font-size: 12px;
+  }
+
+  .hero-house {
+    width: 360px;
+  }
+
+  .bar-track {
+    height: 170px;
+  }
+
+  .bar-value {
+    font-size: 8px;
+  }
+
+  .stats-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .stat-card {
+    padding: 14px;
+  }
+
+  .stat-value {
+    font-size: 24px;
+  }
+
+  .consumption-card {
+    padding: 18px;
+  }
 }

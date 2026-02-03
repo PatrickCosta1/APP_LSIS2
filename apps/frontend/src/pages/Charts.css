@@ -547,6 +547,92 @@
   }
 }
 
+@media (min-width: 768px) {
+  .ana-card {
+    padding: 16px;
+    border-radius: 22px;
+  }
+
+  .ana-card-title {
+    font-size: 24px;
+  }
+
+  .ana-chart {
+    padding: 14px;
+    border-radius: 20px;
+  }
+
+  .ana-x {
+    margin-top: 10px;
+  }
+
+  .ana-x-tick {
+    font-size: 12px;
+  }
+
+  .ana-mini-card {
+    padding: 14px;
+  }
+
+  .ana-mini-title {
+    font-size: 18px;
+  }
+
+  .ana-mini-help {
+    width: 34px;
+    height: 34px;
+  }
+
+  .ana-eff-note {
+    font-size: 13px;
+  }
+
+  .ana-eff-cta {
+    font-size: 13px;
+    padding: 12px 14px;
+  }
+
+  .ana-insights {
+    gap: 12px;
+  }
+
+  .ana-insight-card {
+    grid-template-columns: 60px 1fr;
+    padding: 14px;
+  }
+
+  .ana-insight-icon {
+    width: 56px;
+    height: 56px;
+    font-size: 24px;
+  }
+
+  .ana-insight-text {
+    font-size: 14px;
+  }
+
+  .ana-insight-cta {
+    font-size: 13px;
+    padding: 9px 12px;
+  }
+
+  .ana-power-meter {
+    width: 86px;
+    padding: 12px 10px;
+    border-radius: 18px;
+  }
+
+  .ana-power-num {
+    font-size: 18px;
+  }
+
+  .ana-power-unit,
+  .ana-power-label,
+  .ana-power-max {
+    font-size: 11px;
+  }
+}
+
 .ana-contract-pill.big {
   justify-content: center;
   padding: 12px 10px;

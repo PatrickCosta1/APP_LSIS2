@@ -122,6 +122,85 @@
   color: rgba(255, 255, 255, 0.9);
 }
 
+@media (min-width: 768px) {
+  .eq-title-small {
+    font-size: 38px;
+  }
+
+  .eq-title-big {
+    font-size: 46px;
+  }
+
+  .eq-content {
+    gap: 16px;
+  }
+
+  .eq-consumption-card {
+    max-width: 520px;
+    padding: 12px 12px 10px;
+    border-radius: 20px;
+  }
+
+  .eq-consumption-title {
+    font-size: 18px;
+  }
+
+  .eq-month select {
+    font-size: 13px;
+    padding: 8px 34px 8px 12px;
+  }
+
+  .eq-rows {
+    gap: 8px;
+  }
+
+  .eq-row {
+    grid-template-columns: 28px 1fr;
+  }
+
+  .eq-row-left {
+    width: 26px;
+    height: 26px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .eq-title-small {
+    font-size: 40px;
+  }
+
+  .eq-title-big {
+    font-size: 50px;
+  }
+
+  .eq-consumption-card {
+    max-width: 620px;
+    padding: 14px 14px 12px;
+  }
+
+  .eq-consumption-title {
+    font-size: 19px;
+  }
+
+  .eq-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .eq-mini-card {
+    min-height: 150px;
+    padding: 12px 12px 14px;
+  }
+
+  .eq-mini-body {
+    font-size: 16px;
+  }
+
+  .eq-mini-value {
+    font-size: 44px;
+  }
+}
+
 .eq-row-icon {
   width: 16px;
   height: 16px;

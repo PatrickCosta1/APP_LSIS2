@@ -213,6 +213,9 @@ function Charts() {
   const [customerId, setCustomerId] = useState<string | null>(null);
   const [series, setSeries] = useState<ConsumptionSeriesResponse>({ range: 'semana', labels: [], values: [], lastUpdated: '' });
 
+  const chartRef = useRef<HTMLDivElement | null>(null);
+  const [chartWidth, setChartWidth] = useState<number>(360);
+
   const [power, setPower] = useState<PowerSuggestionResponse | null>(null);
 
   const [eff, setEff] = useState<HourlyEfficiencyResponse | null>(null);
@@ -223,6 +226,30 @@ function Charts() {
   const yearlyPeakKva = power?.yearlyPeakKva ?? 0;
   const suggestedIdealKva = power?.suggestedIdealKva ?? 0;
   const usagePctOfContracted = power?.usagePctOfContracted ?? 0;
+
+  useEffect(() => {
+    const el = chartRef.current;
+    if (!el) return;
+
+    const update = () => {
+      const next = Math.max(280, Math.min(920, el.clientWidth));
+      setChartWidth((prev) => (Math.abs(prev - next) > 1 ? next : prev));
+    };
+
+    update();
+
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(() => update());
+      ro.observe(el);
+    }
+
+    window.addEventListener('resize', update);
+    return () => {
+      window.removeEventListener('resize', update);
+      ro?.disconnect();
+    };
+  }, []);
 
   useEffect(() => {
     if (!exportOpen) return;
@@ -477,13 +504,13 @@ function Charts() {
   }, [labels, monthTicks, range]);
 
   const chart = useMemo(() => {
-    const width = 360;
-    const height = 200;
+    const width = chartWidth;
+    const height = Math.round(Math.max(180, Math.min(300, width * 0.55)));
     const { d, pts, min, max } = buildLinePath(values, width, height);
     const area = `${d} L ${pts[pts.length - 1].x.toFixed(2)} ${(height - 14).toFixed(2)} L ${pts[0].x.toFixed(2)} ${(height - 14).toFixed(2)} Z`;
     const last = pts[pts.length - 1];
     return { width, height, d, area, min, max, last };
-  }, [values]);
+  }, [values, chartWidth]);
 
   function exportPdf() {
     setExportOpen(false);
@@ -545,9 +572,6 @@ function Charts() {
           <section className="ana-card" aria-label="Análise do consumo">
             <div className="ana-card-header">
               <div className="ana-card-title">Análise do <b>Consumo</b></div>
-              <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }} aria-label="Última leitura (tempo simulado)">
-                Última leitura: <strong>{formatPtDateTime(series.lastUpdated)}</strong>
-              </div>
 
               <div className="ana-actions">
                 <div className="segmented" role="tablist" aria-label="Intervalo">
@@ -682,7 +706,7 @@ function Charts() {
               </div>
             </div>
 
-            <div className="ana-chart" aria-label="Gráfico de consumo">
+            <div className="ana-chart" aria-label="Gráfico de consumo" ref={chartRef}>
               <svg
                 className="ana-svg"
                 viewBox={`0 0 ${chart.width} ${chart.height}`}
@@ -805,14 +829,7 @@ function Charts() {
 
                   <div className="ana-eff-copy">
                     <div className="ana-eff-note">{effNote}</div>
-                    <button className="ana-eff-cta" type="button">
-                      <span className="ana-eff-cta-col">
-                        <strong>Movimentos Inteligentes🧠</strong>
-                        <span className="ana-eff-save">
-                          {typeof effSavings === 'number' ? `Poupe até ~${effSavings.toFixed(0)}€/mês` : '—'}
-                        </span>
-                      </span>
-                    </button>
+                    
                   </div>
                 </div>
               </div>
